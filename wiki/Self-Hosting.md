@@ -50,7 +50,7 @@ bash scripts/stop-native-stack.sh
 | Service | Default URL |
 |---------|-------------|
 | API | http://localhost:8000 |
-| Deep health | http://localhost:8000/health/deep |
+| Deep health | http://localhost:8000/health/deep (HTTP 503 when Postgres, Redis, or — with embeddings on — Qdrant is down) |
 | Swagger | http://localhost:8000/swagger |
 | Dashboard | http://localhost:3001 |
 | Postgres | localhost:5432 (native) or internal (Docker) |

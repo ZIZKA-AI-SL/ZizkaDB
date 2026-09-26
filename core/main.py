@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from contextlib import asynccontextmanager
 import logging
@@ -190,10 +190,16 @@ async def health():
 
 @app.get("/health/deep")
 async def health_deep():
+    """Per-subsystem health. 503 when a required subsystem is down, so
+    orchestrators that gate on status code see the failure. Qdrant is only
+    required when embeddings are enabled."""
+    from services.entitlements import embeddings_enabled
+
     checks = {
-        "postgres": await check_postgres(),
-        "redis": await check_redis(),
-        "qdrant": await check_qdrant(),
+        "postgres": {**await check_postgres(), "required": True},
+        "redis": {**await check_redis(), "required": True},
+        "qdrant": {**await check_qdrant(), "required": embeddings_enabled()},
     }
-    status = "ok" if all(check.get("ok") for check in checks.values()) else "degraded"
-    return {"status": status, "checks": checks}
+    healthy = all(c.get("ok") for c in checks.values() if c["required"])
+    body = {"status": "ok" if healthy else "degraded", "checks": checks}
+    return JSONResponse(content=body, status_code=200 if healthy else 503)

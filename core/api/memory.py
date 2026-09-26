@@ -8,9 +8,11 @@ replacement for LLM-provided memory:
 """
 
 from fastapi import APIRouter, Depends
-from services.exceptions import bad_request, not_found
+from services.exceptions import bad_request, not_found, service_unavailable
 from pydantic import BaseModel
 from typing import Any
+import asyncio
+import hashlib
 import json
 import logging
 
@@ -375,7 +377,15 @@ async def forget(
     event_ids = [r["event_id"] for r in rows]
     deleted = len(event_ids)
 
-    # Delete from Postgres
+    # Vectors first: if the search index can't be cleaned, keep the Postgres
+    # rows so a retry can still find (and delete) the vectors. Deleting a
+    # missing Qdrant point is a no-op, so retries are idempotent.
+    vector_cleanup = await _delete_vectors(event_ids, tenant_id)
+    if not vector_cleanup and embeddings_enabled():
+        raise service_unavailable(
+            "Search index unavailable; nothing was deleted. Retry forget shortly."
+        )
+
     # PostgreSQL does not support aggregate functions in RETURNING clauses.
     # We already know the count from the SELECT above, so use that directly.
     await pool.execute(
@@ -387,45 +397,60 @@ async def forget(
         tenant_id,
         event_ids,
     )
-    
-    deleted = len(event_ids)
 
-    # Delete vectors from Qdrant
-    try:
-        from qdrant_client.models import PointIdsList
-
-        qdrant = get_qdrant()
-
-        await qdrant.delete(
-            collection_name="agent_events",
-            points_selector=PointIdsList(
-                points=[str(eid) for eid in event_ids]
-            ),
-        )
-
-    except Exception as e:
-        log.warning(
-            "Qdrant delete partial failure for tenant %s: %s",
-            tenant_id,
-            e,
-        )
-
+    # Never log the forgotten value itself (it is usually personal data).
     log.info(
-        "GDPR forget: tenant=%s key=%s value=%s deleted=%s",
+        "GDPR forget: tenant=%s key=%s value_sha256=%s deleted=%s vector_cleanup=%s",
         tenant_id,
         body.filter_key,
-        body.filter_value,
+        hashlib.sha256(body.filter_value.encode()).hexdigest()[:12],
         deleted,
+        vector_cleanup,
     )
+
+    message = f"Deleted {deleted} events."
+    if vector_cleanup:
+        message += " Vectors removed from search index."
+    else:
+        message += " Search index was unreachable; vector cleanup skipped."
 
     return {
         "deleted_events": deleted,
+        "vector_cleanup": vector_cleanup,
         "filter": {
             "key": body.filter_key,
             "value": body.filter_value,
         },
-        "message": f"Deleted {deleted} events. Vectors removed from search index.",
+        "message": message,
     }
+
+
+_VECTOR_DELETE_ATTEMPTS = 3
+
+
+async def _delete_vectors(event_ids: list, tenant_id: str) -> bool:
+    """Delete event vectors from Qdrant with retries. Returns True on success."""
+    from qdrant_client.models import PointIdsList
+
+    points = PointIdsList(points=[str(eid) for eid in event_ids])
+    for attempt in range(1, _VECTOR_DELETE_ATTEMPTS + 1):
+        try:
+            await get_qdrant().delete(
+                collection_name="agent_events",
+                points_selector=points,
+            )
+            return True
+        except Exception as e:
+            log.warning(
+                "Qdrant delete attempt %d/%d failed for tenant %s: %s",
+                attempt,
+                _VECTOR_DELETE_ATTEMPTS,
+                tenant_id,
+                e,
+            )
+            if attempt < _VECTOR_DELETE_ATTEMPTS:
+                await asyncio.sleep(0.5 * attempt)
+    return False
 
 
 # ─────────────────────────────────────────

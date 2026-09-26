@@ -38,7 +38,7 @@ curl -sf "$BASE/health" | grep -q '"status":"ok"'
 
 if [ "${SKIP_DEEP_HEALTH:-}" != "1" ]; then
   echo "→ Deep health ($BASE/health/deep)"
-  deep="$(curl -sf "$BASE/health/deep")"
+  deep="$(curl -s "$BASE/health/deep")"
   if ! echo "$deep" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
     echo "✗ /health/deep is not ok:" >&2
     echo "$deep" >&2

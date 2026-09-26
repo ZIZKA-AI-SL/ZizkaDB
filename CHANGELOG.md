@@ -29,6 +29,12 @@ Fifteen-day self-host / OSS hardening pass. User-visible highlights:
 - `GET /v1/sessions/{id}/why/{event_id}` and `GET /v1/events/{id}/why` no longer return other agents' ancestor events to an agent-scoped key.
 - `GET /v1/sessions?agent=X` with a key scoped to another agent now returns 403 (previously silently returned the key's own sessions).
 
+### Fixed
+
+- `DELETE /v1/memory/forget` now deletes search vectors **before** Postgres rows. If Qdrant is unreachable (with embeddings enabled) it returns **503 and deletes nothing**, so a retry is safe and no orphan vectors are left behind. The response adds `vector_cleanup: bool`.
+- `forget` no longer writes the forgotten value (e.g. an email) to logs; a 12-char SHA-256 fingerprint is logged instead.
+- `/health/deep` returns **503** when a required subsystem is down (was always 200). Qdrant is required only when embeddings are enabled; each check reports `required`. `scripts/run-golden-path.sh` and `scripts/smoke-test.sh` no longer use `curl -f` on it, so failures show which subsystem is down.
+
 ### Changed
 
 - Dashboard CI runs `npm test` (vitest) alongside lint and build

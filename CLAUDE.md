@@ -106,7 +106,9 @@ cd dashboard && npm run lint && npm test && npm run build
 
 **Billing stub** — `billing_status_payload()` always returns `has_access: True`. No Stripe or payment provider is wired. The architecture is ready for Stripe to be added; billing routes exist but are stubs.
 
-**Rate limiting** — In-process Python dicts in `core/api/utils.py` (`check_rate()`). Used by the OTP login routes and the per-tenant throttle on the AI `/v1/agents/{id}/suggestions` endpoint (tighter cap on `?refresh=`). Known limitations: (1) state resets on restart; (2) with `--workers 4` each worker has its own dict, so the effective limit is 4× the configured value — the OTP brute-force protection is particularly affected. See `docs/adr/005-in-process-rate-limiting.md`.
+**Rate limiting** — `core/services/rate_limiter.py` (`RateLimiter` + `RedisStorage`/`InMemoryStorage`). OTP login, the AI `/v1/agents/{id}/suggestions` throttle, community and demo-request routes use Redis-backed limits shared across workers, falling back to in-memory (per-worker) only if Redis is unavailable (`check_rate_fail_open`). OTP uses Redis when `ENV=production` or `OTP_RATE_LIMIT_STORAGE=redis`. Background: `docs/adr/005-in-process-rate-limiting.md`.
+
+**Health** — `/health` is liveness only (always 200). `/health/deep` returns 503 when Postgres, Redis, or (with embeddings enabled) Qdrant is down.
 
 **Schema migrations** — Fresh install: `core/db/schema.sql` (run by Docker on first boot). Running install: `ALTER TABLE IF EXISTS` in `core/db/connection.py::init_db()` (runs on every startup). Always write idempotent DDL.
 

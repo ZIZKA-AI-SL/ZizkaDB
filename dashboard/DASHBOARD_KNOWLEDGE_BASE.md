@@ -732,7 +732,7 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 - **`write_event`** (`core/services/event_write.py:16-109`): upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
 - **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
-- **Memory** (`core/api/memory.py`): `POST /context` (recent + semantic search merged into a char-budgeted prompt block), `GET /diff/{session_id}` (session summary + new event types vs prior), `DELETE /forget` (deletes events by exact JSONB match + purges Qdrant; scoped key → own agent only, unbound key → 400, JWT → tenant-wide).
+- **Memory** (`core/api/memory.py`): `POST /context` (recent + semantic search merged into a char-budgeted prompt block), `GET /diff/{session_id}` (session summary + new event types vs prior), `DELETE /forget` (deletes events by exact JSONB match; Qdrant vectors are deleted **first** — if that fails with embeddings on it returns 503 and deletes nothing; response has `vector_cleanup`; logs only a hash of the value; scoped key → own agent only, unbound key → 400, JWT → tenant-wide).
 
 ### 18.5 Agents & baseline (`core/api/agents.py`)
 

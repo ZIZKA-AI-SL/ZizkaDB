@@ -9,7 +9,7 @@ export ZIZKADB_AGENT="${ZIZKADB_AGENT:-golden-rag-bot}"
 COMPOSE=(docker compose -f "$ROOT/infra/docker-compose.yml" -f "$ROOT/infra/docker-compose.golden-path.yml")
 
 _core_ready() {
-  curl -sf "$ZIZKADB_HOST/health/deep" | python3 -c "
+  curl -s "$ZIZKADB_HOST/health/deep" | python3 -c "
 import sys, json
 checks = json.load(sys.stdin).get('checks', {})
 sys.exit(0 if checks.get('postgres', {}).get('ok') and checks.get('redis', {}).get('ok') else 1)
@@ -55,7 +55,7 @@ for i in $(seq 1 40); do
 done
 if [ "$ready" != true ]; then
   echo "ERROR: postgres/redis not ready — /health/deep:" >&2
-  curl -sf "$ZIZKADB_HOST/health/deep" || true
+  curl -s "$ZIZKADB_HOST/health/deep" || true
   "${COMPOSE[@]}" logs api --tail 40 >&2 || true
   exit 1
 fi
