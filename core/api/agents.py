@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, Query
 from services.exceptions import bad_request, conflict, not_found, service_unavailable
 from pydantic import BaseModel, Field
 
-from api.deps import assert_agent_allowed, get_tenant, require_dashboard_session
+from api.deps import (
+    assert_agent_allowed,
+    get_tenant,
+    is_unbound_api_key,
+    require_dashboard_session,
+)
 from db.connection import get_pool, get_redis, get_qdrant, QDRANT_COLLECTION
 from services.rate_limiter import (
     InMemoryStorage,
@@ -134,6 +139,9 @@ class CreateAgentKeyBody(BaseModel):
 
 @router.get("")
 async def list_agents(tenant: dict = Depends(get_tenant)):
+    # A key not yet bound to an agent owns no agents — never list the tenant.
+    if is_unbound_api_key(tenant):
+        return []
     pool = get_pool()
     scoped_agent = tenant.get("agent_id")
     agent_filter = ""

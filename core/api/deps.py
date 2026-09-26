@@ -10,7 +10,9 @@ bearer = HTTPBearer()
 # Any request with this token is accepted without a DB lookup.
 # Never set this in production managed cloud.
 _DEV_API_KEY = os.getenv("DEV_API_KEY", "")
-_IS_PRODUCTION = os.getenv("ENV", "development") == "production"
+# Dev keys are accepted only when ENV is explicitly development (or unset).
+# Anything else — "production", "staging", "prod", typos — rejects them.
+_DEV_MODE = os.getenv("ENV", "development").strip().lower() == "development"
 # SDK/MCP default vs legacy self-host .env — accept both in local dev only.
 _KNOWN_DEV_KEYS = frozenset({"zizkadb_dev_local", "agdb_dev_local"})
 
@@ -92,8 +94,22 @@ async def assert_agent_allowed(tenant: dict, agent_id: str) -> None:
         _raise_agent_mismatch()
 
 
+def dev_keys_enabled() -> bool:
+    """True when the hardcoded dev API keys are accepted (local dev only)."""
+    return _DEV_MODE
+
+
+def is_unbound_api_key(tenant: dict) -> bool:
+    """An API key not yet bound to an agent (e.g. the key issued at signup).
+
+    Such keys must not get tenant-wide access: routes either require an
+    explicit agent (which binds the key) or return nothing.
+    """
+    return bool(tenant.get("key_id")) and not tenant.get("agent_id")
+
+
 def _dev_key_accepted(token: str) -> bool:
-    if _IS_PRODUCTION:
+    if not _DEV_MODE:
         return False
     if _DEV_API_KEY:
         if token == _DEV_API_KEY:

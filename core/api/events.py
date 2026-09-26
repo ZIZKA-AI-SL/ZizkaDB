@@ -118,6 +118,20 @@ async def query_events(
 # Causal chain: walk parent_event_id tree
 # ─────────────────────────────────────────
 
+def _truncate_chain_to_agent(rows: list, agent_id: str) -> list:
+    """Keep the chain prefix (from depth 0) whose events belong to ``agent_id``.
+
+    Mirrors the scoped CTE, which stops recursing at the first event from
+    another agent.
+    """
+    max_depth = len(rows)
+    for r in rows:
+        if r["agent_id"] != agent_id:
+            max_depth = min(max_depth, r["depth"])
+    # Preserve the query's ordering for the response.
+    return [r for r in rows if r["depth"] < max_depth]
+
+
 @router.get("/{event_id}/why")
 async def why(
     event_id: str,
@@ -171,6 +185,12 @@ async def why(
         raise not_found("Event not found")
 
     await assert_agent_allowed(tenant, anchor["agent_id"])
+    if scoped_agent is None and tenant.get("agent_id"):
+        # The key was unassigned and just got bound by this request; the CTE
+        # ran unfiltered, so drop other agents' events. The chain is a single
+        # path, so cut it at the first foreign ancestor.
+        scoped_agent = tenant["agent_id"]
+        rows = _truncate_chain_to_agent(rows, scoped_agent)
 
     ordered = sorted(rows, key=lambda r: r["depth"], reverse=True)
     root = ordered[0]

@@ -14,7 +14,7 @@ from typing import Any
 import json
 import logging
 
-from api.deps import get_tenant, assert_agent_allowed
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from db.connection import get_pool, get_qdrant
 from services.embeddings import generate_embedding
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
@@ -333,6 +333,12 @@ async def forget(
         await db.forget(filter_key="user_id", filter_value="user_123")
         await db.forget(filter_key="email", filter_value="user@company.com")
     """
+    # An unbound key must not delete tenant-wide; only dashboard sessions may.
+    if is_unbound_api_key(tenant):
+        raise bad_request(
+            "forget requires an agent-scoped API key: log an event with this key "
+            "first, or use the dashboard for a tenant-wide forget."
+        )
     tenant_id = tenant["tenant_id"]
     pool = get_pool()
 

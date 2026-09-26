@@ -83,8 +83,14 @@ async def lifespan(app: FastAPI):
         if not _cors_allowed_origins:
             warn_if_production_cors_wildcard(_cors_allowed_origins)
     await init_db()
-    # Seed dev tenant for local self-host (ENV=development) or when DEV_API_KEY is set.
-    if os.getenv("ENV", "development") == "development" or os.getenv("DEV_API_KEY"):
+    # Seed dev tenant only when dev keys are actually accepted (ENV=development).
+    from api.deps import dev_keys_enabled
+
+    if dev_keys_enabled():
+        logger.warning(
+            "DEV MODE: hardcoded dev API keys (zizkadb_dev_local) are accepted. "
+            "Set ENV=production for any public deployment."
+        )
         await _ensure_dev_tenant(get_pool())
     logger.info("ZizkaDB started")
     yield

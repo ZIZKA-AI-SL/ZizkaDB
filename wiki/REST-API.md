@@ -56,7 +56,7 @@ GET /v1/events/{event_id}/why?depth=10
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/agents` | List agents |
+| GET | `/v1/agents` | List agents (a key not yet bound to an agent gets `[]`) |
 | POST | `/v1/agents` | Create agent + first key (dashboard JWT only) |
 | DELETE | `/v1/agents/{id}` | Delete agent + events + keys |
 | POST | `/v1/agents/{id}/test-event` | Dashboard test (JWT) |
@@ -83,7 +83,7 @@ GET /v1/events/{event_id}/why?depth=10
 |--------|------|-------------|
 | POST | `/v1/memory/context` | Prompt-ready context for an agent (`agent` required) |
 | GET | `/v1/memory/diff` | What changed after a session |
-| DELETE | `/v1/memory/forget` | GDPR-style delete by metadata field |
+| DELETE | `/v1/memory/forget` | GDPR-style delete by metadata field (agent-scoped key: own agent only; unbound key: 400; dashboard: tenant-wide) |
 
 Scoped API keys must match the `agent` on these routes (`assert_agent_allowed`).
 

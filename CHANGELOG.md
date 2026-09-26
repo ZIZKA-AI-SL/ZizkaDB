@@ -21,6 +21,14 @@ Fifteen-day self-host / OSS hardening pass. User-visible highlights:
 - Enterprise marketing (`/enterprise`), enterprise pricing tier, and enterprise-specific docs — OSS repo is self-host only; commercial VPC lives in the private cloud repo ([docs/REPO_SPLIT.md](docs/REPO_SPLIT.md))
 - `enterprise` plan from `PLAN_ENTITLEMENTS`; demo-request `source` allowlist is now `landing` and `newsletter` only
 
+### Security
+
+- Dev API keys (`zizkadb_dev_local`) are accepted only when `ENV` is `development` (or unset). Previously any value other than exactly `production` (e.g. `staging`, `prod`) accepted them. The API logs a `DEV MODE` warning on startup whenever they are active.
+- API keys not yet bound to an agent (e.g. the key issued at signup) no longer get tenant-wide access: `GET /v1/agents` returns `[]`, `GET /v1/sessions` and `GET /v1/sessions/{id}/events` require `?agent=` (which binds the key), and `DELETE /v1/memory/forget` returns 400. Dashboard sessions keep tenant-wide access.
+- `GET /v1/sessions/{id}/events` no longer binds the key to the first returned event's agent; it accepts an optional `?agent=` filter.
+- `GET /v1/sessions/{id}/why/{event_id}` and `GET /v1/events/{id}/why` no longer return other agents' ancestor events to an agent-scoped key.
+- `GET /v1/sessions?agent=X` with a key scoped to another agent now returns 403 (previously silently returned the key's own sessions).
+
 ### Changed
 
 - Dashboard CI runs `npm test` (vitest) alongside lint and build

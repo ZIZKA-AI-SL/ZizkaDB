@@ -7,13 +7,33 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
-from api.deps import get_tenant, assert_agent_allowed
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from api.events import _format_event
 from db.connection import get_pool
-from services.exceptions import not_found
+from services.exceptions import bad_request, not_found
 from services.why_analysis import analyze_why_chain
 
 router = APIRouter()
+
+_UNBOUND_AGENT_REQUIRED = (
+    "agent is required when using an unassigned API key. "
+    "Pass ?agent= or log an event first to bind the key."
+)
+
+
+async def _resolve_agent_filter(tenant: dict, agent: str | None) -> str | None:
+    """Agent to filter a session read by, without binding keys to arbitrary rows.
+
+    Explicit ``agent`` is authorized (binding an unassigned key); otherwise a
+    scoped key is limited to its own agent, an unbound key is rejected, and
+    dashboard/dev sessions see every agent.
+    """
+    if agent:
+        await assert_agent_allowed(tenant, agent)
+        return agent
+    if is_unbound_api_key(tenant):
+        raise bad_request(_UNBOUND_AGENT_REQUIRED)
+    return tenant.get("agent_id")
 
 
 @router.get("")
@@ -22,11 +42,9 @@ async def list_sessions(
     agent: str | None = None,
     tenant: dict = Depends(get_tenant),
 ):
+    agent = await _resolve_agent_filter(tenant, agent)
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
-    scoped_agent = tenant.get("agent_id")
-    if scoped_agent:
-        agent = scoped_agent
 
     conditions = ["tenant_id = $1", "session_id IS NOT NULL"]
     params: list[Any] = [tenant_id]
@@ -74,11 +92,12 @@ async def list_sessions(
 async def session_events(
     session_id: str,
     limit: int = Query(default=500, ge=1, le=2000),
+    agent: str | None = None,
     tenant: dict = Depends(get_tenant),
 ):
+    scoped_agent = await _resolve_agent_filter(tenant, agent)
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
-    scoped_agent = tenant.get("agent_id")
 
     conditions = ["tenant_id = $1", "session_id = $2"]
     params: list[Any] = [tenant_id, session_id]
@@ -88,7 +107,6 @@ async def session_events(
 
     params.append(limit)
     where = " AND ".join(conditions)
-    agent_param = "$3" if scoped_agent else None
 
     rows = await pool.fetch(
         f"""
@@ -103,9 +121,6 @@ async def session_events(
     )
     if not rows:
         return {"session_id": session_id, "events": []}
-
-    for r in rows:
-        await assert_agent_allowed(tenant, r["agent_id"])
 
     return {
         "session_id": session_id,
@@ -142,6 +157,9 @@ async def session_why(
         raise not_found("Event not found in session")
 
     await assert_agent_allowed(tenant, anchor["agent_id"])
+    # After the check the key is bound (or it is a dashboard/dev session):
+    # never walk into another agent's events.
+    scoped_agent = tenant.get("agent_id")
 
     rows = await pool.fetch(
         """
@@ -162,6 +180,7 @@ async def session_why(
             FROM events e
             INNER JOIN causal_chain cc ON e.event_id = cc.parent_event_id
             WHERE e.tenant_id = $2 AND cc.depth < $3
+              AND ($4::text IS NULL OR e.agent_id = $4)
         )
         SELECT * FROM causal_chain
         ORDER BY depth DESC, timestamp ASC
@@ -169,6 +188,7 @@ async def session_why(
         event_id,
         tenant_id,
         depth,
+        scoped_agent,
     )
 
     ordered = sorted(rows, key=lambda r: r["depth"], reverse=True)
@@ -181,7 +201,7 @@ async def session_why(
         depth_limit=depth,
         root_event_type=root["event_type"],
         root_has_parent=root["parent_event_id"] is not None,
-        scoped_agent=None,
+        scoped_agent=scoped_agent,
         chain_agents=chain_agents,
     )
 

@@ -64,6 +64,10 @@ token-optimization, suggestions, memory/context, memory/diff, events/why)?
   → Depends(get_tenant)  AND  assert_agent_allowed(tenant, agent_id)  at the top of the handler
     (for memory/diff & events/why the agent is resolved from the row, then asserted;
      memory/forget constrains its delete to the scoped agent when the key is scoped)
+
+Could an API key with no agent yet (is_unbound_api_key) reach tenant-wide data here?
+  → require an explicit agent (assert_agent_allowed binds it) or return nothing.
+    Never call assert_agent_allowed on arbitrary result rows — that binds the key.
 ```
 
 Both dependency functions are in `api/deps.py`. `require_dashboard_session` is the pre-built instance
@@ -136,7 +140,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 2. Runs `ALTER TABLE` migrations idempotently
 3. Creates community/SDK/marketing tables if missing
 4. Backfills `users.plan = 'pro'` for users with `plan IS NULL`
-5. Seeds a dev tenant when `ENV=development` or `DEV_API_KEY` is set
+5. Seeds a dev tenant (and logs a `DEV MODE` warning) only when `ENV` is `development` or unset — same gate as dev-key acceptance (`api.deps.dev_keys_enabled()`)
 
 ---
 

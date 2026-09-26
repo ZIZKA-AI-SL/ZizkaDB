@@ -5,7 +5,7 @@ from services.exceptions import bad_request
 from pydantic import BaseModel, Field
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from api.deps import assert_agent_allowed, get_tenant
+from api.deps import assert_agent_allowed, get_tenant, is_unbound_api_key
 from db.connection import get_pool, get_qdrant
 from services.embeddings import generate_embedding
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
@@ -26,7 +26,7 @@ async def semantic_search(
 ):
     tenant_id = tenant["tenant_id"]
     agent = body.agent or tenant.get("agent_id")
-    if tenant.get("key_id") and not tenant.get("agent_id") and not agent:
+    if is_unbound_api_key(tenant) and not agent:
         raise bad_request(
             "agent is required when using an unassigned API key. "
             "Pass agent in the request body or log an event first to bind the key."
