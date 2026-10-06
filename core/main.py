@@ -41,7 +41,18 @@ def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:
 
 
 _DEFAULT_DEV_KEYS = frozenset({"zizkadb_dev_local", "agdb_dev_local"})
-_DEFAULT_JWT_SECRETS = frozenset({"", "dev-secret-change-in-production"})
+# Values published in .env.example, Compose defaults, and auth.py dev fallbacks.
+_DEFAULT_JWT_SECRETS = frozenset(
+    {
+        "",
+        "dev-secret",
+        "dev-refresh-secret",
+        "dev-secret-change-in-production",
+        "dev-refresh-secret-change-in-production",
+        "change-this-to-a-random-32-char-string",
+        "change-this-to-another-random-32-char-string",
+    }
+)
 # Self-host dashboard admin token: the login rate limit keys on client IP, which
 # a client can vary, so the token itself must resist brute force.
 _MIN_SELFHOST_ADMIN_TOKEN_LEN = 16
@@ -52,8 +63,10 @@ def validate_production_startup(
     dev_key: str,
     jwt_secret: str,
     selfhost_admin_token: str = "",
+    jwt_refresh_secret: str = "",
 ) -> None:
     """Refuse production boot with known-insecure defaults."""
+    env = env.strip().lower()
     if env != "production":
         return
     if not dev_key or dev_key in _DEFAULT_DEV_KEYS:
@@ -61,10 +74,10 @@ def validate_production_startup(
             "Refusing to start with ENV=production and a dev/default DEV_API_KEY. "
             "Unset DEV_API_KEY or set a unique secret in infra/.env."
         )
-    if jwt_secret in _DEFAULT_JWT_SECRETS:
+    if jwt_secret in _DEFAULT_JWT_SECRETS or jwt_refresh_secret in _DEFAULT_JWT_SECRETS:
         raise RuntimeError(
-            "Refusing to start with ENV=production and default JWT_SECRET. "
-            "Set a strong JWT_SECRET in infra/.env."
+            "Refusing to start with ENV=production and a published or default JWT secret. "
+            "Set strong JWT_SECRET and JWT_REFRESH_SECRET in infra/.env."
         )
     token = selfhost_admin_token.strip()
     if token and len(token) < _MIN_SELFHOST_ADMIN_TOKEN_LEN:
@@ -77,13 +90,14 @@ def validate_production_startup(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    env = os.getenv("ENV", "development")
+    env = os.getenv("ENV", "development").strip().lower()
     if env == "production":
         validate_production_startup(
             env,
             os.getenv("DEV_API_KEY", ""),
             os.getenv("JWT_SECRET", ""),
             os.getenv("SELFHOST_ADMIN_TOKEN", ""),
+            os.getenv("JWT_REFRESH_SECRET", ""),
         )
         from services.entitlements import limits_enforced
 
