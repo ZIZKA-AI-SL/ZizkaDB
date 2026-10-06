@@ -57,7 +57,7 @@ From zero to your first causal chain with one command. No repo clone needed.
   <a href="scripts/quickstart-remote.sh"><img src="docs/assets/quickstart-terminal.svg" alt="Terminal animation: one curl command downloads config, pulls images, starts the stack, installs the SDK and prints a causal chain" width="900"/></a>
 </p>
 
-**1. Start Docker.** [Docker](https://docs.docker.com/get-docker/) must be running. The first image pull can take 5–10 minutes; later starts take seconds.
+**1. Start Docker.** [Docker](https://docs.docker.com/get-docker/) must be running, Starts take  seconds.
 
 **2. Install and run.** This downloads config and pre-built images, starts Postgres, Qdrant, Redis, the API and the dashboard, then runs a demo agent:
 
