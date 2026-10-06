@@ -68,17 +68,50 @@ else
   ok "OPENAI_API_KEY looks configured"
 fi
 
-# JWT placeholders
-if [ "${JWT_SECRET:-}" = "change-this-to-a-random-32-char-string" ]; then
-  if [ "$PRODUCTION_MODE" -eq 1 ]; then
-    fail "JWT_SECRET is still the default placeholder"
-  else
-    warn "JWT_SECRET is default placeholder (ok for local dev)"
+# JWT placeholders (must match core/main.py _DEFAULT_JWT_SECRETS minus empty string)
+_JWT_PLACEHOLDERS=(
+  "dev-secret"
+  "dev-refresh-secret"
+  "dev-secret-change-in-production"
+  "dev-refresh-secret-change-in-production"
+  "change-this-to-a-random-32-char-string"
+  "change-this-to-another-random-32-char-string"
+)
+
+_jwt_is_placeholder() {
+  local val="${1:-}"
+  local p
+  for p in "${_JWT_PLACEHOLDERS[@]}"; do
+    if [ "$val" = "$p" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+_check_jwt_var() {
+  local var_name="$1"
+  local val="${!var_name:-}"
+  if [ -z "$val" ]; then
+    if [ "$PRODUCTION_MODE" -eq 1 ]; then
+      fail "$var_name must be set in production (API refuses published or empty JWT secrets)"
+    fi
+    return
   fi
-fi
+  if _jwt_is_placeholder "$val"; then
+    if [ "$PRODUCTION_MODE" -eq 1 ]; then
+      fail "$var_name is still a published placeholder (API refuses to start in production)"
+    else
+      warn "$var_name is a default placeholder (ok for local dev)"
+    fi
+  fi
+}
+
+_check_jwt_var JWT_SECRET
+_check_jwt_var JWT_REFRESH_SECRET
 
 # Environment mode
-ENV_VAL="${ENV:-development}"
+ENV_VAL="$(echo "${ENV:-development}" | tr '[:upper:]' '[:lower:]' | xargs)"
 if [ "$PRODUCTION_MODE" -eq 1 ]; then
   if [ "$ENV_VAL" != "production" ]; then
     fail "ENV must be production (currently: $ENV_VAL)"
