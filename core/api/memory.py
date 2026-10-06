@@ -18,6 +18,7 @@ import logging
 
 from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from db.connection import get_pool, get_qdrant
+from services import audit_chain
 from services.embeddings import generate_embedding
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
 
@@ -388,15 +389,21 @@ async def forget(
 
     # PostgreSQL does not support aggregate functions in RETURNING clauses.
     # We already know the count from the SELECT above, so use that directly.
-    await pool.execute(
-        """
-        DELETE FROM events
-        WHERE tenant_id = $1
-          AND event_id = ANY($2::uuid[])
-        """,
-        tenant_id,
-        event_ids,
-    )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Keep the erased events' chain links so the audit chain stays verifiable.
+            await audit_chain.record_erasures(
+                conn, tenant_id, "event_id = ANY($2::uuid[])", event_ids, reason="gdpr_forget"
+            )
+            await conn.execute(
+                """
+                DELETE FROM events
+                WHERE tenant_id = $1
+                  AND event_id = ANY($2::uuid[])
+                """,
+                tenant_id,
+                event_ids,
+            )
 
     # Never log the forgotten value itself (it is usually personal data).
     log.info(

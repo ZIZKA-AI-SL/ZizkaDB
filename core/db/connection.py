@@ -252,6 +252,28 @@ async def init_db():
         END $$;
     """)
 
+    # Audit hash chain (services/audit_chain.py). Events written before this
+    # migration keep chain_hash NULL and are reported as unchained.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS chain_hash VARCHAR(64);
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS prev_chain_hash VARCHAR(64);
+
+        CREATE TABLE IF NOT EXISTS event_erasures (
+            event_id        UUID PRIMARY KEY,
+            tenant_id       UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            sequence_no     BIGINT NOT NULL,
+            chain_hash      VARCHAR(64) NOT NULL,
+            prev_chain_hash VARCHAR(64),
+            reason          VARCHAR(32) NOT NULL,
+            erased_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_erasures_tenant_seq
+            ON event_erasures (tenant_id, sequence_no);
+        CREATE INDEX IF NOT EXISTS idx_events_tenant_chain
+            ON events (tenant_id, sequence_no)
+            WHERE chain_hash IS NOT NULL;
+    """)
+
     await _pg_pool.execute("""
         CREATE INDEX IF NOT EXISTS idx_api_keys_agent
         ON api_keys (tenant_id, agent_id)

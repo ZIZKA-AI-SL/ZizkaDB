@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from services.event_write import write_event
+from tests.conftest import stub_audit_chain, use_pool_as_connection
 from api.agents import _baseline_for, _baseline_for_timewindow
 
 
@@ -17,7 +18,8 @@ PARENT_EVENT_ID = "33333333-3333-3333-3333-333333333333"
 
 @pytest.fixture
 def mock_pool(monkeypatch):
-    pool = AsyncMock()
+    pool = use_pool_as_connection(AsyncMock())
+    stub_audit_chain(monkeypatch)
     monkeypatch.setattr("services.event_write.get_pool", lambda: pool)
     monkeypatch.setattr("services.event_write.get_qdrant", lambda: AsyncMock())
     monkeypatch.setattr(

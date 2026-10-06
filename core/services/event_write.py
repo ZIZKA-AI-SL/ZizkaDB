@@ -9,6 +9,7 @@ import os
 
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
+from services import audit_chain
 from services.embeddings import generate_embedding, event_to_text
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request
@@ -62,25 +63,30 @@ async def write_event(
     embed_on = embeddings_enabled()
     initial_status = "pending" if embed_on else "skipped"
 
-    row = await pool.fetchrow(
-        """
-        INSERT INTO events (
-            tenant_id, agent_id, event_type, data,
-            parent_event_id, session_id, checksum, metadata, index_status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING event_id, timestamp, sequence_no
-        """,
-        tenant_id,
-        agent,
-        event,
-        json.dumps(data),
-        parent_id,
-        session_id,
-        checksum,
-        json.dumps(metadata) if metadata else None,
-        initial_status,
-    )
+    # Insert and chain under one per-tenant lock so chain order == sequence order.
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await audit_chain.lock_tenant_chain(conn, tenant_id)
+            row = await conn.fetchrow(
+                """
+                INSERT INTO events (
+                    tenant_id, agent_id, event_type, data,
+                    parent_event_id, session_id, checksum, metadata, index_status
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING event_id, timestamp, sequence_no
+                """,
+                tenant_id,
+                agent,
+                event,
+                json.dumps(data),
+                parent_id,
+                session_id,
+                checksum,
+                json.dumps(metadata) if metadata else None,
+                initial_status,
+            )
+            chain_hash = await audit_chain.append_event(conn, tenant_id, row["event_id"])
 
     event_id = str(row["event_id"])
 
@@ -140,6 +146,7 @@ async def write_event(
         "timestamp": row["timestamp"].isoformat(),
         "sequence_no": row["sequence_no"],
         "checksum": checksum,
+        "chain_hash": chain_hash,
         "indexed": indexed,
         "index_status": index_status,
     }
