@@ -379,7 +379,7 @@ async def _ensure_dev_tenant(pool) -> None:
 
 
 @router.post("/test-event")
-async def test_event(tenant: dict = Depends(get_tenant)):
+async def test_event(tenant: dict = Depends(require_dashboard_session)):
     """
     Log a test event using the dashboard session (JWT).
     Verifies the tenant pipeline without an API key.

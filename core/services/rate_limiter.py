@@ -40,6 +40,16 @@ class RateLimitStorage(ABC):
         """Clear all rate limit entries (useful for test resets)."""
         pass
 
+    async def check_and_record_hit(
+        self, key: str, limit: int, window_sec: int, now: float
+    ) -> bool:
+        """Atomically check if key is under limit and record hit. Default check-then-record."""
+        hits = await self.get_hits(key, window_sec)
+        if len(hits) >= limit:
+            return False
+        await self.record_hit(key, now, window_sec)
+        return True
+
 
 class InMemoryStorage(RateLimitStorage):
     """
@@ -133,6 +143,21 @@ class InMemoryStorage(RateLimitStorage):
         with self._lock:
             self._data.clear()
 
+    async def check_and_record_hit(
+        self, key: str, limit: int, window_sec: int, now: float
+    ) -> bool:
+        """Atomically check if key is under limit and record hit under lock."""
+        cutoff = now - window_sec
+        with self._lock:
+            hits = [t for t in self._data.get(key, []) if t > cutoff]
+            if len(hits) >= limit:
+                if key in self._data or hits:
+                    self._data[key] = hits
+                return False
+            hits.append(now)
+            self._data[key] = hits
+            return True
+
     def close(self):
         """Stop periodic GC thread if running."""
         if self._gc_thread:
@@ -144,6 +169,24 @@ class RedisStorage(RateLimitStorage):
     """
     A Redis-backed storage implementation for tracking rate limit hits.
     Uses sorted sets (ZSET) to store hit timestamps and enforce expiry.
+    """
+
+    _RATE_LIMIT_LUA = """
+    local key = KEYS[1]
+    local limit = tonumber(ARGV[1])
+    local window_sec = tonumber(ARGV[2])
+    local now = tonumber(ARGV[3])
+    local member = ARGV[4]
+    local cutoff = now - window_sec
+
+    redis.call('zremrangebyscore', key, '-inf', cutoff)
+    local count = redis.call('zcard', key)
+    if count >= limit then
+        return 0
+    end
+    redis.call('zadd', key, now, member)
+    redis.call('expire', key, window_sec)
+    return 1
     """
 
     def __init__(self, key_prefix: str = "ratelimit"):
@@ -208,6 +251,25 @@ class RedisStorage(RateLimitStorage):
         if keys:
             await redis_client.delete(*keys)
 
+    async def check_and_record_hit(
+        self, key: str, limit: int, window_sec: int, now: float
+    ) -> bool:
+        """Atomically check if key is under limit and record hit via Redis Lua script."""
+        redis_client = get_redis()
+        rkey = self._get_redis_key(key)
+        val = f"{now}:{uuid.uuid4().hex}"
+        try:
+            allowed = await redis_client.eval(
+                self._RATE_LIMIT_LUA, 1, rkey, limit, window_sec, now, val,
+            )
+            return bool(allowed)
+        except Exception:
+            hits = await self.get_hits(key, window_sec)
+            if len(hits) >= limit:
+                return False
+            await self.record_hit(key, now, window_sec)
+            return True
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Rate Limiting Strategies
@@ -240,14 +302,13 @@ class SlidingWindowStrategy(RateLimitStrategy):
         Check the limit using a sliding window algorithm.
         Raises HTTPException 429 if the request count exceeds the limit.
         """
-        hits = await storage.get_hits(key, window_sec)
-        if len(hits) >= limit:
+        now = time.time()
+        allowed = await storage.check_and_record_hit(key, limit, window_sec, now)
+        if not allowed:
             logger.warning(
                 f"Rate limit exceeded (SlidingWindow) for key: {key} (limit={limit}, window={window_sec}s)"
             )
             raise rate_limit_exceeded(detail=detail)
-
-        await storage.record_hit(key, time.time(), window_sec)
 
 
 class FixedWindowStrategy(RateLimitStrategy):
@@ -268,14 +329,12 @@ class FixedWindowStrategy(RateLimitStrategy):
         window_start = int(now // window_sec)
         fixed_key = f"{key}:fixed:{window_start}"
 
-        hits = await storage.get_hits(fixed_key, window_sec)
-        if len(hits) >= limit:
+        allowed = await storage.check_and_record_hit(fixed_key, limit, window_sec, now)
+        if not allowed:
             logger.warning(
                 f"Rate limit exceeded (FixedWindow) for key: {key} (limit={limit}, window={window_sec}s)"
             )
             raise rate_limit_exceeded(detail=detail)
-
-        await storage.record_hit(fixed_key, now, window_sec)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
