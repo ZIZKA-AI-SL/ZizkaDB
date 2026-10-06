@@ -223,8 +223,16 @@ async def session_diff(
         print(diff["summary"])
         print(diff["new_patterns"])
     """
+    if is_unbound_api_key(tenant):
+        raise bad_request(
+            "diff requires an agent-scoped API key: log an event with this key "
+            "first, or use the dashboard for tenant-wide session diffs."
+        )
+
     tenant_id = tenant["tenant_id"]
     pool = get_pool()
+
+    scoped_agent = tenant.get("agent_id")
 
     # Events in this session
     rows = await pool.fetch(
@@ -248,6 +256,8 @@ async def session_diff(
     has_error = False
 
     for row in rows:
+        if scoped_agent and row["agent_id"] != scoped_agent:
+            continue
         data = row["data"]
         if isinstance(data, str):
             try:

@@ -206,6 +206,22 @@ async def verify_otp(
 
     valid = bcrypt.checkpw(otp.encode(), row["otp_hash"].encode())
     if not valid:
+        try:
+            attempts = (row["attempts"] if "attempts" in row else 0) + 1
+            max_attempts = row["max_attempts"] if "max_attempts" in row else 5
+            if attempts >= max_attempts:
+                await pool.execute(
+                    "UPDATE auth_otps SET used = TRUE, attempts = $2 WHERE otp_id = $1",
+                    row["otp_id"], attempts,
+                )
+                raise ValueError("Too many failed attempts. Please request a new code.")
+            await pool.execute(
+                "UPDATE auth_otps SET attempts = $2 WHERE otp_id = $1",
+                row["otp_id"], attempts,
+            )
+        except (KeyError, Exception) as e:
+            if "Too many failed attempts" in str(e):
+                raise
         raise ValueError("Invalid OTP")
 
     user_exists = await email_exists(email)
