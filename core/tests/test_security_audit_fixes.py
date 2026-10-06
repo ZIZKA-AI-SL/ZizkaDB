@@ -1,6 +1,5 @@
 """Security regression tests verifying vulnerability audit fixes."""
 
-import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -97,24 +96,32 @@ def test_auth_test_event_dependency_is_dashboard_session():
 
 def test_client_ip_untrusted_proxy_ignores_x_forwarded_for():
     """Untrusted peer IP cannot spoof X-Forwarded-For."""
+    from api.utils import _parse_trusted_proxies
+    _parse_trusted_proxies.cache_clear()
     mock_request = MagicMock()
     mock_request.client.host = "203.0.113.50"
     mock_request.headers = {"x-forwarded-for": "10.0.0.1"}
 
     with patch.dict("os.environ", {"TRUSTED_PROXIES": "127.0.0.1"}):
+        _parse_trusted_proxies.cache_clear()
         ip = client_ip(mock_request)
         assert ip == "203.0.113.50"
+    _parse_trusted_proxies.cache_clear()
 
 
 def test_client_ip_trusted_proxy_accepts_x_forwarded_for():
     """Trusted proxy IP allows extracting client IP from X-Forwarded-For."""
+    from api.utils import _parse_trusted_proxies
+    _parse_trusted_proxies.cache_clear()
     mock_request = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.headers = {"x-forwarded-for": "203.0.113.50, 10.0.0.1"}
 
     with patch.dict("os.environ", {"TRUSTED_PROXIES": "127.0.0.1"}):
+        _parse_trusted_proxies.cache_clear()
         ip = client_ip(mock_request)
         assert ip == "203.0.113.50"
+    _parse_trusted_proxies.cache_clear()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -189,8 +196,9 @@ async def test_request_id_middleware_sanitizes_crlf():
 # 7. Community Image Upload Magic Bytes Validation
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_community_upload_magic_bytes_rejected():
+def test_community_upload_magic_bytes_rejected(tmp_path, monkeypatch):
     """File with .png extension but text content is rejected with 400."""
+    monkeypatch.setattr("api.community.UPLOAD_DIR", tmp_path)
     res = client.post(
         "/v1/community/upload",
         files={"file": ("malicious.png", b"<script>alert(1)</script>", "image/png")},

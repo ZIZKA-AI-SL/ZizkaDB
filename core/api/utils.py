@@ -2,29 +2,43 @@
 
 from __future__ import annotations
 
+import functools
+import ipaddress
+import os
 import time
 
 from fastapi import HTTPException, Request
 
 
-import ipaddress
-import os
-
 _DEFAULT_TRUSTED_PROXIES = "127.0.0.1,::1,testclient"
+
+
+@functools.lru_cache(maxsize=1)
+def _parse_trusted_proxies() -> tuple[frozenset[str], tuple[str, ...]]:
+    """Parse TRUSTED_PROXIES once and cache. Returns (exact_set, cidr_list)."""
+    raw = os.getenv("TRUSTED_PROXIES", _DEFAULT_TRUSTED_PROXIES)
+    exact: set[str] = set()
+    cidrs: list[str] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "/" in item:
+            cidrs.append(item)
+        else:
+            exact.add(item)
+    return frozenset(exact), tuple(cidrs)
 
 
 def _is_trusted_proxy(ip: str | None) -> bool:
     if not ip or ip == "unknown":
         return False
-    trusted_raw = os.getenv("TRUSTED_PROXIES", _DEFAULT_TRUSTED_PROXIES)
-    for item in trusted_raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        if ip == item:
-            return True
+    exact, cidrs = _parse_trusted_proxies()
+    if ip in exact:
+        return True
+    for cidr in cidrs:
         try:
-            if "/" in item and ipaddress.ip_address(ip) in ipaddress.ip_network(item):
+            if ipaddress.ip_address(ip) in ipaddress.ip_network(cidr):
                 return True
         except ValueError:
             continue
