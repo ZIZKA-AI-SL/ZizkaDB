@@ -92,10 +92,8 @@ _jwt_is_placeholder() {
 _check_jwt_var() {
   local var_name="$1"
   local val="${!var_name:-}"
+  # Unset is already reported by the required-var loop above.
   if [ -z "$val" ]; then
-    if [ "$PRODUCTION_MODE" -eq 1 ]; then
-      fail "$var_name must be set in production (API refuses published or empty JWT secrets)"
-    fi
     return
   fi
   if _jwt_is_placeholder "$val"; then
