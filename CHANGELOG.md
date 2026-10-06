@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed: GDPR forget and agent delete failed on events with causal children
+
+- `DELETE /v1/memory/forget` and `DELETE /v1/agents/{agent_id}` returned 500 (`events_parent_event_id_fkey` violation) whenever a deleted event was the parent of another event — e.g. a planner decision that an executor's action points to. Forget had already removed the vectors from Qdrant before the Postgres delete failed.
+- `events.parent_event_id` is now `ON DELETE SET NULL`: the child event keeps its own record and only loses the link to the erased parent. Existing databases are migrated on API startup (idempotent).
+
 ### Self-hosted dashboard is just the dashboard
 
 - Self-hosted builds (`NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted`, the default for the GHCR image) no longer serve the marketing site, signup, pricing, OTP login or billing UI. `http://localhost:3001/` goes straight to **Open my dashboard**.
