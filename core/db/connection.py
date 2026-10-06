@@ -213,6 +213,14 @@ async def init_db():
         WHERE index_status IN ('pending', 'failed');
     """)
 
+    # Time travel reads only an agent's state writes; without this index, finding them can
+    # mean scanning every event in the table.
+    await _pg_pool.execute("""
+        CREATE INDEX IF NOT EXISTS idx_events_state_writes
+        ON events (tenant_id, agent_id, timestamp)
+        WHERE event_type IN ('STATE_SET', 'STATE_DELETE');
+    """)
+
     await _pg_pool.execute("""
         ALTER TABLE tenants
         ADD COLUMN IF NOT EXISTS embedding_provider VARCHAR(32)

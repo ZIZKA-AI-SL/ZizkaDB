@@ -5,7 +5,6 @@ from typing import Any
 from uuid import UUID
 from datetime import datetime
 import json
-import os
 
 from api.deps import get_tenant, assert_agent_allowed
 from db.connection import get_pool
@@ -13,12 +12,6 @@ from services.event_write import write_event
 from services.why_analysis import analyze_why_chain
 
 router = APIRouter()
-
-_EVENTS_AT_MAX_ROWS = int(os.getenv("EVENTS_AT_MAX_ROWS", "10000"))
-
-
-def _events_at_max_rows() -> int:
-    return max(1, min(_EVENTS_AT_MAX_ROWS, 100_000))
 
 
 # ─────────────────────────────────────────
@@ -220,6 +213,63 @@ async def why(
 # Reconstruct agent state at a given time
 # ─────────────────────────────────────────
 
+# The state at T is, per key, the newest write to that key at or before T: a
+# STATE_SET carrying the key, a STATE_DELETE naming it (the key is then absent),
+# or, for "_last_event", the newest event of any other type. Postgres picks the
+# winner per key in one pass over the agent's state events, so the answer is exact
+# for any history length and one row per surviving key leaves the database.
+# Ties on timestamp go to sequence_no.
+_STATE_AT_SQL = """
+    WITH state_writes AS (
+        SELECT w.key, w.value_json, NULL::uuid AS event_id, s.timestamp, s.sequence_no
+        FROM events s
+        CROSS JOIN LATERAL (
+            SELECT kv.key, kv.value::text AS value_json
+            FROM jsonb_each(
+                CASE WHEN s.event_type = 'STATE_SET' AND jsonb_typeof(s.data) = 'object'
+                     THEN s.data ELSE '{}'::jsonb END
+            ) AS kv
+
+            UNION ALL
+
+            -- The key dict.pop(data.get("key", "")) would remove: the named key
+            -- when it is a string, "" when the field is missing, nothing otherwise.
+            -- A NULL value marks the key as deleted.
+            SELECT COALESCE(s.data->>'key', ''), NULL
+            WHERE s.event_type = 'STATE_DELETE'
+              AND jsonb_typeof(s.data) = 'object'
+              AND (NOT (s.data ? 'key') OR jsonb_typeof(s.data->'key') = 'string')
+        ) AS w
+        WHERE s.tenant_id = $1
+          AND s.agent_id = $2
+          AND s.timestamp <= $3
+          AND s.event_type IN ('STATE_SET', 'STATE_DELETE')
+    ),
+    last_event AS (
+        SELECT '_last_event'::text AS key, NULL::text AS value_json, event_id,
+               timestamp, sequence_no
+        FROM events
+        WHERE tenant_id = $1
+          AND agent_id = $2
+          AND timestamp <= $3
+          AND event_type NOT IN ('STATE_SET', 'STATE_DELETE')
+        ORDER BY timestamp DESC, sequence_no DESC
+        LIMIT 1
+    ),
+    latest AS (
+        SELECT DISTINCT ON (key) key, value_json, event_id
+        FROM (SELECT * FROM state_writes UNION ALL SELECT * FROM last_event) AS w
+        ORDER BY key, timestamp DESC, sequence_no DESC
+    )
+    SELECT l.key, l.value_json, e.event_id, e.event_type, e.timestamp,
+           e.data::text AS event_json
+    FROM latest l
+    LEFT JOIN events e ON e.event_id = l.event_id
+    WHERE l.value_json IS NOT NULL OR l.event_id IS NOT NULL
+    ORDER BY l.key
+"""
+
+
 @router.get("/at")
 async def time_travel(
     agent: str,
@@ -229,48 +279,37 @@ async def time_travel(
     await assert_agent_allowed(tenant, agent)
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
-    max_rows = _events_at_max_rows()
 
-    rows = await pool.fetch(
-        """
-        SELECT event_id, agent_id, timestamp, event_type,
-               data, parent_event_id, session_id, sequence_no, metadata
-        FROM events
-        WHERE tenant_id = $1
-          AND agent_id = $2
-          AND timestamp <= $3
-        ORDER BY timestamp ASC
-        LIMIT $4
-        """,
-        tenant_id, agent, timestamp, max_rows + 1,
-    )
+    # One snapshot for both reads, so event_count and state describe the same history.
+    async with pool.acquire() as conn:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            event_count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE tenant_id = $1 AND agent_id = $2 AND timestamp <= $3
+                """,
+                tenant_id, agent, timestamp,
+            )
+            rows = await conn.fetch(_STATE_AT_SQL, tenant_id, agent, timestamp)
 
-    truncated = len(rows) > max_rows
-    if truncated:
-        rows = rows[:max_rows]
-
-    # Reduce events to state (event sourcing pattern)
     state: dict[str, Any] = {}
     for row in rows:
-        data = json.loads(row["data"]) if isinstance(row["data"], str) else dict(row["data"])
-        if row["event_type"] == "STATE_SET":
-            state.update(data)
-        elif row["event_type"] == "STATE_DELETE":
-            state.pop(data.get("key", ""), None)
+        if row["event_id"] is None:
+            state[row["key"]] = json.loads(row["value_json"])
         else:
             state["_last_event"] = {
                 "event_id": str(row["event_id"]),
                 "type": row["event_type"],
                 "timestamp": row["timestamp"].isoformat(),
-                "data": data,
+                "data": json.loads(row["event_json"]),
             }
 
     return {
         "agent": agent,
         "at": timestamp.isoformat(),
-        "event_count": len(rows),
-        "truncated": truncated,
-        "max_rows": max_rows,
+        "event_count": event_count,
+        # Kept for clients that read it; the state above is never cut short.
+        "truncated": False,
         "state": state,
     }
 

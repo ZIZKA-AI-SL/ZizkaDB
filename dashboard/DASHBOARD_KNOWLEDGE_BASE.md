@@ -638,7 +638,7 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 |---|---|---|
 | `getEvents` | GET `/v1/events` | `events.py:64` |
 | `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:123` |
-| `timeTravel` | GET `/v1/events/at` | `events.py:173` |
+| `timeTravel` | GET `/v1/events/at` | `events.py:274` |
 | `searchEvents` | POST `/v1/search` | `search.py:18` |
 | `getMemoryDiff` | GET `/v1/memory/diff/{sessionId}` | `memory.py:190` |
 
@@ -1000,7 +1000,7 @@ Schema sources: `core/db/schema.sql` (base DDL, Docker init) + named migrations 
 | `api_keys` | `key_id` (PK), `tenant_id`, `agent_id` (NULL = unassigned until first use, set = bound to one agent), `key_hash` (SHA-256, unique), `key_prefix`, `revoked`, `last_used` | API-key auth; hashed only, prefix for display |
 | `users` | `user_id` (PK), `email` (unique), `tenant_id`, **billing cols** (see §21.2), `gdpr_consent_at`, `marketing_consent`, `last_login` | Dashboard users (passwordless OTP). **All billing state lives here.** |
 | `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used` | Passwordless login OTPs (15-min expiry) |
-| `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256) | Append-only event log — source of truth. HNSW index on `embedding` (cosine) |
+| `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256) | Append-only event log — source of truth. HNSW index on `embedding` (cosine); partial index `idx_events_state_writes` on `(tenant_id, agent_id, timestamp)` for `STATE_SET`/`STATE_DELETE` serves time travel |
 | `usage_daily` | `(tenant_id, date)` (PK), `events_written`, `queries_run`, `searches_run` | Daily metering (only `events_written` is incremented today) |
 | `community_posts` | `post_id` (PK), `author_name`, `category`, `title`, `body`, `image_urls` (JSONB), `reply_count` | Public community board |
 | `community_replies` | `reply_id` (PK), `post_id` (FK cascade), `author_name`, `body` | Replies; bumps parent `reply_count` |

@@ -121,6 +121,11 @@ CREATE INDEX idx_events_session
 CREATE INDEX idx_events_type
     ON events (tenant_id, event_type, timestamp DESC);
 
+-- One agent's STATE_SET / STATE_DELETE events, for time travel (GET /v1/events/at)
+CREATE INDEX IF NOT EXISTS idx_events_state_writes
+    ON events (tenant_id, agent_id, timestamp)
+    WHERE event_type IN ('STATE_SET', 'STATE_DELETE');
+
 CREATE INDEX idx_events_data
     ON events USING gin (data);
 
