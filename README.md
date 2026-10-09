@@ -26,7 +26,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 
 - **Causal, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
 - **Time-travel.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment.
-- **Tamper-evident audit trail.** Every decision is logged with a checksum, so you have a verifiable record for EU AI Act Article 12.
+- **Tamper-evident audit trail.** Every decision is linked into a per-tenant hash chain you can verify with `GET /v1/events/verify`, so you have a verifiable record for EU AI Act Article 12.
 - **Drift detection.** See when an agent's behavior shifts from its baseline.
 - **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure.
 
@@ -210,7 +210,7 @@ From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.
 
 Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record:
 
-- **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum of its content, so any later edit is detectable.
+- **Hash-chained decision logs.** Every event is linked into a per-tenant hash chain that covers its agent, type, data, metadata, causal parent, session and timestamp. `GET /v1/events/verify` recomputes the chain and names the first event that was edited, deleted or reordered. Set `AUDIT_CHAIN_KEY` (kept outside the database) to make the chain an HMAC, so even someone with database write access cannot rebuild it. GDPR forget and agent delete leave hash-only erasure records, so lawful erasure does not read as tampering. Keep the `chain_hash` returned by `POST /v1/events` if you also need to detect deletion of the newest events.
 - **Causally linked history.** Each decision points to the event that caused it, so an auditor can follow the full chain.
 - **Session replay.** Step through any past session event by event.
 - **Time-travel debugging.** Rebuild exactly what the agent knew at any moment with `db.at()`.

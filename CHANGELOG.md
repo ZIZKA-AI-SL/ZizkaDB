@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Audit trail: per-tenant hash chain and `GET /v1/events/verify`
+
+- Before this change, nothing ever verified the per-event `checksum`. It was an unkeyed SHA-256 of `{event, data}` stored in the same row, so anyone able to edit a row could recompute it. It also did not cover `agent_id`, `timestamp`, `parent_event_id`, `session_id` or `metadata`, and deleted events left no trace.
+- New per-tenant hash chain (`events.chain_hash` / `prev_chain_hash`) covering every audit-relevant column. It is appended under a per-tenant advisory lock in the same transaction as the insert, so chain order matches `sequence_no`. `POST /v1/events` returns `chain_hash`.
+- `GET /v1/events/verify` (dashboard session) recomputes the chain and reports the first `content_changed` or `missing_or_reordered_link`, plus counts of checked, erased and pre-chain events.
+- Optional `AUDIT_CHAIN_KEY` makes the chain an HMAC, so a party with database write access cannot rebuild it.
+- GDPR forget and agent delete now write hash-only rows to `event_erasures`, so lawful erasure keeps the chain verifiable instead of looking like tampering.
+- The existing `checksum` field is unchanged for compatibility. Events written before this change are reported as `unchained`.
+
 ### Self-hosted dashboard is just the dashboard
 
 - Self-hosted builds (`NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted`, the default for the GHCR image) no longer serve the marketing site, signup, pricing, OTP login or billing UI. `http://localhost:3001/` goes straight to **Open my dashboard**.
