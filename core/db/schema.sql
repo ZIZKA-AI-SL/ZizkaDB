@@ -96,7 +96,7 @@ CREATE TABLE events (
     event_type      VARCHAR(100) NOT NULL,
     data            JSONB NOT NULL,
     embedding       vector(1536),
-    parent_event_id UUID REFERENCES events(event_id),  -- causal link
+    parent_event_id UUID REFERENCES events(event_id) ON DELETE SET NULL,  -- causal link
     session_id      VARCHAR(255),                       -- group related events
     sequence_no     BIGSERIAL,                          -- monotonic, never gaps
     checksum        VARCHAR(64),                        -- SHA-256 of event content
