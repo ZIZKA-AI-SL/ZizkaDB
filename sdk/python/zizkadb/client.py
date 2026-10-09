@@ -52,6 +52,29 @@ def _api_key_from_env() -> str | None:
     return os.getenv("ZIZKADB_API_KEY") or os.getenv("AGENTDB_API_KEY")
 
 
+def _parse_timestamp(timestamp: datetime | str) -> datetime:
+    """Normalize an at() timestamp: datetime as-is, ISO-8601 string parsed.
+
+    The trailing 'Z' form is rewritten to '+00:00' because
+    datetime.fromisoformat only parses 'Z' from Python 3.11, and the SDK
+    supports 3.10.
+    """
+    if isinstance(timestamp, datetime):
+        return timestamp
+    if isinstance(timestamp, str):
+        value = timestamp.strip()
+        if value.endswith(("Z", "z")):
+            value = value[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError(f"Invalid ISO-8601 timestamp: {timestamp!r}") from None
+    raise TypeError(
+        "timestamp must be a datetime or an ISO-8601 string, "
+        f"got {type(timestamp).__name__}"
+    )
+
+
 def _log_hints_enabled(base_url: str) -> bool:
     """Show CLI hints after log() on localhost unless ZIZKADB_QUIET is set."""
     quiet = os.getenv("ZIZKADB_QUIET", "").lower()
@@ -341,13 +364,14 @@ class ZizkaDB:
     # AT — time travel
     # ─────────────────────────────────────────
 
-    async def at(self, agent: str, timestamp: datetime) -> AgentState:
+    async def at(self, agent: str, timestamp: datetime | str) -> AgentState:
         """
         Reconstruct agent state at a specific point in time.
 
         Args:
             agent:     Agent identifier
-            timestamp: Point in time to reconstruct state at
+            timestamp: Point in time to reconstruct state at — a datetime,
+                       or an ISO-8601 string ("2026-05-01T15:00:00Z")
 
         Returns:
             AgentState with the reconstructed state dict
@@ -359,7 +383,7 @@ class ZizkaDB:
         """
         response = await self._get(
             "/v1/events/at",
-            {"agent": agent, "timestamp": timestamp.isoformat()},
+            {"agent": agent, "timestamp": _parse_timestamp(timestamp).isoformat()},
         )
         return AgentState.from_dict(response)
 
