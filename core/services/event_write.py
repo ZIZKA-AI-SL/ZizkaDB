@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
+from services.checksum import compute_event_checksum_v2
 from services.embeddings import generate_embedding, event_to_text
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request
@@ -56,31 +56,48 @@ async def write_event(
         tenant_id,
     )
 
-    content = json.dumps({"event": event, "data": data}, sort_keys=True)
-    checksum = hashlib.sha256(content.encode()).hexdigest()
-
     embed_on = embeddings_enabled()
     initial_status = "pending" if embed_on else "skipped"
 
-    row = await pool.fetchrow(
-        """
-        INSERT INTO events (
-            tenant_id, agent_id, event_type, data,
-            parent_event_id, session_id, checksum, metadata, index_status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING event_id, timestamp, sequence_no
-        """,
-        tenant_id,
-        agent,
-        event,
-        json.dumps(data),
-        parent_id,
-        session_id,
-        checksum,
-        json.dumps(metadata) if metadata else None,
-        initial_status,
-    )
+    # The v2 checksum covers timestamp and sequence_no, which only exist
+    # after INSERT, so it is written in the same transaction as the insert —
+    # no reader ever observes an event without its checksum.
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO events (
+                    tenant_id, agent_id, event_type, data,
+                    parent_event_id, session_id, metadata, index_status
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING event_id, timestamp, sequence_no
+                """,
+                tenant_id,
+                agent,
+                event,
+                json.dumps(data),
+                parent_id,
+                session_id,
+                json.dumps(metadata) if metadata else None,
+                initial_status,
+            )
+            checksum = compute_event_checksum_v2(
+                tenant_id=tenant_id,
+                agent_id=agent,
+                event_type=event,
+                data=data,
+                parent_event_id=parent_id,
+                session_id=session_id,
+                timestamp=row["timestamp"],
+                sequence_no=row["sequence_no"],
+                metadata=metadata,
+            )
+            await conn.execute(
+                "UPDATE events SET checksum = $1 WHERE event_id = $2",
+                checksum,
+                row["event_id"],
+            )
 
     event_id = str(row["event_id"])
 

@@ -1,6 +1,6 @@
 """Regression tests for cross-tenant leaks via parent_event_id (write_event validation + baseline transitions query)."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 import datetime
 
 import pytest
@@ -18,6 +18,14 @@ PARENT_EVENT_ID = "33333333-3333-3333-3333-333333333333"
 @pytest.fixture
 def mock_pool(monkeypatch):
     pool = AsyncMock()
+    conn = AsyncMock()
+    conn.transaction = MagicMock(return_value=AsyncMock())
+    conn.transaction.return_value.__aenter__ = AsyncMock(return_value=None)
+    conn.transaction.return_value.__aexit__ = AsyncMock(return_value=None)
+    pool.acquire = MagicMock(return_value=AsyncMock())
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+    pool._conn = conn  # expose for assertions
     monkeypatch.setattr("services.event_write.get_pool", lambda: pool)
     monkeypatch.setattr("services.event_write.get_qdrant", lambda: AsyncMock())
     monkeypatch.setattr(
@@ -64,7 +72,7 @@ async def test_write_event_rejects_nonexistent_parent(mock_pool):
 @pytest.mark.asyncio
 async def test_write_event_allows_same_tenant_parent(mock_pool):
     mock_pool.fetchval.return_value = TENANT_A
-    mock_pool.fetchrow.return_value = {
+    mock_pool._conn.fetchrow.return_value = {
         "event_id": "44444444-4444-4444-4444-444444444444",
         "timestamp": datetime.datetime.now(datetime.timezone.utc),
         "sequence_no": 2,
