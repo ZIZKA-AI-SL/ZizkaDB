@@ -47,8 +47,8 @@ async def write_event(
 
     await pool.execute(
         """
-        INSERT INTO agents (agent_id, tenant_id)
-        VALUES ($1, $2)
+        INSERT INTO agents (agent_id, tenant_id, event_count)
+        VALUES ($1, $2, 1)
         ON CONFLICT (agent_id, tenant_id)
         DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
         """,
