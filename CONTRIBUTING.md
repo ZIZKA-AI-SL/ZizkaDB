@@ -168,6 +168,7 @@ pytest
 # Skipped unless the variable is set; each test uses its own throwaway database.
 docker run -d --rm --name zizkadb_pgtest -e POSTGRES_PASSWORD=test \
   -p 127.0.0.1:55432:5432 pgvector/pgvector:pg16
+until docker exec zizkadb_pgtest pg_isready -h 127.0.0.1 -U postgres -q; do sleep 1; done
 ZIZKADB_TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres \
   pytest -m postgres
 docker stop zizkadb_pgtest
