@@ -25,6 +25,17 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
+    if not os.getenv("ZIZKADB_TEST_DATABASE_URL"):
+        skip_postgres = pytest.mark.skip(
+            reason=(
+                "requires a real Postgres with pgvector; set "
+                "ZIZKADB_TEST_DATABASE_URL to enable"
+            )
+        )
+        for item in items:
+            if "postgres" in item.keywords:
+                item.add_marker(skip_postgres)
+
     run_integration = config.getoption("--run-integration") or _truthy(
         os.getenv("ZIZKADB_RUN_INTEGRATION")
     )
