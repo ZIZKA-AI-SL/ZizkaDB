@@ -5,6 +5,10 @@ import pytest
 from api.deps import _dev_key_accepted
 from main import validate_production_startup
 
+_UNIQUE_ACCESS = "unique-jwt-secret"
+_UNIQUE_REFRESH = "unique-refresh-secret"
+_UNIQUE_DEV_KEY = "unique-dev-key"
+
 
 class TestValidateProductionStartup:
     def test_development_allows_default_secrets(self):
@@ -15,7 +19,8 @@ class TestValidateProductionStartup:
             validate_production_startup(
                 "production",
                 "zizkadb_dev_local",
-                "strong-jwt-secret",
+                _UNIQUE_ACCESS,
+                jwt_refresh_secret=_UNIQUE_REFRESH,
             )
 
     def test_production_rejects_legacy_default_dev_key(self):
@@ -23,32 +28,86 @@ class TestValidateProductionStartup:
             validate_production_startup(
                 "production",
                 "agdb_dev_local",
-                "strong-jwt-secret",
+                _UNIQUE_ACCESS,
+                jwt_refresh_secret=_UNIQUE_REFRESH,
             )
 
     def test_production_rejects_empty_dev_key(self):
         with pytest.raises(RuntimeError, match="DEV_API_KEY"):
-            validate_production_startup("production", "", "strong-jwt-secret")
-
-    def test_production_rejects_default_jwt_secret(self):
-        with pytest.raises(RuntimeError, match="JWT_SECRET"):
             validate_production_startup(
                 "production",
-                "unique-dev-key",
-                "dev-secret-change-in-production",
+                "",
+                _UNIQUE_ACCESS,
+                jwt_refresh_secret=_UNIQUE_REFRESH,
             )
 
-    def test_production_rejects_empty_jwt_secret(self):
-        with pytest.raises(RuntimeError, match="JWT_SECRET"):
-            validate_production_startup("production", "unique-dev-key", "")
+    @pytest.mark.parametrize(
+        "jwt_secret,jwt_refresh_secret",
+        [
+            ("dev-secret-change-in-production", _UNIQUE_REFRESH),
+            ("change-this-to-a-random-32-char-string", _UNIQUE_REFRESH),
+            ("dev-secret", _UNIQUE_REFRESH),
+            (_UNIQUE_ACCESS, "dev-refresh-secret-change-in-production"),
+            (_UNIQUE_ACCESS, "change-this-to-another-random-32-char-string"),
+            (_UNIQUE_ACCESS, "dev-refresh-secret"),
+            ("", _UNIQUE_REFRESH),
+            (_UNIQUE_ACCESS, ""),
+        ],
+    )
+    def test_production_rejects_published_jwt_placeholders(
+        self, jwt_secret, jwt_refresh_secret
+    ):
+        with pytest.raises(RuntimeError, match="JWT"):
+            validate_production_startup(
+                "production",
+                _UNIQUE_DEV_KEY,
+                jwt_secret,
+                jwt_refresh_secret=jwt_refresh_secret,
+            )
+
+    def test_production_rejects_env_production_with_wrong_casing(self):
+        with pytest.raises(RuntimeError, match="JWT"):
+            validate_production_startup(
+                "Production",
+                _UNIQUE_DEV_KEY,
+                "dev-secret-change-in-production",
+                jwt_refresh_secret=_UNIQUE_REFRESH,
+            )
+
+    def test_production_rejects_env_with_surrounding_whitespace(self):
+        with pytest.raises(RuntimeError, match="JWT"):
+            validate_production_startup(
+                " production ",
+                _UNIQUE_DEV_KEY,
+                "dev-secret-change-in-production",
+                jwt_refresh_secret=_UNIQUE_REFRESH,
+            )
 
     def test_production_rejects_short_selfhost_admin_token(self):
         with pytest.raises(RuntimeError, match="SELFHOST_ADMIN_TOKEN"):
-            validate_production_startup("production", "unique-dev-key", "unique-jwt-secret", "admin")
+            validate_production_startup(
+                "production",
+                _UNIQUE_DEV_KEY,
+                _UNIQUE_ACCESS,
+                "admin",
+                jwt_refresh_secret=_UNIQUE_REFRESH,
+            )
 
     def test_production_accepts_strong_or_unset_selfhost_admin_token(self):
-        validate_production_startup("production", "unique-dev-key", "unique-jwt-secret", "x" * 16)
-        validate_production_startup("production", "unique-dev-key", "unique-jwt-secret", "")
+        validate_production_startup(
+            "production",
+            _UNIQUE_DEV_KEY,
+            _UNIQUE_ACCESS,
+            "x" * 16,
+            jwt_refresh_secret=_UNIQUE_REFRESH,
+        )
+        validate_production_startup(
+            "production",
+            _UNIQUE_DEV_KEY,
+            _UNIQUE_ACCESS,
+            "",
+            jwt_refresh_secret=_UNIQUE_REFRESH,
+        )
 
     def test_development_ignores_short_selfhost_admin_token(self):
         validate_production_startup("development", "zizkadb_dev_local", "", "admin")
@@ -56,8 +115,9 @@ class TestValidateProductionStartup:
     def test_production_accepts_unique_secrets(self):
         validate_production_startup(
             "production",
-            "unique-dev-key",
-            "unique-jwt-secret",
+            _UNIQUE_DEV_KEY,
+            _UNIQUE_ACCESS,
+            jwt_refresh_secret=_UNIQUE_REFRESH,
         )
 
 

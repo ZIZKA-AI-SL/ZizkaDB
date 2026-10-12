@@ -718,7 +718,7 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 ### 18.2 Auth internals (`core/services/auth.py`)
 
-- **JWT** (`auth.py:17-43`): access token 7 days, refresh 30 days; `JWT_SECRET`/`JWT_REFRESH_SECRET` **required** in production (else `dev-secret`). Payload `{sub: user_id, email, tenant_id, exp, iat}`.
+- **JWT** (`auth.py:17-43`): access token 7 days, refresh 30 days; `JWT_SECRET`/`JWT_REFRESH_SECRET` **required** in production (else `dev-secret`). In production the API also **refuses to start** if either secret is empty or matches a published placeholder: `.env.example`, Compose defaults, or the `dev-secret` / `dev-refresh-secret` fallbacks in `auth.py`. Payload `{sub: user_id, email, tenant_id, exp, iat}`.
 - **API keys** (`auth.py:50-89`): format `zizkadb_live_{32 url-safe}`; stored as SHA-256 hash + 16-char prefix; legacy `agdb_live_*` still resolve by hash; valid use bumps `last_used`.
 - **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config.
 - **request-otp** (`core/api/auth.py:58-77`): rate-limited 10/15min; `intent="signup"` + existing email → **409** "already registered".
