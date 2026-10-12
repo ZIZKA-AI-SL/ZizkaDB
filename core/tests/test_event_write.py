@@ -2,6 +2,8 @@ import datetime
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 
+from tests.conftest import stub_audit_chain, use_pool_as_connection
+
 from services.event_write import _pgvector_literal, write_event
 
 
@@ -29,6 +31,8 @@ def mock_pool(monkeypatch):
     }
 
     pool.fetchrow.return_value = row
+    use_pool_as_connection(pool)
+    stub_audit_chain(monkeypatch)
 
     monkeypatch.setattr(
         "services.event_write.get_pool",
@@ -174,7 +178,8 @@ async def test_embedding_failure_does_not_fail_request(
 async def test_usage_meter_failure_does_not_fail_request(
     monkeypatch,
 ):
-    pool = AsyncMock()
+    pool = use_pool_as_connection(AsyncMock())
+    stub_audit_chain(monkeypatch)
 
     row = {
         "event_id": "abc",

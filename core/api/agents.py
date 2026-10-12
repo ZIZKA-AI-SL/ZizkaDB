@@ -34,6 +34,7 @@ from services.api_keys import (
     list_api_keys_for_agent,
     revoke_api_key_record,
 )
+from services import audit_chain
 from services.event_write import write_event
 
 router = APIRouter()
@@ -277,6 +278,9 @@ async def delete_agent(
             await conn.execute(
                 "UPDATE events SET parent_event_id = NULL WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
+            )
+            await audit_chain.record_erasures(
+                conn, tenant_id, "agent_id = $2", agent_id, reason="agent_deleted"
             )
             await conn.execute(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",

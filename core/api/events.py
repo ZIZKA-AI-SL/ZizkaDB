@@ -7,9 +7,10 @@ from datetime import datetime
 import json
 import os
 
-from api.deps import get_tenant, assert_agent_allowed
+from api.deps import get_tenant, assert_agent_allowed, require_dashboard_session
 from db.connection import get_pool
 from services.event_write import write_event
+from services import audit_chain
 from services.why_analysis import analyze_why_chain
 
 router = APIRouter()
@@ -309,3 +310,41 @@ def _format_metadata(row) -> dict:
     if isinstance(meta, str):
         meta = json.loads(meta)
     return {"metadata": dict(meta) if meta else None}
+
+
+# ─────────────────────────────────────────
+# VERIFY — GET /v1/events/verify
+# Check the tenant's audit hash chain (services/audit_chain.py)
+# ─────────────────────────────────────────
+
+@router.get("/verify")
+async def verify_audit_chain(
+    session: dict = Depends(require_dashboard_session),
+):
+    """Recompute the tenant's event hash chain and report the first broken link.
+
+    ``first_problem.kind`` is ``content_changed`` (an event's columns no longer
+    match its hash) or ``missing_or_reordered_link`` (an event was deleted
+    without an erasure record, or events were reordered). Lawful erasures are
+    counted under ``erased``; events written before the chain existed under
+    ``unchained``. Compare ``head`` with the ``chain_hash`` returned by your
+    latest ``POST /v1/events`` to also detect deletion of the newest events.
+    """
+    pool = get_pool()
+    tenant_id = session["tenant_id"]
+    live = await pool.fetch(
+        f"""
+        SELECT {audit_chain.RECORD_COLUMNS}, chain_hash, prev_chain_hash
+        FROM events WHERE tenant_id = $1
+        """,
+        tenant_id,
+    )
+    erased = await pool.fetch(
+        """
+        SELECT event_id, sequence_no, chain_hash, prev_chain_hash
+        FROM event_erasures WHERE tenant_id = $1
+        """,
+        tenant_id,
+    )
+    entries = [dict(r) for r in live] + [{**dict(r), "erased": True} for r in erased]
+    return audit_chain.verify_entries(entries)

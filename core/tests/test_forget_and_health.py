@@ -10,13 +10,14 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from api.memory import ForgetRequest, forget
+from tests.conftest import use_pool_as_connection
 
 SCOPED_TENANT = {"tenant_id": "t-1", "key_id": "k-1", "agent_id": "mine"}
 SECRET_VALUE = "alice@example.com"
 
 
 def _setup_forget(monkeypatch, qdrant_side_effect, embeddings_on=True):
-    pool = AsyncMock()
+    pool = use_pool_as_connection(AsyncMock())
     pool.fetch.return_value = [{"event_id": uuid.uuid4()}, {"event_id": uuid.uuid4()}]
     qdrant = AsyncMock()
     qdrant.delete.side_effect = qdrant_side_effect
@@ -24,6 +25,8 @@ def _setup_forget(monkeypatch, qdrant_side_effect, embeddings_on=True):
     monkeypatch.setattr("api.memory.get_qdrant", lambda: qdrant)
     monkeypatch.setattr("api.memory.embeddings_enabled", lambda: embeddings_on)
     monkeypatch.setattr("api.memory.asyncio.sleep", AsyncMock())
+    # Erasure tombstones are covered in test_audit_chain.py.
+    monkeypatch.setattr("api.memory.audit_chain.record_erasures", AsyncMock())
     return pool, qdrant
 
 

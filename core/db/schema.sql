@@ -101,6 +101,8 @@ CREATE TABLE events (
     sequence_no     BIGSERIAL,                          -- monotonic, never gaps
     checksum        VARCHAR(64),                        -- SHA-256 of event content
     metadata        JSONB,
+    chain_hash      VARCHAR(64),                        -- per-tenant hash chain (services/audit_chain.py)
+    prev_chain_hash VARCHAR(64),
 
     CONSTRAINT fk_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id)
@@ -124,10 +126,29 @@ CREATE INDEX idx_events_type
 CREATE INDEX idx_events_data
     ON events USING gin (data);
 
+CREATE INDEX idx_events_tenant_chain
+    ON events (tenant_id, sequence_no)
+    WHERE chain_hash IS NOT NULL;
+
 -- Vector index (HNSW — better recall than IVFFlat)
 CREATE INDEX idx_events_embedding
     ON events USING hnsw (embedding vector_cosine_ops)
     WITH (m = 16, ef_construction = 64);
+
+-- Chain links of lawfully erased events (GDPR forget, agent delete): hashes
+-- only, no content, so the tenant's chain stays verifiable after erasure.
+CREATE TABLE IF NOT EXISTS event_erasures (
+    event_id        UUID PRIMARY KEY,
+    tenant_id       UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    sequence_no     BIGINT NOT NULL,
+    chain_hash      VARCHAR(64) NOT NULL,
+    prev_chain_hash VARCHAR(64),
+    reason          VARCHAR(32) NOT NULL,
+    erased_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_erasures_tenant_seq
+    ON event_erasures (tenant_id, sequence_no);
 
 -- ─────────────────────────────────────────
 -- USAGE METERING
