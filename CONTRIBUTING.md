@@ -163,6 +163,14 @@ pytest -m "not integration"
 
 # Full suite (Docker stack must be running)
 pytest
+
+# Real-Postgres tests (schema, init_db() migrations, tenant-scoped SQL).
+# Skipped unless the variable is set; each test uses its own throwaway database.
+docker run -d --rm --name zizkadb_pgtest -e POSTGRES_PASSWORD=test \
+  -p 127.0.0.1:55432:5432 pgvector/pgvector:pg16
+ZIZKADB_TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres \
+  pytest -m postgres
+docker stop zizkadb_pgtest
 ```
 
 ### Dashboard (optional)
@@ -390,7 +398,7 @@ cd core && pytest -m "not integration"
 cd core && pytest    # with Docker up
 ```
 
-Mark slow or Docker-dependent tests with `@pytest.mark.integration`.
+Mark slow or Docker-dependent tests with `@pytest.mark.integration`. Mark tests that need real SQL (not a mocked pool) with `@pytest.mark.postgres` and use the `pg_db` fixture from `core/tests/conftest.py`.
 
 ---
 
