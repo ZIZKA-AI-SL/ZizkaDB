@@ -51,3 +51,83 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "integration" in item.keywords:
             item.add_marker(skip_integration)
+
+
+# --------------------------------------------------------------------
+# Real-Postgres fixtures (tests marked ``postgres``)
+# --------------------------------------------------------------------
+
+class _StubQdrant:
+    """Stands in for AsyncQdrantClient so init_db() needs no Qdrant server."""
+
+    def __init__(self, *args, **kwargs):
+        self._collections: list[str] = []
+
+    async def get_collections(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            collections=[SimpleNamespace(name=n) for n in self._collections]
+        )
+
+    async def create_collection(self, collection_name, **kwargs):
+        self._collections.append(collection_name)
+
+    async def close(self):
+        return None
+
+
+def _dsn_for_database(dsn: str, database: str) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(dsn)
+    return urlunsplit(parts._replace(path=f"/{database}"))
+
+
+@pytest.fixture
+async def pg_db(monkeypatch):
+    """A throwaway database on the test server, set up like a fresh install.
+
+    Applies ``db/schema.sql`` (what Docker runs on first boot), then
+    ``init_db()`` (what every API start runs). Yields the asyncpg pool that
+    ``get_pool()`` returns; the database is dropped afterwards.
+    """
+    import uuid
+
+    import asyncpg
+    import db.connection as connection
+
+    async def _no_qdrant_version() -> None:
+        return None
+
+    admin_dsn = os.environ["ZIZKADB_TEST_DATABASE_URL"]
+    database = f"zizkadb_test_{uuid.uuid4().hex[:12]}"
+    dsn = _dsn_for_database(admin_dsn, database)
+
+    admin = await asyncpg.connect(admin_dsn)
+    await admin.execute(f'CREATE DATABASE "{database}"')
+    try:
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute((ROOT / "db" / "schema.sql").read_text())
+        finally:
+            await conn.close()
+
+        monkeypatch.setenv("DATABASE_URL", dsn)
+        monkeypatch.setenv("DEPLOYMENT_MODE", "self_hosted")
+        monkeypatch.setenv("EMBEDDINGS_ENABLED", "false")
+        monkeypatch.setattr(connection, "AsyncQdrantClient", _StubQdrant)
+        monkeypatch.setattr(connection, "_log_qdrant_version", _no_qdrant_version)
+        # Restored to their previous values when the test ends.
+        monkeypatch.setattr(connection, "_pg_pool", None)
+        monkeypatch.setattr(connection, "_redis", None)
+        monkeypatch.setattr(connection, "_qdrant", None)
+
+        await connection.init_db()
+        try:
+            yield connection.get_pool()
+        finally:
+            await connection.close_db()
+    finally:
+        await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
+        await admin.close()
