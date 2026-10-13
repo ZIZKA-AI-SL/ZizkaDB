@@ -2,6 +2,7 @@ import os
 from fastapi import Security
 from services.exceptions import forbidden, unauthorized
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from db.connection import get_pool
 from services.auth import verify_api_key, decode_access_token
 
 bearer = HTTPBearer()
@@ -49,8 +50,28 @@ async def resolve_api_key_tenant(token: str) -> dict | None:
     """
     if looks_like_jwt(token):
         return None
-    return await verify_api_key(token)
+    tenant = await verify_api_key(token)
+    if tenant is None:
+        return None
 
+    from services.entitlements import limits_enforced
+
+    if limits_enforced():
+        from services.api_keys import api_key_within_plan
+
+        if not await api_key_within_plan(
+            get_pool(), tenant_id=tenant["tenant_id"], key_id=tenant["key_id"]
+        ):
+            raise unauthorized(detail=_API_KEY_OVER_LIMIT_MESSAGE)
+    return tenant
+
+
+_API_KEY_OVER_LIMIT_MESSAGE = (
+    "This API key is not active: it is over the API key limit for this "
+    "deployment, and an older key is already in use. Self-hosted ZizkaDB uses a "
+    "single API key — use that key, or revoke it in the dashboard to switch to "
+    "this one. Multiple keys are available on ZizkaDB Cloud (https://db.zizka.ai)."
+)
 
 _AGENT_KEY_MISMATCH = (
     "This API key is already associated with another agent and cannot be used "
@@ -69,7 +90,19 @@ async def assert_agent_allowed(tenant: dict, agent_id: str) -> None:
     JWT dashboard sessions and the local dev key have no ``key_id`` and are
     not bound. Keys already bound to an agent are compared in memory.
     Unassigned keys (``agent_id`` NULL) are claimed atomically on first use.
+
+    Also enforces the plan's agent cap for every credential (self-hosted runs
+    one agent): an agent the plan does not cover is refused for reads too.
     """
+    from services.entitlements import limits_enforced
+
+    if limits_enforced():
+        from services.agent_limits import assert_agent_within_plan
+
+        await assert_agent_within_plan(
+            get_pool(), tenant_id=tenant["tenant_id"], agent_id=agent_id
+        )
+
     scoped = tenant.get("agent_id")
     if scoped:
         if scoped != agent_id:

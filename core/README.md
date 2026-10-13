@@ -17,9 +17,9 @@ Authoritative list: `main.py` (`app.include_router`). There is **no** `admin.py`
 |---|---|---|
 | `api/auth.py` | `/v1/auth` | OTP login, JWT tokens, API key management |
 | `api/events.py` | `/v1/events` | Log events, query events, time-travel (`db.at()`) |
-| `api/sessions.py` | `/v1/sessions` | Cross-agent session timeline and session-scoped `why()` |
+| `api/sessions.py` | `/v1/sessions` | Session timeline and session-scoped `why()` (cross-agent on ZizkaDB Cloud; self-hosted has one agent) |
 | `api/agents.py` | `/v1/agents` | Agent stats, sessions, causal lineage (`db.why()`), baseline, API keys |
-| `api/a2a.py` | `/v1/a2a` | Agent-to-agent messages (scoped API keys) |
+| `api/a2a.py` | `/v1/a2a` | Agent-to-agent messages (scoped API keys). ZizkaDB Cloud only: 403 on self-hosted |
 | `api/search.py` | `/v1/search` | Semantic search (`db.search()`) |
 | `api/memory.py` | `/v1/memory` | Memory injection (`db.context_for()`, `db.memory_diff()`) |
 | `api/telemetry.py` | `/v1/telemetry` | Anonymous SDK install pings |

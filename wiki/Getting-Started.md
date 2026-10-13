@@ -76,7 +76,7 @@ Go to [db.zizka.ai/signup](https://db.zizka.ai/signup) → enter email → verif
 2. Click **Create agent**, enter an id (e.g. `support-bot`)
 3. **Copy the full API key** — shown once only (`zizkadb_live_...`)
 
-Alternative: **Settings → Tenant-wide API key** if your app uses dynamic agent names per session (see [[Multi-Agent Apps]]).
+On ZizkaDB Cloud, an alternative is **Settings → Tenant-wide API key** if your app uses dynamic agent names per session (see [[Multi-Agent Apps]]). Self-hosted runs one agent with one API key: use `session_id`, not extra agent names, to separate users.
 
 ### 3. Configure your environment
 
@@ -115,4 +115,4 @@ Dashboard → **Activity** — select `support-bot` to see events.
 
 ## Golden rule (managed cloud)
 
-> **The `agent` name in your code must match the agent you created in the dashboard** (unless you use a tenant-wide key — see [[Multi-Agent Apps]]).
+> **The `agent` name in your code must match the agent you created in the dashboard** (unless you use a tenant-wide key on ZizkaDB Cloud — see [[Multi-Agent Apps]]). Self-hosted allows a single agent name.

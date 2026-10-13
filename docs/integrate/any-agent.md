@@ -41,7 +41,7 @@ Every write includes:
 
 | Field | Purpose |
 |-------|---------|
-| `agent` | Stable agent id — **must match** dashboard agent name (or use tenant-wide key) |
+| `agent` | Stable agent id — **must match** dashboard agent name (or use a tenant-wide key on ZizkaDB Cloud). Self-hosted: one agent name only |
 | `event` | Type string (see above) |
 | `data` | JSON payload (your schema) |
 
@@ -77,7 +77,9 @@ await db.why(tool.event_id)  # tool → plan → user
 
 Set `ZIZKADB_HOST` when not using cloud default. Set `ZIZKADB_API_KEY` for non-localhost.
 
-**403 agent mismatch:** per-agent keys only work for that agent name. Multi-user SaaS apps often need a **tenant-wide key** (Settings) and per-user agent ids like `conv-{userId}`.
+**403 agent mismatch:** per-agent keys only work for that agent name. On ZizkaDB Cloud, multi-user SaaS apps often need a **tenant-wide key** (Settings) and per-user agent ids like `conv-{userId}`.
+
+**409 agent_limit_reached (self-hosted):** self-hosted ZizkaDB runs one agent with one API key. Use the agent name in the error message and separate users with `session_id`; multiple agents need ZizkaDB Cloud.
 
 ---
 

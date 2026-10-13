@@ -75,4 +75,4 @@ Dev key `zizkadb_dev_local` is auto-injected on localhost (matches `DEV_API_KEY`
 
 > "Log that we chose Postgres for the agent store with parent reasoning."
 
-Agent name in tool calls must match your dashboard agent (unless using tenant-wide key).
+Agent name in tool calls must match your dashboard agent (unless using a tenant-wide key on ZizkaDB Cloud). Self-hosted runs a single agent, so every MCP client must use the same agent name.

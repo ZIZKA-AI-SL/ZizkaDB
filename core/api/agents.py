@@ -25,7 +25,8 @@ from services.rate_limiter import (
 )
 from services import reports, token_optimization, token_usage
 from services.actions import action_breakdown, action_distribution
-from services.agent_limits import assert_agent_slot
+from services.agent_limits import agents_visible_in_plan, assert_agent_slot
+from services.entitlements import limits_enforced
 from services import token_optimization_config
 from services.ai import config as ai_config
 from services.ai.provider import AIProviderError
@@ -151,6 +152,12 @@ async def list_agents(tenant: dict = Depends(get_tenant)):
     if scoped_agent:
         agent_filter = "AND a.agent_id = $2"
         params.append(scoped_agent)
+
+    # Agents the plan does not cover (self-hosted runs one) are not listed.
+    visible = await agents_visible_in_plan(pool, tenant["tenant_id"]) if limits_enforced() else None
+    if visible is not None:
+        params.append(visible)
+        agent_filter += f" AND a.agent_id = ANY(${len(params)}::text[])"
 
     rows = await pool.fetch(
         f"""

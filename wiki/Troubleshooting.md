@@ -64,7 +64,16 @@ Key for: maria-agent
 Code sent: conv-user123
 ```
 
-**Fix:** Use same agent name in code, or create a **tenant-wide key** (Settings).
+**Fix:** Use the same agent name in code. On ZizkaDB Cloud you can instead create a **tenant-wide key** (Settings).
+
+### `409 agent_limit_reached` or `401` "not active" on self-host
+
+Self-hosted ZizkaDB runs **one agent with one API key**. The error message names the agent this instance uses.
+
+- Log with that agent name; use `session_id` to separate users or conversations.
+- Only the oldest active API key works. To switch keys, revoke the old one in the dashboard.
+- Agents and keys beyond the first stop working after upgrading, including ones created earlier. Their data stays in the database.
+- For several agents or keys, use ZizkaDB Cloud (https://db.zizka.ai).
 
 SDK raises `AgentScopeError` (Python/TypeScript).
 
@@ -129,7 +138,7 @@ Need more sessions with `session_id` on events. Keep logging.
 
 ## zizka.ai chat not logging to ZizkaDB
 
-1. Use **tenant-wide key** (app logs to `conv-{userId}`)
+1. Use **tenant-wide key** on ZizkaDB Cloud (app logs to `conv-{userId}`)
 2. Deploy founder-agent ZizkaDB migration (remove Pinecone)
 3. `.env`: `AGENTDB_HOST=https://db.zizka.ai` + `AGENTDB_API_KEY=...`
 4. `npm run build && pm2 restart founder-agent --update-env`

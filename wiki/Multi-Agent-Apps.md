@@ -1,5 +1,7 @@
 # Multi-Agent Apps
 
+> **ZizkaDB Cloud only.** Self-hosted (open source) ZizkaDB runs **one agent with one API key**: a second agent name is rejected with `409 agent_limit_reached`, and tenant-wide keys, agent fleets and agent-to-agent messaging are not available. Everything on this page applies to https://db.zizka.ai. On self-host, log under your one agent name and use `session_id` to separate users or conversations.
+
 Some applications log to **many different agent names** from one deployment.
 
 ## Example: zizka.ai productivity chat

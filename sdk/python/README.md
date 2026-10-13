@@ -65,7 +65,7 @@ async with db:
 
 An API key works for one agent name. Running several agents — and agent-to-agent messaging between them — is a [ZizkaDB Cloud](https://db.zizka.ai) feature; create each agent and its key in the dashboard.
 
-Self-hosted ZizkaDB is single-agent: log everything under one agent name and use `session_id` to separate users or conversations. A second agent name is rejected with `409 agent_limit_reached`.
+Self-hosted ZizkaDB is single-agent: log everything under one agent name and use `session_id` to separate users or conversations. Any other agent name is rejected with `409 agent_limit_reached`, and only the oldest active API key works.
 
 ## Errors
 

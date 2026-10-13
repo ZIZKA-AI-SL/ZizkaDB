@@ -1,5 +1,7 @@
 # Agents and API Keys
 
+> **Self-hosted (open source): one agent, one API key.** The first agent name you use becomes your agent, and only the oldest active API key works. A second agent name gets `409 agent_limit_reached`; a second key gets `401`. This is always enforced and has no setting. The multi-agent model below (several agents, several keys, tenant-wide keys) is ZizkaDB Cloud (https://db.zizka.ai).
+
 ## Mental model
 
 ```
@@ -42,7 +44,7 @@ Deletes the agent, its events, and its keys. Cannot be undone.
 
 ## Tenant-wide keys (multi-agent apps)
 
-**Managed cloud only:** **Settings → Tenant-wide API key**. OSS uses per-agent keys.
+**ZizkaDB Cloud only:** **Settings → Tenant-wide API key**. Self-hosted has a single agent and a single key.
 
 - No agent scope (`agent_id` is null)
 - One key can log to `conv-user1`, `conv-user2`, `sales-agent-xyz`, etc.

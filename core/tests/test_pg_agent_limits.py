@@ -11,6 +11,23 @@ from services.event_write import write_event
 pytestmark = pytest.mark.postgres
 
 
+@pytest.fixture(autouse=True)
+def _real_collaborators(monkeypatch):
+    """Other test modules swap these module attributes for mocks; this file
+    exercises the real SQL, so pin the real implementations."""
+    import api.agents
+    import api.deps
+    import services.agent_limits
+    import services.api_keys
+    import services.auth
+    import services.billing
+
+    for module in (api.agents, api.deps, services.auth):
+        monkeypatch.setattr(module, "get_pool", connection.get_pool)
+    for module in (services.agent_limits, services.api_keys):
+        monkeypatch.setattr(module, "fetch_effective_plan", services.billing.fetch_effective_plan)
+
+
 async def _tenant(pool, name="acme") -> str:
     return str(await pool.fetchval(
         "INSERT INTO tenants (name) VALUES ($1) RETURNING tenant_id", name
@@ -56,18 +73,47 @@ async def test_demo_and_connection_test_agents_do_not_use_the_slot(pg_db):
         await _log(tenant_id, "second-bot")
 
 
-async def test_agents_that_existed_before_the_cap_keep_working(pg_db):
+async def _two_old_agents(pool, tenant_id: str) -> None:
+    """A tenant that already had two agents before the cap existed."""
+    await pool.execute(
+        """
+        INSERT INTO agents (agent_id, tenant_id, first_seen)
+        VALUES ('old-a', $1, NOW() - INTERVAL '2 days'), ('old-b', $1, NOW() - INTERVAL '1 day')
+        """,
+        tenant_id,
+    )
+
+
+async def test_only_the_oldest_agent_survives_an_upgrade(pg_db):
+    """Strict: an install that already had two agents keeps only the first."""
     tenant_id = await _tenant(pg_db)
-    for name in ("old-a", "old-b"):
-        await pg_db.execute(
-            "INSERT INTO agents (agent_id, tenant_id) VALUES ($1, $2)", name, tenant_id
-        )
+    await _two_old_agents(pg_db, tenant_id)
 
     await _log(tenant_id, "old-a")
-    await _log(tenant_id, "old-b")
+    for refused in ("old-b", "new-c"):
+        with pytest.raises(HTTPException) as exc:
+            await _log(tenant_id, refused)
+        assert exc.value.status_code == 409
+        assert "'old-a'" in exc.value.detail["msg"]
+
+
+async def test_reads_of_other_agents_are_refused_and_they_are_not_listed(pg_db):
+    from api.agents import list_agents
+    from api.deps import assert_agent_allowed
+
+    tenant_id = await _tenant(pg_db)
+    await _two_old_agents(pg_db, tenant_id)
+    await _log(tenant_id, "support-bot")
+    dashboard_session = {"tenant_id": tenant_id}  # JWT: no key, no agent scope
+
+    await assert_agent_allowed(dashboard_session, "old-a")
+    await assert_agent_allowed(dashboard_session, "support-bot")
     with pytest.raises(HTTPException) as exc:
-        await _log(tenant_id, "new-c")
-    assert exc.value.detail["used"] == 2
+        await assert_agent_allowed(dashboard_session, "old-b")
+    assert exc.value.detail["code"] == "agent_limit_reached"
+
+    listed = {a["agent"] for a in await list_agents(tenant=dashboard_session)}
+    assert listed == {"old-a", "support-bot"}
 
 
 async def test_cap_is_per_tenant(pg_db):
@@ -115,3 +161,37 @@ async def test_self_hosted_allows_one_active_api_key_without_any_env_switch(pg_d
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "api_key_limit_reached"
     assert (exc.value.detail["limit"], exc.value.detail["used"]) == (1, 1)
+
+
+async def test_only_the_oldest_api_key_authenticates(pg_db, monkeypatch):
+    """Strict: with two active keys (created before the cap), only the first works."""
+    from api.deps import resolve_api_key_tenant
+
+    tenant_id = await _tenant(pg_db)
+    first = await create_api_key_record(pg_db, tenant_id=tenant_id, name="first")
+    second = await create_api_key_record(pg_db, tenant_id=tenant_id, name="second")
+    await pg_db.execute(
+        "UPDATE api_keys SET created_at = NOW() - INTERVAL '1 day' WHERE key_id = $1::uuid",
+        first["key_id"],
+    )
+
+    assert (await resolve_api_key_tenant(first["key"]))["tenant_id"] == tenant_id
+    with pytest.raises(HTTPException) as exc:
+        await resolve_api_key_tenant(second["key"])
+    assert exc.value.status_code == 401
+    assert "single API key" in str(exc.value.detail)
+
+    # Revoking the older key makes the newer one the key in use.
+    await pg_db.execute("UPDATE api_keys SET revoked = TRUE WHERE key_id = $1::uuid", first["key_id"])
+    assert (await resolve_api_key_tenant(second["key"]))["tenant_id"] == tenant_id
+
+
+async def test_managed_keys_are_not_restricted_unless_enforcement_is_on(pg_db, monkeypatch):
+    from api.deps import resolve_api_key_tenant
+
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    monkeypatch.delenv("API_KEY_LIMITS_ENFORCED", raising=False)
+    tenant_id = await _tenant(pg_db)
+    for name in ("a", "b", "c"):
+        key = await create_api_key_record(pg_db, tenant_id=tenant_id, name=name)
+        assert await resolve_api_key_tenant(key["key"])

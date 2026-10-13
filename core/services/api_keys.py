@@ -77,6 +77,36 @@ async def assert_and_reserve_api_key_slot(conn, *, tenant_id: str) -> None:
         )
 
 
+async def api_key_within_plan(executor, *, tenant_id: str, key_id: str) -> bool:
+    """Whether ``key_id`` is one of the keys the plan covers.
+
+    Strict, like the agent cap: the plan covers the oldest active keys, and any
+    other active key is refused — including keys created before the cap.
+    Fail-open on a plan lookup error.
+    """
+    if not limits_enforced():
+        return True
+    try:
+        plan = await fetch_effective_plan(executor, tenant_id)
+    except Exception as e:  # fail-open
+        log.warning("api-key limit: plan lookup failed for tenant %s, allowing: %s", tenant_id, e)
+        return True
+    limit = api_key_limit_for_plan(plan)
+    if limit is None:
+        return True
+    rows = await executor.fetch(
+        """
+        SELECT key_id FROM api_keys
+        WHERE tenant_id = $1::uuid AND revoked = FALSE
+        ORDER BY created_at, key_id
+        LIMIT $2
+        """,
+        tenant_id,
+        limit,
+    )
+    return any(str(r["key_id"]) == str(key_id) for r in rows)
+
+
 def _key_row(row) -> dict:
     return {
         "key_id": str(row["key_id"]),

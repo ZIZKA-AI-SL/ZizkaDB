@@ -101,7 +101,7 @@ The single container is for your own machine: it keeps the ports on `127.0.0.1`,
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
-Self-hosted is single-agent: the first agent name you log with becomes your agent, and a second name is rejected with a message naming it. The `support-bot` demo agent does not count. For several agents, use [ZizkaDB Cloud](https://db.zizka.ai).
+Self-hosted is strictly **one agent with one API key**: the first agent name you log with becomes your agent, and any other name is rejected with a message naming it. Only the oldest active API key works. The `support-bot` demo agent does not count. For several agents or keys, use [ZizkaDB Cloud](https://db.zizka.ai).
 
 ### Self-host from a clone
 

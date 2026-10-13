@@ -12,7 +12,7 @@ MCP server for [ZizkaDB](https://db.zizka.ai). Gives any MCP-compatible AI agent
 4. Reload MCP in Cursor — use the **same agent name** in `log_event` calls  
 5. Events appear on your [dashboard](https://db.zizka.ai/dashboard) within seconds  
 
-> **Agent name must match.** If your key is for `cursor-agent`, log with `agent="cursor-agent"`. For many dynamic agent names, use a **tenant-wide key** (Settings).
+> **Agent name must match.** If your key is for `cursor-agent`, log with `agent="cursor-agent"`. For many dynamic agent names, use a **tenant-wide key** (Settings) on ZizkaDB Cloud. Self-hosted ZizkaDB runs one agent with one API key, so use a single agent name there.
 
 > **Signup alone does not log events.** You must create an agent + key and add it to `ZIZKADB_API_KEY`.
 
