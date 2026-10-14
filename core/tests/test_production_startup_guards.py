@@ -32,14 +32,28 @@ class TestValidateProductionStartup:
                 jwt_refresh_secret=_UNIQUE_REFRESH,
             )
 
-    def test_production_rejects_empty_dev_key(self):
-        with pytest.raises(RuntimeError, match="DEV_API_KEY"):
+    def test_production_allows_empty_dev_key(self):
+        """Dev keys are never accepted outside development, so none is needed."""
+        validate_production_startup(
+            "production",
+            "",
+            _UNIQUE_ACCESS,
+            jwt_refresh_secret=_UNIQUE_REFRESH,
+        )
+
+    @pytest.mark.parametrize("env", ["", "staging", "prod", "Production", " test "])
+    def test_every_non_development_env_is_checked(self, env):
+        with pytest.raises(RuntimeError, match="JWT"):
             validate_production_startup(
-                "production",
-                "",
-                _UNIQUE_ACCESS,
+                env,
+                _UNIQUE_DEV_KEY,
+                "dev-secret-change-in-production",
                 jwt_refresh_secret=_UNIQUE_REFRESH,
             )
+
+    @pytest.mark.parametrize("env", ["development", " Development "])
+    def test_development_is_not_checked(self, env):
+        validate_production_startup(env, "zizkadb_dev_local", "", jwt_refresh_secret="")
 
     @pytest.mark.parametrize(
         "jwt_secret,jwt_refresh_secret",
