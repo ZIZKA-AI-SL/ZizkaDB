@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from cryptography.fernet import Fernet, InvalidToken
 
 from db.connection import get_pool
+from services.runtime_env import is_dev_mode
 
 # All v1 models use 1536 dims (matches Postgres vector(1536) + Qdrant collection).
 EMBEDDING_MODELS: dict[str, list[dict]] = {
@@ -99,7 +100,7 @@ def _fernet() -> Fernet:
     """
     secret = os.getenv("EMBEDDING_ENCRYPTION_KEY") or os.getenv("JWT_SECRET")
     if not secret:
-        if os.getenv("ENV", "development") != "development":
+        if not is_dev_mode():
             raise RuntimeError(
                 "EMBEDDING_ENCRYPTION_KEY or JWT_SECRET must be set in production. "
                 "Refusing to encrypt tenant API keys with a hardcoded fallback "

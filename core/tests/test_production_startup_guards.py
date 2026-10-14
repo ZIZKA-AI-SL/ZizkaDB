@@ -123,16 +123,16 @@ class TestValidateProductionStartup:
 
 class TestDevKeyRejectedInProduction:
     def test_known_dev_keys_not_accepted(self, monkeypatch):
-        monkeypatch.setattr("api.deps._DEV_MODE", False)
+        monkeypatch.setenv("ENV", "production")
         assert not _dev_key_accepted("zizkadb_dev_local")
         assert not _dev_key_accepted("agdb_dev_local")
 
     def test_custom_dev_key_not_accepted_in_production(self, monkeypatch):
-        monkeypatch.setattr("api.deps._DEV_MODE", False)
+        monkeypatch.setenv("ENV", "production")
         monkeypatch.setattr("api.deps._DEV_API_KEY", "my-custom-dev-key")
         assert not _dev_key_accepted("my-custom-dev-key")
 
     def test_dev_keys_accepted_in_development(self, monkeypatch):
-        monkeypatch.setattr("api.deps._DEV_MODE", True)
+        monkeypatch.setenv("ENV", "development")
         monkeypatch.setattr("api.deps._DEV_API_KEY", "")
         assert _dev_key_accepted("zizkadb_dev_local")

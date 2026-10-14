@@ -33,6 +33,7 @@ from services.rate_limiter import (
 )
 from services.event_write import write_event
 from services.entitlements import is_self_hosted_deployment
+from services.runtime_env import is_dev_mode
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -48,13 +49,13 @@ def _otp_storage() -> RateLimitStorage:
     Choose OTP rate-limit storage.
 
     OTP_RATE_LIMIT_STORAGE=redis|memory overrides the default.
-    Default: redis when ENV=production (shared across uvicorn workers),
-    memory otherwise (local dev + unit tests).
+    Default: memory when ENV=development (local dev + unit tests), redis
+    otherwise (shared across uvicorn workers).
     """
     choice = (os.getenv("OTP_RATE_LIMIT_STORAGE") or "").strip().lower()
     if not choice:
         choice = (
-            "redis" if os.getenv("ENV", "development") == "production" else "memory"
+            "memory" if is_dev_mode() else "redis"
         )
     if choice == "redis":
         return RedisStorage(key_prefix="otp")
@@ -182,7 +183,7 @@ async def verify_otp_route(body: VerifyOTPBody, response: Response, request: Req
         key="refresh_token",
         value=tokens["refresh_token"],
         httponly=True,
-        secure=os.getenv("ENV", "development") == "production",
+        secure=not is_dev_mode(),
         samesite="lax",
         max_age=30 * 24 * 60 * 60,
         path="/",
@@ -270,7 +271,7 @@ async def dev_token_route():
     Issues a real JWT for a fixed local dev user so the dashboard
     is accessible without email / signup.
     """
-    if os.getenv("ENV", "development") != "development":
+    if not is_dev_mode():
         raise forbidden("Not available in production")
 
     pool = get_pool()
@@ -287,7 +288,7 @@ def _selfhost_login_mode() -> SelfHostLoginMode:
     How the self-hosted dashboard signs in. Fails closed: a production
     instance without SELFHOST_ADMIN_TOKEN gets no login at all, never one-click.
     """
-    if os.getenv("ENV", "development") == "development":
+    if is_dev_mode():
         return "one_click"
     if (os.getenv("SELFHOST_ADMIN_TOKEN") or "").strip():
         return "admin_token"
@@ -313,7 +314,7 @@ def _selfhost_login_allowed() -> bool:
     ENV=development instance (same rule as /dev-token, so local stacks whose
     .env predates DEPLOYMENT_MODE keep working). Managed production: never.
     """
-    return is_self_hosted_deployment() or os.getenv("ENV", "development") == "development"
+    return is_self_hosted_deployment() or is_dev_mode()
 
 
 @router.get("/selfhost")

@@ -37,6 +37,7 @@ from services.api_keys import (
     revoke_api_key_record,
 )
 from services.event_write import write_event
+from services.runtime_env import is_dev_mode
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -59,13 +60,13 @@ def _suggestions_storage() -> RateLimitStorage:
     Choose suggestions rate-limit storage.
 
     SUGGESTIONS_RATE_LIMIT_STORAGE=redis|memory overrides the default.
-    Default: redis when ENV=production (shared across uvicorn workers),
-    memory otherwise (local dev + unit tests).
+    Default: memory when ENV=development (local dev + unit tests), redis
+    otherwise (shared across uvicorn workers).
     """
     choice = (os.getenv("SUGGESTIONS_RATE_LIMIT_STORAGE") or "").strip().lower()
     if not choice:
         choice = (
-            "redis" if os.getenv("ENV", "development") == "production" else "memory"
+            "memory" if is_dev_mode() else "redis"
         )
     if choice == "redis":
         return RedisStorage(key_prefix="suggestions")

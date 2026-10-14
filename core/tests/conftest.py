@@ -10,6 +10,11 @@ SDK = ROOT.parent / "sdk" / "python"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SDK))
 
+# Unset ENV means production (services/runtime_env.py), which refuses to import
+# without real secrets. The suite runs as a local dev stack does; tests that
+# need production behaviour set ENV themselves.
+os.environ.setdefault("ENV", "development")
+
 
 def _truthy(value: str | None) -> bool:
     return (value or "").lower() in {"1", "true", "yes", "on"}
