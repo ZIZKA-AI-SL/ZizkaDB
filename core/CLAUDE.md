@@ -143,7 +143,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 2. Runs `ALTER TABLE` migrations idempotently
 3. Creates community/SDK/marketing tables if missing
 4. Backfills `users.plan = 'pro'` for users with `plan IS NULL`
-5. Seeds a dev tenant (and logs a `DEV MODE` warning) only when `ENV` is `development` or unset — same gate as dev-key acceptance (`api.deps.dev_keys_enabled()`)
+5. Seeds a dev tenant (and logs a `DEV MODE` warning) only when `ENV=development` — same gate as dev-key acceptance (`api.deps.dev_keys_enabled()`). An unset `ENV` is production (`services/runtime_env.py::is_dev_mode`)
 
 ---
 

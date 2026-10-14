@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Development mode is opt-in (unset `ENV` means production)
+
+- **Breaking for deployments that never set `ENV`.** Only `ENV=development` (any case) enables development mode: the hardcoded dev API keys, `POST /v1/auth/dev-token`, one-click dashboard sign-in and per-process rate limits. An unset, empty or misspelt `ENV` is now treated as production. Previously an unset `ENV` meant development, so a server started without it accepted `zizkadb_dev_local` and issued dashboard tokens with no login.
+- The production startup checks now run for every `ENV` other than `development` (including unset, `staging` and `Production`), not only for exactly `production`.
+- Production startup refuses every published JWT placeholder for both `JWT_SECRET` and `JWT_REFRESH_SECRET`: the `.env.example` values, the Compose defaults and the `dev-secret` fallbacks (#226).
+- An empty `DEV_API_KEY` is now allowed in production, as `SECURITY.md` and the staging example already said; dev keys are never accepted there anyway. A known default (`zizkadb_dev_local`, `agdb_dev_local`) is still refused.
+- Not affected: the compose files, the all-in-one image, `scripts/setup-local.sh` and the hybrid setup in `CONTRIBUTING.md` already set `ENV=development` explicitly. If you run the API image or `uvicorn` yourself for local development, add `ENV=development`.
+
 ### Self-hosted is one agent, one API key
 
 - **Breaking for multi-agent self-hosts.** A self-hosted deployment (`DEPLOYMENT_MODE=self_hosted`) now runs a single agent with a single active API key. This is always enforced and cannot be changed by env vars (`API_KEY_LIMITS_ENFORCED`, `API_KEY_LIMIT_SELF_HOSTED` and `MAX_AGENTS_SELF_HOSTED` have no effect on self-hosted).
