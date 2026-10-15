@@ -89,6 +89,26 @@ async def test_agent_scoped_unknown_uuid_returns_false():
     pool.execute.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_urn_prefixed_uuid_is_normalised_before_querying():
+    # UUID() accepts the "urn:uuid:" prefix but Postgres's ::uuid cast
+    # rejects it — the query must receive the normalised value, or the
+    # request still fails at the cast and surfaces as a 500.
+    pool = _pool("UPDATE 1")
+    result = await api_keys.revoke_api_key_record(pool, _TENANT_ID, f"urn:uuid:{_KEY_ID}")
+    assert result is True
+    pool.execute.assert_awaited_once()
+    assert pool.execute.await_args.args[1:] == (_KEY_ID, _TENANT_ID)
+
+
+@pytest.mark.asyncio
+async def test_urn_prefixed_unknown_uuid_returns_false():
+    pool = _pool("UPDATE 0")
+    result = await api_keys.revoke_api_key_record(pool, _TENANT_ID, f"urn:uuid:{_KEY_ID}")
+    assert result is False
+    pool.execute.assert_awaited_once()
+
+
 # ── Route level ───────────────────────────────────────────────────────────────
 
 
@@ -117,6 +137,13 @@ class TestRevokeApiKeyRoute:
     def test_unknown_uuid_is_404(self, mock_get_pool):
         mock_get_pool.return_value = _pool("UPDATE 0")
         response = client.delete(f"/v1/auth/api-keys/{_KEY_ID}")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "API key not found"
+
+    @patch("api.auth.get_pool")
+    def test_urn_prefixed_key_id_is_404_not_500(self, mock_get_pool):
+        mock_get_pool.return_value = _pool("UPDATE 0")
+        response = client.delete(f"/v1/auth/api-keys/urn:uuid:{_KEY_ID}")
         assert response.status_code == 404
         assert response.json()["detail"] == "API key not found"
 
