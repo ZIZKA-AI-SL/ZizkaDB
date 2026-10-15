@@ -109,18 +109,21 @@ _check_jwt_var JWT_SECRET
 _check_jwt_var JWT_REFRESH_SECRET
 
 # Environment mode
-ENV_VAL="$(echo "${ENV:-development}" | tr '[:upper:]' '[:lower:]' | xargs)"
+# Unset ENV is production, as in the API (core/services/runtime_env.py).
+ENV_VAL="$(printf '%s' "${ENV:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 if [ "$PRODUCTION_MODE" -eq 1 ]; then
   if [ "$ENV_VAL" != "production" ]; then
-    fail "ENV must be production (currently: $ENV_VAL)"
+    fail "ENV must be production (currently: ${ENV_VAL:-unset}; infra/docker-compose.yml requires it)"
   else
     ok "ENV=production"
   fi
-  # The API refuses to boot in production with an empty or default DEV_API_KEY
-  # (compose substitutes the default when unset), and never accepts it as auth.
+  # Dev keys are never accepted outside ENV=development. The API refuses to
+  # start with a published dev key; unset is fine.
   case "${DEV_API_KEY:-}" in
-    ""|zizkadb_dev_local|agdb_dev_local)
-      fail "DEV_API_KEY must be a unique random value in production (the API refuses to start otherwise)" ;;
+    zizkadb_dev_local|agdb_dev_local)
+      fail "DEV_API_KEY is a published dev key — unset it or use a unique value (the API refuses to start otherwise)" ;;
+    "")
+      ok "DEV_API_KEY unset (dev keys are never accepted in production)" ;;
     *)
       ok "DEV_API_KEY is a unique value (not accepted as auth in production)" ;;
   esac
@@ -146,13 +149,13 @@ if [ "$PRODUCTION_MODE" -eq 1 ]; then
     fi
   fi
 else
-  if [ "$ENV_VAL" = "production" ]; then
-    warn "ENV=production in infra/.env — dev key bypass disabled"
+  if [ "$ENV_VAL" != "development" ]; then
+    warn "ENV is ${ENV_VAL:-unset}, not development — dev key and one-click sign-in are disabled"
   fi
   if [ -n "${DEV_API_KEY:-}" ]; then
     ok "DEV_API_KEY set for local dev"
   else
-    warn "DEV_API_KEY not set — SDK may need ZIZKADB_API_KEY on localhost"
+    ok "DEV_API_KEY unset — zizkadb_dev_local works when ENV=development"
   fi
 fi
 
