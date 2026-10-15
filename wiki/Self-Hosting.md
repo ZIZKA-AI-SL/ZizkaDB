@@ -142,7 +142,7 @@ Configure in `infra/.env`:
 - `QDRANT_URL`
 - `JWT_SECRET` / `JWT_REFRESH_SECRET`
 - `SELFHOST_ADMIN_TOKEN` — required to sign in to the dashboard when `ENV=production` (no email/SMTP needed)
-- `ENV=production` (disables dev key bypass)
+- `ENV=production` (disables dev key bypass). `infra/docker-compose.yml` requires `ENV` and stops with an error if it is missing; never use `ENV=development` on a server
 - `DEV_API_KEY` — set a unique random value (`openssl rand -hex 24`) — the API refuses to start in production if it is empty or the default, and never accepts it as auth there
 - `DEPLOYMENT_MODE=self_hosted` — keep this set even in production. `ENV=production` alone doesn't distinguish a self-hosted install from managed cloud (both use it), so this separate flag is what makes plan-based entitlement checks (e.g. API key limits) resolve to the Self-Hosted plan instead of whatever is in `users.plan`.
 - `EMBEDDINGS_ENABLED=false` — default for self-host. Set to `true` only when you want semantic search / vector indexing; then configure `OPENAI_API_KEY` (or your provider key in Dashboard → Settings).

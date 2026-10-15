@@ -6,6 +6,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Compose: no development defaults on servers
+
+- **Breaking for `infra/docker-compose.yml` users whose `infra/.env` has no `ENV` line.** `ENV` is now required; `docker compose` stops with `Set ENV in infra/.env - production for a server, development for local use only`. It used to default to `development`, which turned on the dev API key and login-free dev-token on a public port. `.env.example` no longer sets `ENV` (a server copy would otherwise default to development); `scripts/setup-local.sh` adds `ENV=development` to a local `infra/.env`, new or existing, that does not set it.
+- `JWT_SECRET`, `JWT_REFRESH_SECRET` and `DEV_API_KEY` no longer default to the published values. In production the API refuses to start without real secrets; in development it uses its local-only fallbacks. A local `infra/.env` without `JWT_SECRET` therefore signs and encrypts with different dev values after upgrading: sign in again, and re-enter any BYOK embedding key saved locally.
+- `EMBEDDINGS_ENABLED` and `CORS_ALLOWED_ORIGINS` from `infra/.env` now reach the API container. They were documented but silently ignored, so semantic search could not be enabled on a self-hosted Docker install.
+- The embed worker now receives `DEPLOYMENT_MODE`, `EMBEDDINGS_ENABLED` and `JWT_SECRET`, so it can decrypt per-tenant BYOK embedding keys.
+- Postgres now has `restart: unless-stopped`, like the other services.
+- The local quickstart compose (`infra/docker-compose.quickstart.yml`) publishes every port on `127.0.0.1` only, as the single-container quickstart already did.
+- `infra/lib/production-guard.sh` (used by `scripts/reset-local-db.sh`) now refuses unless `infra/.env` sets `ENV=development`; an unset `ENV` counts as production, matching the API.
+- `infra/backup-postgres.sh` and `infra/backup-qdrant.sh` keep working on a server whose `infra/.env` has no `ENV` line (they only read from the running containers).
+- `scripts/validate-selfhost-config.sh` follows the API: an unset `ENV` is production, and an empty `DEV_API_KEY` is accepted in production (only the published dev keys are rejected).
+- Unchanged for now: data ports in `infra/docker-compose.yml` (Postgres, Redis, Qdrant) are still published on all interfaces, and `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers.
+
 ### Development mode is opt-in (unset `ENV` means production)
 
 - **Breaking for deployments that never set `ENV`.** Only `ENV=development` (any case) enables development mode: the hardcoded dev API keys, `POST /v1/auth/dev-token`, one-click dashboard sign-in and per-process rate limits. An unset, empty or misspelt `ENV` is now treated as production. Previously an unset `ENV` meant development, so a server started without it accepted `zizkadb_dev_local` and issued dashboard tokens with no login.
