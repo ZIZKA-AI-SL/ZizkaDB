@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from services.exceptions import conflict
 
@@ -134,6 +135,14 @@ async def list_api_keys_for_agent(pool, tenant_id: str, agent_id: str) -> list[d
 
 
 async def revoke_api_key_record(pool, tenant_id: str, key_id: str, agent_id: str | None = None) -> bool:
+    # A malformed key_id can never match a row — and passing it to the
+    # $1::uuid cast below would raise in Postgres and surface as a 500.
+    # Treat it as "not found", like the sibling endpoints that validate
+    # UUID path params before querying.
+    try:
+        UUID(key_id)
+    except (ValueError, AttributeError, TypeError):
+        return False
     if agent_id:
         result = await pool.execute(
             """
