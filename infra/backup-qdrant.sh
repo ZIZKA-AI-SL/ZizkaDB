@@ -6,6 +6,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 COMPOSE=(docker compose -f infra/docker-compose.yml)
+
+# infra/docker-compose.yml requires ENV just to parse; ps/exec never change the
+# running containers, so supply production when infra/.env does not set it.
+if [ -z "${ENV:-}" ] && ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?ENV[[:space:]]*=' "$ROOT/infra/.env" 2>/dev/null; then
+  export ENV=production
+fi
 BACKUP_DIR="$ROOT/infra/backups"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
