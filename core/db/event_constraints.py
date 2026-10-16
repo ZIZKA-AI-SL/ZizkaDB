@@ -8,31 +8,39 @@
 EVENTS_PARENT_FK_SET_NULL_SQL = """
     DO $$
     DECLARE
-        fk_name text;
+        fk record;
+        has_set_null boolean := false;
     BEGIN
-        SELECT c.conname INTO fk_name
-        FROM pg_constraint c
-        JOIN pg_attribute a
-          ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
-        WHERE c.contype = 'f'
-          AND c.conrelid = 'events'::regclass
-          AND c.confrelid = 'events'::regclass
-          AND a.attname = 'parent_event_id'
-        LIMIT 1;
+        -- Every API worker runs this at startup: take turns, so the others
+        -- find the constraint already converted and change nothing.
+        PERFORM pg_advisory_xact_lock(hashtext('zizkadb:events_parent_fk_set_null'));
+        -- Dropping and adding a constraint needs a brief exclusive lock on
+        -- events. Do not let a long transaction stall startup behind it:
+        -- give up after 5s and retry on the next start.
+        PERFORM set_config('lock_timeout', '5s', true);
 
-        IF fk_name IS NOT NULL AND (
-            SELECT confdeltype FROM pg_constraint
-            WHERE conname = fk_name AND conrelid = 'events'::regclass
-        ) <> 'n' THEN
-            EXECUTE format('ALTER TABLE events DROP CONSTRAINT %I', fk_name);
-            fk_name := NULL;
-        END IF;
+        FOR fk IN
+            SELECT c.conname, c.confdeltype
+            FROM pg_constraint c
+            JOIN pg_attribute a
+              ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+            WHERE c.contype = 'f'
+              AND c.conrelid = 'events'::regclass
+              AND c.confrelid = 'events'::regclass
+              AND a.attname = 'parent_event_id'
+        LOOP
+            IF fk.confdeltype = 'n' THEN
+                has_set_null := true;
+            ELSE
+                EXECUTE format('ALTER TABLE events DROP CONSTRAINT IF EXISTS %I', fk.conname);
+            END IF;
+        END LOOP;
 
-        -- NOT VALID: skip re-checking existing rows, which would scan the
-        -- whole events table while blocking writes on the first start after
-        -- upgrading. The constraint being replaced already guaranteed them,
-        -- and new or updated rows are still checked.
-        IF fk_name IS NULL THEN
+        -- NOT VALID skips re-checking existing rows, which would scan the
+        -- whole table under that lock. On an upgrade the constraint being
+        -- replaced already guaranteed those rows; new and updated rows are
+        -- always checked.
+        IF NOT has_set_null THEN
             ALTER TABLE events
                 ADD CONSTRAINT events_parent_event_id_fkey
                 FOREIGN KEY (parent_event_id)
@@ -40,5 +48,8 @@ EVENTS_PARENT_FK_SET_NULL_SQL = """
                 ON DELETE SET NULL
                 NOT VALID;
         END IF;
+    EXCEPTION
+        WHEN lock_not_available THEN
+            RAISE WARNING 'events.parent_event_id foreign key not converted to ON DELETE SET NULL (events table busy); retrying on next start';
     END $$;
 """

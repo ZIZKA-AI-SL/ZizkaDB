@@ -131,3 +131,67 @@ async def test_migration_repairs_a_legacy_install_and_is_idempotent(pg_db, no_ve
     assert (
         await pg_db.fetchval("SELECT parent_event_id FROM events WHERE event_id = $1", child) is None
     )
+
+
+async def test_concurrent_startups_with_a_differently_named_legacy_fk(pg_db):
+    """Every API worker runs the migration at once; none may fail."""
+    import asyncio
+
+    await pg_db.execute(
+        """
+        ALTER TABLE events DROP CONSTRAINT IF EXISTS events_parent_event_id_fkey;
+        ALTER TABLE events ADD CONSTRAINT legacy_parent_fk
+            FOREIGN KEY (parent_event_id) REFERENCES events(event_id);
+        """
+    )
+
+    # Hold a lock that the DROP waits for, so all four workers have read the
+    # catalog before any of them changes it (the race at real startup).
+    async with pg_db.acquire() as holder:
+        tx = holder.transaction()
+        await tx.start()
+        await holder.execute("LOCK TABLE events IN ACCESS SHARE MODE")
+        workers = [asyncio.create_task(_apply_fk_migration(pg_db)) for _ in range(4)]
+        await asyncio.sleep(0.5)
+        await tx.rollback()
+        await asyncio.gather(*workers)
+
+    assert [r["confdeltype"] for r in await _parent_fks(pg_db)] == ["n"]
+
+
+async def test_every_blocking_fk_on_the_column_is_replaced(pg_db, no_vectors):
+    from api.memory import ForgetRequest, forget
+
+    # A SET NULL constraint already exists (schema.sql); add a second, blocking one.
+    await pg_db.execute(
+        """ALTER TABLE events ADD CONSTRAINT extra_parent_fk
+           FOREIGN KEY (parent_event_id) REFERENCES events(event_id)"""
+    )
+    parent, child = await _seed_cross_agent_chain(pg_db)
+
+    await _apply_fk_migration(pg_db)
+
+    assert [r["confdeltype"] for r in await _parent_fks(pg_db)] == ["n"]
+    result = await forget(
+        ForgetRequest(filter_key="user_id", filter_value="u_123"),
+        tenant={"tenant_id": TENANT, "agent_id": None},
+    )
+    assert result["deleted_events"] == 1
+
+
+async def test_busy_table_skips_the_migration_instead_of_stalling(pg_db):
+    """A long transaction on events must not block startup: skip, keep the old FK."""
+    await pg_db.execute(LEGACY_EVENTS_FK)
+
+    async with pg_db.acquire() as holder:
+        tx = holder.transaction()
+        await tx.start()
+        try:
+            await holder.execute("LOCK TABLE events IN ACCESS SHARE MODE")
+            await _apply_fk_migration(pg_db)  # waits at most lock_timeout, then warns
+        finally:
+            await tx.rollback()
+
+    assert [r["confdeltype"] for r in await _parent_fks(pg_db)] == ["a"]
+    await _apply_fk_migration(pg_db)  # next start converts it
+    assert [r["confdeltype"] for r in await _parent_fks(pg_db)] == ["n"]
