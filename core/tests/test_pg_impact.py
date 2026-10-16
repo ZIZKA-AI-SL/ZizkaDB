@@ -205,7 +205,7 @@ async def test_unbound_key_is_bound_to_the_anchor_agent_and_scoped(tree, api_as,
 
     response = await client.get(f"/v1/events/{tree['tool']}/impact")
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     assert {n["event_id"] for n in response.json()["nodes"]} == {tree["tool"], tree["error"]}
     bound = await pg_db.fetchval("SELECT agent_id FROM api_keys WHERE key_id = $1", key_id)
     assert bound == AGENT
