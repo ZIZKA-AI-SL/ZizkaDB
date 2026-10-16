@@ -16,7 +16,7 @@ from api import memory as memory_api
 from api import events as events_api
 from api.deps import require_dashboard_session
 from api.memory import ContextRequest, ForgetRequest, get_context, session_diff, forget
-from api.events import why
+from api.events import impact, why
 
 
 FULL_TENANT = {"tenant_id": "t-1"}                       # unscoped key / dashboard
@@ -174,6 +174,64 @@ async def test_why_asserts_on_anchor_not_deepest_parent(monkeypatch):
     result = await why(anchor_id, depth=10, tenant=SCOPED_TENANT)
     assert result["event_id"] == anchor_id
     assert result["chain_length"] == 2
+
+
+# ── /v1/events/{id}/impact ────────────────────────────────────────────────────
+
+def _impact_row(event_id, agent_id, parent, depth):
+    return {
+        "event_id": event_id,
+        "agent_id": agent_id,
+        "timestamp": datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+        "event_type": "test",
+        "data": {},
+        "parent_event_id": parent,
+        "session_id": None,
+        "sequence_no": depth + 1,
+        "metadata": None,
+        "depth": depth,
+    }
+
+
+@pytest.mark.asyncio
+async def test_impact_binds_scoped_agent_on_anchor_and_children(monkeypatch):
+    """Both CTE terms carry the scoped agent, so a foreign anchor is a 404."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    monkeypatch.setattr("api.events.get_pool", lambda: pool)
+    with pytest.raises(HTTPException) as exc:
+        await impact("00000000-0000-0000-0000-000000000001", depth=10, tenant=SCOPED_TENANT)
+    assert exc.value.status_code == 404
+
+    sql, *params = pool.fetch.await_args.args
+    assert sql.count("agent_id = $4") == 2
+    assert params[3] == "mine"
+
+
+@pytest.mark.asyncio
+async def test_impact_unbound_key_keeps_only_its_agents_subtree(monkeypatch):
+    """A key bound by this request must not see other agents' descendants."""
+    anchor, foreign, below_foreign, own = (
+        f"00000000-0000-0000-0000-00000000000{i}" for i in range(1, 5)
+    )
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        _impact_row(anchor, "mine", None, 0),
+        _impact_row(foreign, "other", anchor, 1),
+        _impact_row(own, "mine", anchor, 1),
+        _impact_row(below_foreign, "mine", foreign, 2),
+    ]
+    monkeypatch.setattr("api.events.get_pool", lambda: pool)
+    monkeypatch.setattr(
+        "services.api_keys.claim_unassigned_api_key", AsyncMock(return_value="mine")
+    )
+    tenant = {"tenant_id": "t-1", "key_id": "k-1"}  # unbound key
+
+    result = await impact(anchor, depth=10, tenant=tenant)
+
+    assert pool.fetch.await_args.args[4] is None  # CTE ran unscoped
+    assert tenant["agent_id"] == "mine"
+    assert [n["event_id"] for n in result["nodes"]] == [anchor, own]
 
 
 # ── /v1/agents (list) ─────────────────────────────────────────────────────────
