@@ -30,6 +30,7 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(os.getenv("COMMUNITY_UPLOAD_DIR", "/data/community_uploads"))
+_MEDIA_NAME_RE = re.compile(r"[0-9a-f]{32}\.(?:png|jpe?g|gif|webp)")
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 CATEGORIES = {"question", "experience", "showcase"}
@@ -295,11 +296,12 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
 
 @router.get("/media/{filename}")
 async def serve_media(filename: str):
-    safe = re.sub(r"[^a-zA-Z0-9._-]", "", filename)
-    if not safe or safe != filename:
+    # Uploads are always named <uuid4 hex><ext>; reject anything else outright.
+    if not _MEDIA_NAME_RE.fullmatch(filename):
         raise not_found("Not found")
-    path = UPLOAD_DIR / safe
-    if not path.is_file():
+    root = os.path.realpath(UPLOAD_DIR)
+    path = os.path.realpath(os.path.join(root, filename))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
         raise not_found("Not found")
     media = {
         ".png": "image/png",
@@ -314,7 +316,7 @@ async def serve_media(filename: str):
     }
     return FileResponse(
         path,
-        media_type=media.get(path.suffix.lower(), "application/octet-stream"),
+        media_type=media.get(os.path.splitext(path)[1].lower(), "application/octet-stream"),
         headers=headers,
     )
 
