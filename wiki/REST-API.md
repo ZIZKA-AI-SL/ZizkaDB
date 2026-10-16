@@ -32,6 +32,8 @@ Response **201:**
 }
 ```
 
+`checksum` is a SHA-256 over tenant, agent, event type, data, parent, session, timestamp, sequence number and metadata. Check it with `GET /v1/events/{event_id}/verify` or `GET /v1/events/verify?agent=my-bot` (page with `before_seq`).
+
 ## Query events
 
 ```http

@@ -118,7 +118,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 | `services/embeddings.py` | OpenAI embedding generation + Redis cache (24 h TTL) |
 | `services/embedding_config.py` | Per-tenant embedding model config (`QDRANT_COLLECTION`, `VECTOR_SIZE`) |
 | `services/event_write.py` | Core event ingestion: Postgres insert + Qdrant upsert (non-fatal if Qdrant fails) |
-| `services/checksum.py` | Event checksum v2 (all audit fields) + legacy v1, and `verify_stored_checksum()`; the write path hashes the `RETURNING` row so writer and verifier hash identical inputs |
+| `services/checksum.py` | Event checksum v2 (all audit fields) + legacy v1, and `verify_stored_checksum()`; the write path hashes Postgres-canonicalised values so writer and verifier hash identical inputs; v1 only accepted up to `checksum_v2_cutoff` |
 | `services/account.py` | Trial activation, GDPR consent, account deletion |
 | `services/pricing.py` | Hardcoded per-model $/1K token pricing (`MODEL_PRICING`) + `cost_for()` — see ADR-006 |
 | `services/token_usage.py` | Per-agent token/cost aggregation from `events.data.token_usage` — see ADR-006 |

@@ -9,8 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Event checksums cover the audit fields
 
 - New events get a v2 checksum over tenant, agent, event type, data, `parent_event_id`, session, timestamp, sequence number and metadata — not just event type + data. Rewriting any of these in the database now shows up as a mismatch. `embedding` and `index_status` are excluded because the embedding pipeline updates them after insert.
-- The checksum is computed from the row Postgres returns and stored in the same transaction as the insert, so JSONB number normalisation, uppercase `parent_id` UUIDs and empty metadata do not cause false mismatches.
-- New `GET /v1/events/verify?agent=` and `GET /v1/events/{event_id}/verify` recompute checksums and report `valid` / `valid_legacy` / `mismatch` / `missing`. Events written before this release keep their old checksum and verify as `valid_legacy`; nothing is rewritten.
+- The checksum is computed from the values Postgres canonicalises (JSONB, UUID, `nextval`, `now()`) and written by the INSERT itself, so JSONB number normalisation, uppercase `parent_id` UUIDs and empty metadata do not cause false mismatches, and each event is still a single row write.
+- New `GET /v1/events/verify?agent=&before_seq=` and `GET /v1/events/{event_id}/verify` recompute checksums and report `valid` / `valid_legacy` / `mismatch` / `missing` (status and version only; hashes are not returned). The list pages by `sequence_no`: pass `next_before_seq` as `before_seq` until it is null. The single-event route returns 404 for an API key not yet bound to an agent.
+- Events written before this release keep their old checksum and verify as `valid_legacy`; nothing is rewritten. The first start records the newest such event in `checksum_v2_cutoff`, and a v1 checksum on any later event is a `mismatch`, so a row cannot be downgraded to the weaker hash.
+- Scope: the checksum is unkeyed and stored in the row. It detects edits made without recomputing it, not a database writer who recomputes it, and it cannot show a deleted event.
+- **Breaking:** the `checksum` returned by `POST /v1/events` (and the SDKs' `LogResult.checksum`) is now the v2 hash. Code that recomputed `sha256({"event", "data"})` client-side to compare will no longer match.
 
 ### Compose: no development defaults on servers
 

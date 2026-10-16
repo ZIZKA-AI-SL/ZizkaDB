@@ -236,7 +236,7 @@ From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.
 
 Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record:
 
-- **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum of its content, so any later edit is detectable.
+- **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum over its content and audit fields (agent, session, parent, timestamp, sequence), and `GET /v1/events/verify` reports any row whose fields no longer match.
 - **Causally linked history.** Each decision points to the event that caused it, so an auditor can follow the full chain.
 - **Session replay.** Step through any past session event by event.
 - **Time-travel debugging.** Rebuild exactly what the agent knew at any moment with `db.at()`.
