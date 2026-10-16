@@ -107,6 +107,9 @@ services:
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-managed}
       # Self-hosted dashboard sign-in when ENV=production (empty = login disabled).
       SELFHOST_ADMIN_TOKEN: ${SELFHOST_ADMIN_TOKEN:-}
+      # Proxies whose X-Forwarded-For is trusted for client IPs (rate limiting).
+      # Default covers nginx on the host reaching the API via the Docker bridge.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
       # Email — optional; enables OTP login on self-hosted dashboard
       EMAIL_HOST: ${EMAIL_HOST}
       EMAIL_PORT: ${EMAIL_PORT:-465}
