@@ -101,7 +101,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 ## Shared utilities
 
 `api/utils.py` — use these, never reimplement:
-- `client_ip(request)` — extracts real client IP from `X-Forwarded-For` or `request.client`
+- `client_ip(request)` — client IP for rate limiting: walks `X-Forwarded-For` right-to-left past `TRUSTED_PROXIES` hops; falls back to `request.client`
 - `check_rate(key, store, limit, window_seconds)` — in-process rate limiter; `store` is a module-level dict
 
 ---

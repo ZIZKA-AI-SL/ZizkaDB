@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import uuid
 
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
@@ -34,6 +35,12 @@ async def write_event(
     session_id: str | None = None,
     metadata: dict | None = None,
 ) -> dict:
+    if parent_id:
+        try:
+            uuid.UUID(str(parent_id))
+        except (ValueError, AttributeError, TypeError):
+            raise bad_request("parent_id is not a valid UUID")
+
     pool = get_pool()
 
     if parent_id:

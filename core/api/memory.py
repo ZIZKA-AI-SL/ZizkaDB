@@ -226,25 +226,33 @@ async def session_diff(
         print(diff["summary"])
         print(diff["new_patterns"])
     """
+    if is_unbound_api_key(tenant):
+        raise bad_request(
+            "diff requires an agent-scoped API key: log an event with this key "
+            "first, or use the dashboard for tenant-wide session diffs."
+        )
+
     tenant_id = tenant["tenant_id"]
     pool = get_pool()
 
-    # Events in this session
+    scoped_agent = tenant.get("agent_id")
+
+    # Events in this session; a scoped key only ever sees its own agent's rows.
     rows = await pool.fetch(
         """
         SELECT event_id, agent_id, event_type, data, timestamp, parent_event_id
         FROM events
         WHERE tenant_id = $1 AND session_id = $2
+          AND ($3::text IS NULL OR agent_id = $3)
         ORDER BY timestamp ASC
         """,
-        tenant_id, session_id,
+        tenant_id, session_id, scoped_agent,
     )
 
     if not rows:
         raise not_found("Session not found")
 
-    agent_id = rows[0]["agent_id"]
-    # A scoped agent key may only diff sessions belonging to its own agent.
+    agent_id = scoped_agent or rows[0]["agent_id"]
     await assert_agent_allowed(tenant, agent_id)
     events = []
     event_types: dict[str, int] = {}
