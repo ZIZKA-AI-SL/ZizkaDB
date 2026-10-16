@@ -145,8 +145,9 @@ async def test_concurrent_startups_with_a_differently_named_legacy_fk(pg_db):
         """
     )
 
-    # Hold a lock that the DROP waits for, so all four workers have read the
-    # catalog before any of them changes it (the race at real startup).
+    # Hold a lock the conversion has to wait for, so all four workers start
+    # together, as at a real deploy. Without coordination a second worker
+    # would try to drop the legacy name the first one had already dropped.
     async with pg_db.acquire() as holder:
         tx = holder.transaction()
         await tx.start()
@@ -188,10 +189,30 @@ async def test_busy_table_skips_the_migration_instead_of_stalling(pg_db):
         await tx.start()
         try:
             await holder.execute("LOCK TABLE events IN ACCESS SHARE MODE")
-            await _apply_fk_migration(pg_db)  # waits at most lock_timeout, then warns
+            await _apply_fk_migration(pg_db)  # gives up after lock_timeout, then warns
         finally:
             await tx.rollback()
 
     assert [r["confdeltype"] for r in await _parent_fks(pg_db)] == ["a"]
     await _apply_fk_migration(pg_db)  # next start converts it
     assert [r["confdeltype"] for r in await _parent_fks(pg_db)] == ["n"]
+
+
+async def test_composite_fk_including_the_column_is_left_alone(pg_db):
+    await pg_db.execute("ALTER TABLE events ADD CONSTRAINT events_tenant_event_uq UNIQUE (tenant_id, event_id)")
+    await pg_db.execute(
+        """ALTER TABLE events ADD COLUMN IF NOT EXISTS parent_tenant_id UUID;
+           ALTER TABLE events ADD CONSTRAINT composite_parent_fk
+               FOREIGN KEY (parent_tenant_id, parent_event_id)
+               REFERENCES events(tenant_id, event_id)"""
+    )
+
+    await _apply_fk_migration(pg_db)
+
+    names = {
+        r["conname"]
+        for r in await pg_db.fetch(
+            "SELECT conname FROM pg_constraint WHERE conrelid = 'events'::regclass AND contype = 'f'"
+        )
+    }
+    assert "composite_parent_fk" in names

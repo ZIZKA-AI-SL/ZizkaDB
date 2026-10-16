@@ -11,13 +11,15 @@ EVENTS_PARENT_FK_SET_NULL_SQL = """
         fk record;
         has_set_null boolean := false;
     BEGIN
-        -- Every API worker runs this at startup: take turns, so the others
-        -- find the constraint already converted and change nothing.
-        PERFORM pg_advisory_xact_lock(hashtext('zizkadb:events_parent_fk_set_null'));
+        -- Every API worker runs this at startup. Only one attempts the
+        -- conversion; the others skip it instead of queueing behind it.
+        IF NOT pg_try_advisory_xact_lock(hashtext('zizkadb:events_parent_fk_set_null')) THEN
+            RETURN;
+        END IF;
         -- Dropping and adding a constraint needs a brief exclusive lock on
-        -- events. Do not let a long transaction stall startup behind it:
-        -- give up after 5s and retry on the next start.
-        PERFORM set_config('lock_timeout', '5s', true);
+        -- events, and queries on events queue behind that request. Give up
+        -- after 2s on a busy table and retry on the next start.
+        PERFORM set_config('lock_timeout', '2s', true);
 
         FOR fk IN
             SELECT c.conname, c.confdeltype
@@ -28,6 +30,7 @@ EVENTS_PARENT_FK_SET_NULL_SQL = """
               AND c.conrelid = 'events'::regclass
               AND c.confrelid = 'events'::regclass
               AND a.attname = 'parent_event_id'
+              AND array_length(c.conkey, 1) = 1  -- leave composite keys alone
         LOOP
             IF fk.confdeltype = 'n' THEN
                 has_set_null := true;
