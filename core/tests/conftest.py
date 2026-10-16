@@ -96,6 +96,10 @@ async def pg_db(monkeypatch):
     Applies ``db/schema.sql`` (what Docker runs on first boot), then
     ``init_db()`` (what every API start runs). Yields the asyncpg pool that
     ``get_pool()`` returns; the database is dropped afterwards.
+
+    Only the uniquely named database it creates is ever written to or dropped;
+    the database named in ``ZIZKADB_TEST_DATABASE_URL`` is used to issue
+    CREATE/DROP DATABASE and is otherwise left alone.
     """
     import uuid
 
@@ -110,8 +114,9 @@ async def pg_db(monkeypatch):
     dsn = _dsn_for_database(admin_dsn, database)
 
     admin = await asyncpg.connect(admin_dsn)
-    await admin.execute(f'CREATE DATABASE "{database}"')
     try:
+        await admin.execute(f'CREATE DATABASE "{database}"')
+
         conn = await asyncpg.connect(dsn)
         try:
             await conn.execute((ROOT / "db" / "schema.sql").read_text())
@@ -128,10 +133,11 @@ async def pg_db(monkeypatch):
         monkeypatch.setattr(connection, "_redis", None)
         monkeypatch.setattr(connection, "_qdrant", None)
 
-        await connection.init_db()
         try:
+            await connection.init_db()
             yield connection.get_pool()
         finally:
+            # Also closes a pool left open by an init_db() that failed midway.
             await connection.close_db()
     finally:
         await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')

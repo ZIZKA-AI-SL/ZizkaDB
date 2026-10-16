@@ -51,31 +51,32 @@ async def two_tenants(pg_db):
 
 @pytest.fixture
 async def api_as():
-    """Call the real app as a given tenant (auth dependency overridden)."""
-    clients = []
+    """Call the real app with ``get_tenant`` overridden.
 
-    async def _client(tenant_id: str, agent_id: str | None = None) -> httpx.AsyncClient:
+    ``api_as(tenant_id)`` switches the caller identity and returns the one
+    shared client, so the most recent call decides who every request runs as.
+    """
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
+
+    def _as(tenant_id: str, agent_id: str | None = None) -> httpx.AsyncClient:
         tenant = {"tenant_id": tenant_id, "user_id": None}
         if agent_id:
             tenant["agent_id"] = agent_id
         app.dependency_overrides[get_tenant] = lambda: tenant
-        client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        )
-        clients.append(client)
         return client
 
     try:
-        yield _client
+        yield _as
     finally:
         app.dependency_overrides.pop(get_tenant, None)
-        for client in clients:
-            await client.aclose()
+        await client.aclose()
 
 
 async def test_event_list_returns_only_the_callers_events(two_tenants, api_as):
     for name, other in (("alpha", "beta"), ("beta", "alpha")):
-        client = await api_as(two_tenants[name]["tenant_id"])
+        client = api_as(two_tenants[name]["tenant_id"])
         response = await client.get("/v1/events", params={"agent": AGENT})
 
         assert response.status_code == 200
@@ -90,7 +91,7 @@ async def test_event_list_returns_only_the_callers_events(two_tenants, api_as):
 
 async def test_why_walks_the_callers_chain_on_real_postgres(two_tenants, api_as):
     alpha = two_tenants["alpha"]
-    client = await api_as(alpha["tenant_id"])
+    client = api_as(alpha["tenant_id"])
 
     response = await client.get(f"/v1/events/{alpha['child']}/why")
 
@@ -102,7 +103,7 @@ async def test_why_walks_the_callers_chain_on_real_postgres(two_tenants, api_as)
 
 
 async def test_why_hides_another_tenants_event(two_tenants, api_as):
-    client = await api_as(two_tenants["beta"]["tenant_id"])
+    client = api_as(two_tenants["beta"]["tenant_id"])
 
     response = await client.get(f"/v1/events/{two_tenants['alpha']['child']}/why")
 
@@ -139,8 +140,11 @@ async def test_scoped_key_cannot_walk_another_agents_chain(two_tenants, api_as):
         event="tool_call",
         data={"owner": "alpha"},
     )
-    client = await api_as(alpha["tenant_id"], agent_id=AGENT)
+    url = f"/v1/events/{other['event_id']}/why"
 
-    response = await client.get(f"/v1/events/{other['event_id']}/why")
+    # Control: the event is reachable without the agent scope.
+    unscoped = await api_as(alpha["tenant_id"]).get(url)
+    assert unscoped.status_code == 200
 
-    assert response.status_code == 404
+    scoped = await api_as(alpha["tenant_id"], agent_id=AGENT).get(url)
+    assert scoped.status_code == 404
