@@ -28,12 +28,17 @@ EVENTS_PARENT_FK_SET_NULL_SQL = """
             fk_name := NULL;
         END IF;
 
+        -- NOT VALID: skip re-checking existing rows, which would scan the
+        -- whole events table while blocking writes on the first start after
+        -- upgrading. The constraint being replaced already guaranteed them,
+        -- and new or updated rows are still checked.
         IF fk_name IS NULL THEN
             ALTER TABLE events
                 ADD CONSTRAINT events_parent_event_id_fkey
                 FOREIGN KEY (parent_event_id)
                 REFERENCES events(event_id)
-                ON DELETE SET NULL;
+                ON DELETE SET NULL
+                NOT VALID;
         END IF;
     END $$;
 """
