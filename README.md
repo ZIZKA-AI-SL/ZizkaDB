@@ -355,24 +355,31 @@ The stack isn't running. Start it with the curl command above or `bash scripts/s
 
 Thanks to everyone who has helped build ZizkaDB. Want to join? Read [CONTRIBUTING.md](CONTRIBUTING.md) or pick up an [open issue](https://github.com/Zizka-ai/ZizkaDB/issues).
 
+<!-- CONTRIBUTORS:START -->
 <table>
   <tr>
     <td align="center" width="25%"><a href="https://github.com/saadamjad"><img src="https://github.com/saadamjad.png?size=120" width="64" alt="saadamjad"/><br/><sub>saadamjad</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/Zizka-ai"><img src="https://github.com/Zizka-ai.png?size=120" width="64" alt="Zizka-ai"/><br/><sub>Zizka-ai</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/arshadgit23"><img src="https://github.com/arshadgit23.png?size=120" width="64" alt="arshadgit23"/><br/><sub>arshadgit23</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/saadwashmen"><img src="https://github.com/saadwashmen.png?size=120" width="64" alt="saadwashmen"/><br/><sub>saadwashmen</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/Subhajitdas99"><img src="https://github.com/Subhajitdas99.png?size=120" width="64" alt="Subhajitdas99"/><br/><sub>Subhajitdas99</sub></a></td>
   </tr>
   <tr>
-    <td align="center" width="25%"><a href="https://github.com/Subhajitdas99"><img src="https://github.com/Subhajitdas99.png?size=120" width="64" alt="Subhajitdas99"/><br/><sub>Subhajitdas99</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/saadwashmen"><img src="https://github.com/saadwashmen.png?size=120" width="64" alt="saadwashmen"/><br/><sub>saadwashmen</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/mikeaig4real"><img src="https://github.com/mikeaig4real.png?size=120" width="64" alt="mikeaig4real"/><br/><sub>mikeaig4real</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/aqilaziz"><img src="https://github.com/aqilaziz.png?size=120" width="64" alt="aqilaziz"/><br/><sub>aqilaziz</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/lamenting-hawthorn"><img src="https://github.com/lamenting-hawthorn.png?size=120" width="64" alt="lamenting-hawthorn"/><br/><sub>lamenting-hawthorn</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/AIandI0x1"><img src="https://github.com/AIandI0x1.png?size=120" width="64" alt="AIandI0x1"/><br/><sub>AIandI0x1</sub></a></td>
   </tr>
   <tr>
+    <td align="center" width="25%"><a href="https://github.com/lamenting-hawthorn"><img src="https://github.com/lamenting-hawthorn.png?size=120" width="64" alt="lamenting-hawthorn"/><br/><sub>lamenting-hawthorn</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/nabeeltahirdeveloper"><img src="https://github.com/nabeeltahirdeveloper.png?size=120" width="64" alt="nabeeltahirdeveloper"/><br/><sub>nabeeltahirdeveloper</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/abdurrehman616"><img src="https://github.com/abdurrehman616.png?size=120" width="64" alt="abdurrehman616"/><br/><sub>abdurrehman616</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/HafizHamzaShahid"><img src="https://github.com/HafizHamzaShahid.png?size=120" width="64" alt="HafizHamzaShahid"/><br/><sub>HafizHamzaShahid</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/danielhagever"><img src="https://github.com/danielhagever.png?size=120" width="64" alt="danielhagever"/><br/><sub>danielhagever</sub></a></td>
+  </tr>
+  <tr>
     <td align="center" width="25%"><a href="https://github.com/eaz1337"><img src="https://github.com/eaz1337.png?size=120" width="64" alt="eaz1337"/><br/><sub>eaz1337</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/HafizHamzaShahid"><img src="https://github.com/HafizHamzaShahid.png?size=120" width="64" alt="HafizHamzaShahid"/><br/><sub>HafizHamzaShahid</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/mbilalzeeshan"><img src="https://github.com/mbilalzeeshan.png?size=120" width="64" alt="mbilalzeeshan"/><br/><sub>mbilalzeeshan</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/nabeeltahirpsy"><img src="https://github.com/nabeeltahirpsy.png?size=120" width="64" alt="nabeeltahirpsy"/><br/><sub>nabeeltahirpsy</sub></a></td>
   </tr>
   <tr>
     <td align="center" width="25%"><a href="https://github.com/AbdelazizBs"><img src="https://github.com/AbdelazizBs.png?size=120" width="64" alt="AbdelazizBs"/><br/><sub>AbdelazizBs</sub></a></td>
@@ -381,6 +388,7 @@ Thanks to everyone who has helped build ZizkaDB. Want to join? Read [CONTRIBUTIN
     <td align="center" width="25%"><a href="https://github.com/towfiq-ul"><img src="https://github.com/towfiq-ul.png?size=120" width="64" alt="towfiq-ul"/><br/><sub>towfiq-ul</sub></a></td>
   </tr>
 </table>
+<!-- CONTRIBUTORS:END -->
 
 ---
 

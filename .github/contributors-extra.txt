@@ -1,0 +1,6 @@
+# Contributors GitHub can't attribute automatically (co-authored commits,
+# unlinked commit emails, non-code contributions). One login per line.
+AbdelazizBs
+Mephistopheles9631
+Qalbeabbas-12
+towfiq-ul
