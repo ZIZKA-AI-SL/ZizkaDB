@@ -8,6 +8,7 @@ import json
 
 from api.deps import get_tenant, assert_agent_allowed
 from db.connection import get_pool
+from services.checksum import verify_stored_checksum
 from services.event_write import write_event
 from services.why_analysis import analyze_why_chain
 
@@ -17,6 +18,7 @@ router = APIRouter()
 # ─────────────────────────────────────────
 # MODELS
 # ─────────────────────────────────────────
+
 
 class LogEventRequest(BaseModel):
     agent: str = Field(..., min_length=1, max_length=255)
@@ -30,6 +32,7 @@ class LogEventRequest(BaseModel):
 # ─────────────────────────────────────────
 # LOG EVENT — POST /v1/events
 # ─────────────────────────────────────────
+
 
 @router.post("", status_code=201)
 async def log_event(
@@ -51,6 +54,7 @@ async def log_event(
 # ─────────────────────────────────────────
 # QUERY EVENTS — GET /v1/events
 # ─────────────────────────────────────────
+
 
 @router.get("")
 async def query_events(
@@ -111,6 +115,7 @@ async def query_events(
 # Causal chain: walk parent_event_id tree
 # ─────────────────────────────────────────
 
+
 def _truncate_chain_to_agent(rows: list, agent_id: str) -> list:
     """Keep the chain prefix (from depth 0) whose events belong to ``agent_id``.
 
@@ -167,7 +172,10 @@ async def why(
         SELECT * FROM causal_chain
         ORDER BY depth DESC, timestamp ASC
         """,
-        event_id, tenant_id, depth, scoped_agent,
+        event_id,
+        tenant_id,
+        depth,
+        scoped_agent,
     )
 
     if not rows:
@@ -315,8 +323,107 @@ async def time_travel(
 
 
 # ─────────────────────────────────────────
+# VERIFY CHECKSUM — GET /v1/events/verify
+# Recompute checksums for an agent's recent events (audit helper).
+# ─────────────────────────────────────────
+
+
+@router.get("/verify")
+async def verify_events(
+    agent: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+    before: datetime | None = None,
+    after: datetime | None = None,
+    tenant: dict = Depends(get_tenant),
+):
+    """Recompute the checksum of each returned event and compare with the
+    stored value. Statuses: ``valid`` (v2), ``valid_legacy`` (v1, payload
+    only), ``mismatch`` (tampering or corruption), ``missing``."""
+    await assert_agent_allowed(tenant, agent)
+    pool = get_pool()
+    tenant_id = tenant["tenant_id"]
+
+    conditions = ["tenant_id = $1", "agent_id = $2"]
+    params: list[Any] = [tenant_id, agent]
+    i = 3
+
+    if before:
+        conditions.append(f"timestamp < ${i}")
+        params.append(before)
+        i += 1
+    if after:
+        conditions.append(f"timestamp > ${i}")
+        params.append(after)
+        i += 1
+
+    params.append(limit)
+    where = " AND ".join(conditions)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT event_id, tenant_id, agent_id, timestamp, event_type,
+               data, parent_event_id, session_id, sequence_no, metadata, checksum
+        FROM events
+        WHERE {where}
+        ORDER BY timestamp DESC
+        LIMIT ${i}
+        """,
+        *params,
+    )
+
+    results = [{"event_id": str(r["event_id"]), **verify_stored_checksum(dict(r))} for r in rows]
+    summary = {"checked": len(results), "valid": 0, "valid_legacy": 0, "mismatch": 0, "missing": 0}
+    for res in results:
+        summary[res["status"]] += 1
+
+    return {
+        "agent": agent,
+        "summary": summary,
+        "mismatches": [r for r in results if r["status"] == "mismatch"],
+    }
+
+
+# ─────────────────────────────────────────
+# VERIFY EVENT — GET /v1/events/{event_id}/verify
+# ─────────────────────────────────────────
+
+
+@router.get("/{event_id}/verify")
+async def verify_event(
+    event_id: str,
+    tenant: dict = Depends(get_tenant),
+):
+    try:
+        UUID(event_id)
+    except ValueError:
+        raise not_found("Event not found")
+
+    pool = get_pool()
+    tenant_id = tenant["tenant_id"]
+    scoped_agent = tenant.get("agent_id")
+
+    row = await pool.fetchrow(
+        """
+        SELECT event_id, tenant_id, agent_id, timestamp, event_type,
+               data, parent_event_id, session_id, sequence_no, metadata, checksum
+        FROM events
+        WHERE event_id = $1 AND tenant_id = $2
+        """,
+        event_id,
+        tenant_id,
+    )
+    if not row or (scoped_agent and row["agent_id"] != scoped_agent):
+        raise not_found("Event not found")
+
+    result = verify_stored_checksum(dict(row))
+    result["event_id"] = event_id
+    return result
+
+
+# ─────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────
+
 
 def _format_event(row) -> dict:
     data = row["data"]

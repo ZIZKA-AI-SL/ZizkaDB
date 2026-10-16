@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Checksum integrity (audit hardening)
+
+- Event checksums now cover all immutable audit fields — tenant, agent, causal link (`parent_event_id`), session, timestamp and sequence number — not just `event_type` + `data`. Rewriting any of these in the database now invalidates the stored checksum.
+- New `GET /v1/events/verify` (agent, recent range) and `GET /v1/events/{event_id}/verify` endpoints recompute checksums server-side and report `valid` / `valid_legacy` / `mismatch` / `missing`.
+- Rows written before this change keep their historical checksum formula and verify as `valid_legacy`; new writes use the v2 formula, computed in the same transaction as the insert.
+- `embedding` and `index_status` are deliberately excluded from the checksum preimage — the embedding pipeline updates them in place after insert.
+
 ### Compose: no development defaults on servers
 
 - **Breaking for `infra/docker-compose.yml` users whose `infra/.env` has no `ENV` line.** `ENV` is now required; `docker compose` stops with `Set ENV in infra/.env - production for a server, development for local use only`. It used to default to `development`, which turned on the dev API key and login-free dev-token on a public port. `.env.example` no longer sets `ENV` (a server copy would otherwise default to development); `scripts/setup-local.sh` adds `ENV=development` to a local `infra/.env`, new or existing, that does not set it.

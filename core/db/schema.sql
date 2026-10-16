@@ -99,7 +99,7 @@ CREATE TABLE events (
     parent_event_id UUID REFERENCES events(event_id),  -- causal link
     session_id      VARCHAR(255),                       -- group related events
     sequence_no     BIGSERIAL,                          -- monotonic, never gaps
-    checksum        VARCHAR(64),                        -- SHA-256 of event content
+    checksum        VARCHAR(64),                        -- SHA-256 (v2 covers audit fields; see services/checksum.py)
     metadata        JSONB,
 
     CONSTRAINT fk_agent FOREIGN KEY (agent_id, tenant_id)
