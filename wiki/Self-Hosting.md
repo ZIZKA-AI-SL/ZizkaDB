@@ -71,7 +71,7 @@ Notes for servers:
 - The token must be at least 16 characters — the API refuses to start otherwise. Use a long random value; sign-in attempts are rate-limited (10/min per IP), but the token itself is what keeps people out.
 - Anyone with the token gets full access to the one owner workspace. There are no per-user accounts on a self-hosted instance.
 - Sessions last 7 days. Changing `SELFHOST_ADMIN_TOKEN` stops new sign-ins with the old token. To also sign out existing sessions, rotate `JWT_SECRET` and restart the API.
-- Put the API behind a reverse proxy (nginx) that sets `X-Forwarded-For`, so rate limiting sees real client IPs.
+- Put the API behind a reverse proxy (nginx) that sets `X-Forwarded-For`, so rate limiting sees real client IPs. The API only trusts that header from addresses in `TRUSTED_PROXIES` (default `127.0.0.1,::1,172.16.0.0/12`, which covers nginx on the host reaching the container through the Docker bridge). If another proxy or load balancer sits in front of nginx, add its address, otherwise all users share one rate-limit bucket.
 
 > If you previously signed in to a production self-host with email OTP, that data belongs to your OTP account's tenant, not the owner tenant. Open an issue if you need help moving it.
 
