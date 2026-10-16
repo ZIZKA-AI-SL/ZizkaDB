@@ -81,7 +81,6 @@ CREATE TABLE auth_otps (
     expires_at  TIMESTAMPTZ NOT NULL,
     used        BOOLEAN DEFAULT FALSE,
     attempts    INT NOT NULL DEFAULT 0,
-    max_attempts INT NOT NULL DEFAULT 5,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -180,6 +180,9 @@ _SIGNUP_ALREADY_REGISTERED = (
 )
 _SIGNUP_GDPR_REQUIRED = "GDPR consent is required to create an account."
 
+# Wrong guesses allowed per OTP before it is burned.
+OTP_MAX_ATTEMPTS = 5
+
 
 async def verify_otp(
     email: str,
@@ -194,7 +197,7 @@ async def verify_otp(
 
     row = await pool.fetchrow(
         """
-        SELECT otp_id, otp_hash, attempts, max_attempts FROM auth_otps
+        SELECT otp_id, otp_hash FROM auth_otps
         WHERE email = $1 AND used = FALSE AND expires_at > NOW()
         ORDER BY created_at DESC LIMIT 1
         """,
@@ -206,18 +209,21 @@ async def verify_otp(
 
     valid = bcrypt.checkpw(otp.encode(), row["otp_hash"].encode())
     if not valid:
-        attempts = (row["attempts"] if "attempts" in row else 0) + 1
-        max_attempts = row["max_attempts"] if "max_attempts" in row else 5
-        if attempts >= max_attempts:
-            await pool.execute(
-                "UPDATE auth_otps SET used = TRUE, attempts = $2 WHERE otp_id = $1",
-                row["otp_id"], attempts,
-            )
-            raise ValueError("Too many failed attempts. Please request a new code.")
-        await pool.execute(
-            "UPDATE auth_otps SET attempts = $2 WHERE otp_id = $1",
-            row["otp_id"], attempts,
+        # Single atomic increment: concurrent wrong guesses serialise on the
+        # row lock, so the lockout holds against a parallel brute force.
+        counted = await pool.fetchrow(
+            """
+            UPDATE auth_otps
+               SET attempts = attempts + 1,
+                   used     = (attempts + 1 >= $2)
+             WHERE otp_id = $1 AND used = FALSE
+            RETURNING attempts, used
+            """,
+            row["otp_id"], OTP_MAX_ATTEMPTS,
         )
+        # No row: a concurrent request already burned (or consumed) the code.
+        if counted is None or counted["used"]:
+            raise ValueError("Too many failed attempts. Please request a new code.")
         raise ValueError("Invalid OTP")
 
     user_exists = await email_exists(email)

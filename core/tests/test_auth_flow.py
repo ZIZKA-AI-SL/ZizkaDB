@@ -19,12 +19,7 @@ client = TestClient(app)
 
 TEST_OTP = "123456"
 TEST_OTP_HASH = bcrypt.hashpw(TEST_OTP.encode(), bcrypt.gensalt()).decode()
-TEST_OTP_ROW = {
-    "otp_id": "otp-1",
-    "otp_hash": TEST_OTP_HASH,
-    "attempts": 0,
-    "max_attempts": 5,
-}
+TEST_OTP_ROW = {"otp_id": "otp-1", "otp_hash": TEST_OTP_HASH}
 
 
 class TestRequestOtpIntent:
@@ -150,8 +145,9 @@ class TestVerifyOtpIntent:
     @patch("services.auth.get_pool")
     async def test_invalid_otp_does_not_burn(self, mock_pool_fn, mock_exists):
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=TEST_OTP_ROW)
-        pool.execute = AsyncMock()
+        pool.fetchrow = AsyncMock(
+            side_effect=[TEST_OTP_ROW, {"attempts": 1, "used": False}]
+        )
         pool.acquire = MagicMock()
         mock_pool_fn.return_value = pool
 
@@ -160,11 +156,7 @@ class TestVerifyOtpIntent:
 
         pool.acquire.assert_not_called()
         mock_exists.assert_not_called()
-        pool.execute.assert_awaited_once_with(
-            "UPDATE auth_otps SET attempts = $2 WHERE otp_id = $1",
-            "otp-1",
-            1,
-        )
+        assert "attempts = attempts + 1" in pool.fetchrow.await_args.args[0]
 
     @pytest.mark.asyncio
     @patch("services.auth.email_exists", new_callable=AsyncMock)

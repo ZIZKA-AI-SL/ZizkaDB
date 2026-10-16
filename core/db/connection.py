@@ -125,7 +125,6 @@ async def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent_at TIMESTAMPTZ;
 
         ALTER TABLE auth_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
-        ALTER TABLE auth_otps ADD COLUMN IF NOT EXISTS max_attempts INT NOT NULL DEFAULT 5;
     """)
 
     await _pg_pool.execute("""
