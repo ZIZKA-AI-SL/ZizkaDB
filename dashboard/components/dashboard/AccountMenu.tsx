@@ -96,7 +96,8 @@ export function AccountMenu() {
 
   function signOut() {
     clearToken()
-    router.push('/login')
+    // Self-hosted one-click login signs in automatically; say this was a sign-out.
+    router.push(IS_SELF_HOSTED ? '/login?signed_out=1' : '/login')
   }
 
   return (

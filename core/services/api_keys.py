@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from services.exceptions import conflict
 
@@ -134,13 +135,22 @@ async def list_api_keys_for_agent(pool, tenant_id: str, agent_id: str) -> list[d
 
 
 async def revoke_api_key_record(pool, tenant_id: str, key_id: str, agent_id: str | None = None) -> bool:
+    # A malformed key_id can never match a row — and passing it to the
+    # $1::uuid cast below would raise in Postgres and surface as a 500.
+    # Validate it here and query with the normalised value: UUID() also
+    # accepts forms Postgres rejects (e.g. a "urn:uuid:" prefix), so the
+    # raw string must never reach the cast.
+    try:
+        key_uuid = str(UUID(key_id))
+    except (ValueError, AttributeError, TypeError):
+        return False
     if agent_id:
         result = await pool.execute(
             """
             UPDATE api_keys SET revoked = TRUE
             WHERE key_id = $1::uuid AND tenant_id = $2::uuid AND agent_id = $3 AND revoked = FALSE
             """,
-            key_id,
+            key_uuid,
             tenant_id,
             agent_id,
         )
@@ -150,7 +160,7 @@ async def revoke_api_key_record(pool, tenant_id: str, key_id: str, agent_id: str
             UPDATE api_keys SET revoked = TRUE
             WHERE key_id = $1::uuid AND tenant_id = $2::uuid AND revoked = FALSE
             """,
-            key_id,
+            key_uuid,
             tenant_id,
         )
     return result != "UPDATE 0"
@@ -178,6 +188,12 @@ async def claim_unassigned_api_key(
         from db.connection import get_pool
 
         pool = get_pool()
+    # Binding a key to a new agent name creates that agent: the plan must
+    # have room for it (409 otherwise; the key stays unassigned).
+    from services.agent_limits import reserve_agent_slot
+
+    await reserve_agent_slot(pool, tenant_id=tenant_id, agent_id=agent_id)
+
     async with pool.acquire() as conn:
         await conn.execute(
             """

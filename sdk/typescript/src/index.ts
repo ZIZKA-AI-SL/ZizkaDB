@@ -30,6 +30,9 @@ import type {
   AtOptions,
   CausalChain,
   LogOptions,
+  LogToolOptions,
+  LogToolResultOptions,
+  LogApiOptions,
   LogResult,
   QueryOptions,
   SearchOptions,
@@ -185,6 +188,27 @@ function formatFastApiDetail(detail: unknown, fallback: string): string {
   return String(detail)
 }
 
+function lineage(o: { parentId?: string; sessionId?: string; metadata?: Record<string, unknown> }) {
+  return { parentId: o.parentId, sessionId: o.sessionId, metadata: o.metadata }
+}
+
+function errorFields(error: string | Error): Record<string, unknown> {
+  return error instanceof Error
+    ? { error: error.message, type: error.name }
+    : { error: String(error) }
+}
+
+/** `url` without query string, fragment or credentials, plus its host+path. */
+function sanitizeUrl(raw: string): { url: string; target: string } {
+  try {
+    const u = new URL(raw)
+    return { url: `${u.protocol}//${u.host}${u.pathname}`, target: `${u.host}${u.pathname}` }
+  } catch {
+    const bare = raw.split('?')[0].split('#')[0]
+    return { url: bare, target: bare }
+  }
+}
+
 export class ZizkaDB {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
@@ -271,6 +295,50 @@ export class ZizkaDB {
     recordLogResult(options.agent, result.eventId)
     emitLogHint(this.baseUrl, result.eventId)
     return result
+  }
+
+  /**
+   * Log a tool call by name, so the dashboard and reports show *which* tool
+   * ran (`tool_call · lookup_order`), not just that one did.
+   */
+  async logTool(options: LogToolOptions): Promise<LogResult> {
+    const data: Record<string, unknown> = { tool: options.tool }
+    if (options.args !== undefined) data.args = options.args
+    return this.log({ ...lineage(options), agent: options.agent, event: 'tool_call', data })
+  }
+
+  /** Log how a tool call ended. With `error`, the event is a `tool_error`. */
+  async logToolResult(options: LogToolResultOptions): Promise<LogResult> {
+    const data: Record<string, unknown> = { tool: options.tool }
+    const failed = options.error !== undefined
+    if (failed) Object.assign(data, errorFields(options.error!))
+    else if (options.result !== undefined) data.result = options.result
+    if (options.durationMs !== undefined) data.duration_ms = options.durationMs
+    return this.log({
+      ...lineage(options),
+      agent: options.agent,
+      event: failed ? 'tool_error' : 'tool_result',
+      data,
+    })
+  }
+
+  /**
+   * Log an outbound API call, named so reports show *which* API was hit.
+   * The query string, fragment and credentials in `url` are dropped before
+   * logging. A 4xx/5xx `status` or an `error` counts toward its error rate.
+   */
+  async logApi(options: LogApiOptions): Promise<LogResult> {
+    const method = options.method.toUpperCase()
+    const { url, target } = sanitizeUrl(options.url)
+    const data: Record<string, unknown> = {
+      api: options.name ?? `${method} ${target}`,
+      method,
+      url,
+    }
+    if (options.status !== undefined) data.status = options.status
+    if (options.durationMs !== undefined) data.duration_ms = options.durationMs
+    if (options.error !== undefined) Object.assign(data, errorFields(options.error))
+    return this.log({ ...lineage(options), agent: options.agent, event: 'api_call', data })
   }
 
   // ─────────────────────────────────────────

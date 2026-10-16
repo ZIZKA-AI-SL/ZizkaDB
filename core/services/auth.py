@@ -11,6 +11,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 from db.connection import get_pool
+from services.runtime_env import is_dev_mode
 
 log = logging.getLogger(__name__)
 
@@ -28,11 +29,12 @@ def _required_secret(env_var: str, dev_fallback: str) -> str:
     secret = os.getenv(env_var)
     if secret:
         return secret
-    if os.getenv("ENV", "development") != "development":
+    if not is_dev_mode():
         raise RuntimeError(
             f"{env_var} must be set in production. Refusing to sign tokens "
             f"with the hardcoded development fallback, since that value is "
-            f"visible in the public source code."
+            f"visible in the public source code. For local development set "
+            f"ENV=development."
         )
     return dev_fallback
 

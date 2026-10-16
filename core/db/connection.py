@@ -215,6 +215,14 @@ async def init_db():
         WHERE index_status IN ('pending', 'failed');
     """)
 
+    # Time travel reads only an agent's state writes; without this index, finding them can
+    # mean scanning every event in the table.
+    await _pg_pool.execute("""
+        CREATE INDEX IF NOT EXISTS idx_events_state_writes
+        ON events (tenant_id, agent_id, timestamp)
+        WHERE event_type IN ('STATE_SET', 'STATE_DELETE');
+    """)
+
     await _pg_pool.execute("""
         ALTER TABLE tenants
         ADD COLUMN IF NOT EXISTS embedding_provider VARCHAR(32)
@@ -390,11 +398,24 @@ async def init_db():
 
     # ---------------- Qdrant ----------------
 
+    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333").strip()
+
+    from services.entitlements import embeddings_enabled
+
+    # QDRANT_URL="" opts out of Qdrant entirely (single-container quickstart).
+    # Only honoured with embeddings off, where nothing reads or writes vectors.
+    if not qdrant_url:
+        if embeddings_enabled():
+            raise RuntimeError(
+                "QDRANT_URL is empty but embeddings are enabled. "
+                "Set QDRANT_URL, or set EMBEDDINGS_ENABLED=false."
+            )
+        _qdrant = None
+        logger.info("Qdrant disabled (QDRANT_URL empty, embeddings off)")
+        return
+
     _qdrant = AsyncQdrantClient(
-        url=os.getenv(
-            "QDRANT_URL",
-            "http://localhost:6333",
-        ),
+        url=qdrant_url,
         timeout=30,
         check_compatibility=False,
     )

@@ -421,3 +421,18 @@ async def test_write_event_failure_propagates(
             body,
             tenant=TENANT,
         )
+
+@pytest.mark.asyncio
+async def test_a2a_is_not_available_on_self_hosted(monkeypatch, mock_pool, mock_write_event):
+    """Agent-to-agent messaging is a ZizkaDB Cloud feature; self-hosted is single-agent."""
+    monkeypatch.setenv("DEPLOYMENT_MODE", "self_hosted")
+
+    with pytest.raises(HTTPException) as exc:
+        await send_message(
+            A2AMessageRequest(recipient_agent="other", message="hi"),
+            tenant={"tenant_id": "t-1", "key_id": "k-1", "agent_id": "mine"},
+        )
+
+    assert exc.value.status_code == 403
+    assert "ZizkaDB Cloud" in str(exc.value.detail)
+    mock_write_event.assert_not_called()

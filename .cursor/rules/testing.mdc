@@ -47,7 +47,7 @@ ZIZKADB_RUN_INTEGRATION=1 pytest core/tests/test_integration_selfhost.py -v
 | `test_route_authz.py` | Scoped-key isolation on why(), list_agents, search |
 | `test_search.py` | Search tenant isolation for unassigned keys |
 | `test_delete_agent.py` | Qdrant vector purge on agent delete |
-| `test_events_at.py` | events/at row cap |
+| `test_events_at.py` | events/at exact state per key (no row cap), one snapshot; live: >10k events, non-string `STATE_DELETE` key |
 | `test_community.py` | Community posts, honeypot, rate limit |
 | `test_marketing_subscriptions.py` | Marketing subscription create + honeypot |
 | `test_settings_auth.py` | Settings embeddings requires dashboard session |

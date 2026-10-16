@@ -15,16 +15,72 @@ SCOPED_TENANT = {"tenant_id": "t-1", "key_id": "k-1", "agent_id": "mine"}
 SECRET_VALUE = "alice@example.com"
 
 
+class _FakeTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeConn:
+    """Stands in for the asyncpg connection forget() acquires: serves the
+    id SELECT and records every execute (advisory locks, DELETE) in order."""
+
+    def __init__(self, rows, on_execute=None):
+        self.rows = rows
+        self.executed = []
+        self._on_execute = on_execute
+
+    def transaction(self):
+        return _FakeTxn()
+
+    async def fetch(self, query, *args):
+        return self.rows
+
+    async def execute(self, query, *args):
+        self.executed.append((query, args))
+        if self._on_execute is not None:
+            self._on_execute(query, args)
+        return "OK"
+
+    def delete_count(self):
+        return sum(1 for q, _ in self.executed if "DELETE FROM events" in q)
+
+    def lock_args(self):
+        return [a[0] for q, a in self.executed if "pg_advisory_xact_lock" in q]
+
+
+class _FakeAcquire:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakePool:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        return _FakeAcquire(self._conn)
+
+
 def _setup_forget(monkeypatch, qdrant_side_effect, embeddings_on=True):
-    pool = AsyncMock()
-    pool.fetch.return_value = [{"event_id": uuid.uuid4()}, {"event_id": uuid.uuid4()}]
+    rows = [{"event_id": uuid.uuid4()}, {"event_id": uuid.uuid4()}]
+    conn = _FakeConn(rows)
+    pool = _FakePool(conn)
     qdrant = AsyncMock()
     qdrant.delete.side_effect = qdrant_side_effect
     monkeypatch.setattr("api.memory.get_pool", lambda: pool)
     monkeypatch.setattr("api.memory.get_qdrant", lambda: qdrant)
     monkeypatch.setattr("api.memory.embeddings_enabled", lambda: embeddings_on)
     monkeypatch.setattr("api.memory.asyncio.sleep", AsyncMock())
-    return pool, qdrant
+    return pool, conn, qdrant
 
 
 def _body():
@@ -35,20 +91,20 @@ def _body():
 
 @pytest.mark.asyncio
 async def test_forget_qdrant_down_returns_503_and_keeps_rows(monkeypatch):
-    pool, qdrant = _setup_forget(monkeypatch, RuntimeError("qdrant down"))
+    pool, conn, qdrant = _setup_forget(monkeypatch, RuntimeError("qdrant down"))
     with pytest.raises(HTTPException) as exc:
         await forget(_body(), tenant=dict(SCOPED_TENANT))
     assert exc.value.status_code == 503
     assert qdrant.delete.await_count == 3
-    pool.execute.assert_not_awaited()
+    assert conn.delete_count() == 0
 
 
 @pytest.mark.asyncio
 async def test_forget_retries_then_succeeds(monkeypatch):
-    pool, qdrant = _setup_forget(monkeypatch, [RuntimeError("blip"), None])
+    pool, conn, qdrant = _setup_forget(monkeypatch, [RuntimeError("blip"), None])
     out = await forget(_body(), tenant=dict(SCOPED_TENANT))
     assert qdrant.delete.await_count == 2
-    pool.execute.assert_awaited_once()
+    assert conn.delete_count() == 1
     assert out["vector_cleanup"] is True
     assert out["deleted_events"] == 2
 
@@ -56,18 +112,28 @@ async def test_forget_retries_then_succeeds(monkeypatch):
 @pytest.mark.asyncio
 async def test_forget_vectors_deleted_before_rows(monkeypatch):
     order = []
-    pool, qdrant = _setup_forget(monkeypatch, None)
+    rows = [{"event_id": uuid.uuid4()}, {"event_id": uuid.uuid4()}]
+
+    def on_execute(query, args):
+        if "DELETE FROM events" in query:
+            order.append("postgres")
+
+    conn = _FakeConn(rows, on_execute=on_execute)
+    qdrant = AsyncMock()
     qdrant.delete.side_effect = lambda **kw: order.append("qdrant")
-    pool.execute.side_effect = lambda *a: order.append("postgres")
+    monkeypatch.setattr("api.memory.get_pool", lambda: _FakePool(conn))
+    monkeypatch.setattr("api.memory.get_qdrant", lambda: qdrant)
+    monkeypatch.setattr("api.memory.embeddings_enabled", lambda: True)
+    monkeypatch.setattr("api.memory.asyncio.sleep", AsyncMock())
     await forget(_body(), tenant=dict(SCOPED_TENANT))
     assert order == ["qdrant", "postgres"]
 
 
 @pytest.mark.asyncio
 async def test_forget_embeddings_off_still_deletes_rows(monkeypatch):
-    pool, _ = _setup_forget(monkeypatch, RuntimeError("no qdrant"), embeddings_on=False)
+    pool, conn, _ = _setup_forget(monkeypatch, RuntimeError("no qdrant"), embeddings_on=False)
     out = await forget(_body(), tenant=dict(SCOPED_TENANT))
-    pool.execute.assert_awaited_once()
+    assert conn.delete_count() == 1
     assert out["vector_cleanup"] is False
 
 
@@ -78,6 +144,22 @@ async def test_forget_never_logs_raw_value(monkeypatch, caplog):
         await forget(_body(), tenant=dict(SCOPED_TENANT))
     assert "GDPR forget" in caplog.text
     assert SECRET_VALUE not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_forget_locks_each_event_before_deleting(monkeypatch):
+    # #234: forget must hold the per-event advisory lock while it deletes
+    # vectors and rows, so the embedding worker cannot recreate a vector
+    # for an event being forgotten. Locks go in sorted order (deadlock-free
+    # against concurrent forgets) and always precede the row DELETE.
+    pool, conn, qdrant = _setup_forget(monkeypatch, None)
+    await forget(_body(), tenant=dict(SCOPED_TENANT))
+    expected = sorted(str(r["event_id"]) for r in conn.rows)
+    assert conn.lock_args() == expected
+    queries = [q for q, _ in conn.executed]
+    delete_idx = next(i for i, q in enumerate(queries) if "DELETE FROM events" in q)
+    lock_idxs = [i for i, q in enumerate(queries) if "pg_advisory_xact_lock" in q]
+    assert lock_idxs and max(lock_idxs) < delete_idx
 
 
 # ── /health/deep ──────────────────────────────────────────────────────────────

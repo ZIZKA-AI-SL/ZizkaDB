@@ -54,6 +54,14 @@ else
   fi
 fi
 
+# infra/docker-compose.yml requires ENV and .env.example leaves it unset so a
+# server copy cannot default to development. This script is for a local
+# machine, so choose development unless infra/.env already sets ENV.
+if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?ENV[[:space:]]*=' infra/.env 2>/dev/null; then
+  printf '\n# Added by setup-local.sh (local machine only; never on a server)\nENV=development\n' >> infra/.env
+  echo "✓ Set ENV=development in infra/.env (local machine)"
+fi
+
 COMPOSE=( -f infra/docker-compose.yml -f infra/docker-compose.dashboard.yml )
 IMAGE_TAG="${ZIZKADB_IMAGE_TAG:-latest}"
 USE_PREBUILT="${ZIZKADB_USE_PREBUILT_IMAGES:-auto}"

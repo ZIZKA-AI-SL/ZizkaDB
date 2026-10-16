@@ -30,7 +30,7 @@ export const LANDING_PRICING_PLANS: readonly PricingPlan[] = [
     name: 'Self-Hosted',
     price: 'Free',
     sub: 'forever',
-    features: ['1 API key', 'Your infrastructure', 'Docker Compose', 'Community support'],
+    features: ['1 agent, 1 API key', 'Your infrastructure', 'Docker Compose', 'Community support'],
     cta: 'Setup guide',
     href: '/docs',
     highlight: false,

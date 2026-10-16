@@ -337,3 +337,40 @@ class TestRunParentsEviction:
 
         assert oldest_id not in handler._run_parents
         assert len(handler._run_parents) <= _RUN_PARENT_MAX
+
+
+# ── Tool name on follow-up events ──────────────────────────────────────────
+
+class TestToolNameOnFollowUps:
+    @pytest.mark.asyncio
+    async def test_tool_end_carries_the_tool_name(self):
+        handler = _make_handler()
+        run_id = uuid4()
+        await handler.on_tool_start({"name": "lookup_order"}, "ORD-1", run_id=run_id)
+        await handler.on_tool_end("shipped", run_id=run_id)
+
+        end = handler.db.log.call_args.kwargs
+        assert end["event"] == "tool_end"
+        assert end["data"]["tool"] == "lookup_order"
+        assert end["data"]["output"] == "shipped"
+        assert run_id not in handler._run_tools
+
+    @pytest.mark.asyncio
+    async def test_tool_error_carries_the_tool_name(self):
+        handler = _make_handler()
+        run_id = uuid4()
+        await handler.on_tool_start({"name": "refund"}, "ORD-1", run_id=run_id)
+        await handler.on_tool_error(ValueError("no such order"), run_id=run_id)
+
+        err = handler.db.log.call_args.kwargs
+        assert err["event"] == "tool_error"
+        assert err["data"]["tool"] == "refund"
+        assert err["data"]["error"] == "no such order"
+
+    @pytest.mark.asyncio
+    async def test_tool_end_without_a_start_still_logs(self):
+        handler = _make_handler()
+        await handler.on_tool_end("out", run_id=uuid4())
+        data = handler.db.log.call_args.kwargs["data"]
+        assert data["output"] == "out"
+        assert "tool" not in data

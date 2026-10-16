@@ -4,7 +4,7 @@ import { memo, useMemo } from 'react'
 import { format } from 'date-fns'
 import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import type { AgentEvent } from '@/lib/api'
-import { eventColor, groupBySession, isErrorEvent } from '@/lib/events'
+import { eventActionName, eventColor, eventLabel, groupBySession, isErrorEvent } from '@/lib/events'
 import { colors, radii } from '@/lib/design-tokens'
 
 export function EventDot({ type, size = 'md' }: { type: string; size?: 'sm' | 'md' }) {
@@ -38,6 +38,7 @@ const EventRow = memo(function EventRow({
   onToggleExpand,
 }: EventRowProps) {
   const preview = JSON.stringify(event.data ?? {}).slice(0, 90)
+  const actionName = eventActionName(event)
 
   return (
     <div>
@@ -59,9 +60,12 @@ const EventRow = memo(function EventRow({
                 <span
                   className="text-sm font-mono truncate"
                   style={{ color: colors.text }}
-                  title={event.event}
+                  title={eventLabel(event)}
                 >
                   {event.event}
+                  {actionName && (
+                    <span style={{ color: colors.textMuted }}> · {actionName}</span>
+                  )}
                 </span>
                 {event.parent_id && (
                   <span

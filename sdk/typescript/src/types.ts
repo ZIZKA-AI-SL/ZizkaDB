@@ -13,6 +13,40 @@ export interface LogOptions {
   metadata?: Record<string, unknown>
 }
 
+interface LineageOptions {
+  parentId?: string
+  sessionId?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface LogToolOptions extends LineageOptions {
+  agent: string
+  /** Tool name, e.g. "lookup_order" — shown in the dashboard and reports. */
+  tool: string
+  args?: unknown
+}
+
+export interface LogToolResultOptions extends LineageOptions {
+  agent: string
+  tool: string
+  result?: unknown
+  /** Set for a failure: logged as `tool_error` and counted in the tool's error rate. */
+  error?: string | Error
+  durationMs?: number
+}
+
+export interface LogApiOptions extends LineageOptions {
+  agent: string
+  method: string
+  /** Query string, fragment and credentials are dropped before logging. */
+  url: string
+  status?: number
+  /** Display name; defaults to "METHOD host/path". */
+  name?: string
+  durationMs?: number
+  error?: string | Error
+}
+
 export interface QueryOptions {
   agent: string
   limit?: number

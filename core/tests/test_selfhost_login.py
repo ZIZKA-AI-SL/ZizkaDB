@@ -53,9 +53,14 @@ class TestSelfHostConfig:
         _env(monkeypatch, mode="self_hosted", env="development")
         assert client.get("/v1/auth/selfhost").json() == {"self_hosted": True, "login": "one_click"}
 
-    def test_env_unset_defaults_to_one_click(self, monkeypatch):
+    def test_env_unset_is_production_not_one_click(self, monkeypatch):
+        """Unset ENV fails closed: no one-click sign-in without ENV=development."""
         _env(monkeypatch, mode="self_hosted")
-        assert client.get("/v1/auth/selfhost").json()["login"] == "one_click"
+        assert client.get("/v1/auth/selfhost").json()["login"] == "unavailable"
+
+    def test_env_unset_with_token_is_admin_token(self, monkeypatch):
+        _env(monkeypatch, mode="self_hosted", token="s3cret")
+        assert client.get("/v1/auth/selfhost").json()["login"] == "admin_token"
 
     def test_production_with_token_is_admin_token(self, monkeypatch):
         _env(monkeypatch, mode="self_hosted", env="production", token="s3cret")

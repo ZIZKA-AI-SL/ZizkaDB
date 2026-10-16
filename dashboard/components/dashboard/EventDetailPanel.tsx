@@ -5,6 +5,7 @@ import { ArrowRight, GitBranch } from 'lucide-react'
 import type { AgentEvent, WhyChain } from '@/lib/api'
 import { colors, radii } from '@/lib/design-tokens'
 import { JsonBlock, LoadingLine, MetaRow } from '@/components/ui'
+import { eventLabel } from '@/lib/events'
 import { EventDot } from './EventList'
 
 export type PanelTab = 'data' | 'why'
@@ -40,7 +41,7 @@ function DataPanel({ event }: { event: AgentEvent }) {
       <div className="flex items-center gap-2 mb-3">
         <EventDot type={event.event} />
         <span className="font-mono font-semibold text-sm" style={{ color: colors.textStrong }}>
-          {event.event}
+          {eventLabel(event)}
         </span>
       </div>
       <JsonBlock value={event.data} maxHeight={280} />
@@ -101,7 +102,7 @@ function WhyPanel({ chain }: { chain: WhyChain }) {
                   className="text-xs font-mono font-medium truncate"
                   style={{ color: colors.text }}
                 >
-                  {e.event}
+                  {eventLabel(e)}
                 </span>
                 {i === 0 && (
                   <span

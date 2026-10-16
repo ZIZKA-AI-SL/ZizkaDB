@@ -94,9 +94,23 @@ class TestLimitOverride:
 # ─────────────────────────────────────────
 
 class TestLimitsEnforced:
+    @pytest.fixture(autouse=True)
+    def _managed(self, monkeypatch):
+        # The kill switch only applies to managed deployments.
+        monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+
     def test_defaults_off(self, monkeypatch):
         monkeypatch.delenv("API_KEY_LIMITS_ENFORCED", raising=False)
         assert limits_enforced() is False
+
+    @pytest.mark.parametrize("switch", [None, "false", "0"])
+    def test_self_hosted_is_always_enforced(self, monkeypatch, switch):
+        monkeypatch.setenv("DEPLOYMENT_MODE", "self_hosted")
+        if switch is None:
+            monkeypatch.delenv("API_KEY_LIMITS_ENFORCED", raising=False)
+        else:
+            monkeypatch.setenv("API_KEY_LIMITS_ENFORCED", switch)
+        assert limits_enforced() is True
 
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " On "])
     def test_truthy_values_enable(self, monkeypatch, value):
@@ -280,3 +294,37 @@ async def test_guard_fails_open_on_plan_lookup_error(enforce):
     conn = ExplodingConn(plan="pro", count=99)
     # Plan lookup blows up -> allow the create (UX guard, not a security boundary).
     await api_keys.assert_and_reserve_api_key_slot(conn, tenant_id="t1")
+
+
+# ─────────────────────────────────────────
+# Agent caps
+# ─────────────────────────────────────────
+
+class TestAgentLimits:
+    def test_self_hosted_is_one_agent_one_key(self):
+        from services.entitlements import agent_limit_for_plan
+
+        assert agent_limit_for_plan("self_hosted") == 1
+        assert api_key_limit_for_plan("self_hosted") == 1
+
+    def test_self_hosted_caps_ignore_env_overrides(self, monkeypatch):
+        from services.entitlements import agent_limit_for_plan
+
+        monkeypatch.setenv("MAX_AGENTS_SELF_HOSTED", "10")
+        monkeypatch.setenv("API_KEY_LIMIT_SELF_HOSTED", "10")
+        assert agent_limit_for_plan("self_hosted") == 1
+        assert api_key_limit_for_plan("self_hosted") == 1
+
+    def test_managed_plans_can_be_tuned_by_env(self, monkeypatch):
+        from services.entitlements import agent_limit_for_plan
+
+        assert agent_limit_for_plan("pro") == 2
+        monkeypatch.setenv("MAX_AGENTS_PRO", "4")
+        assert agent_limit_for_plan("pro") == 4
+        assert api_key_limit_for_plan("pro") == 2  # the other cap is untouched
+
+    def test_unknown_plan_is_uncapped(self):
+        from services.entitlements import agent_limit_for_plan
+
+        assert agent_limit_for_plan(None) is None
+        assert agent_limit_for_plan("pending_checkout") is None

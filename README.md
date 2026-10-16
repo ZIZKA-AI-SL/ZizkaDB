@@ -28,7 +28,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 - **Time-travel.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment.
 - **Tamper-evident audit trail.** Every decision is logged with a checksum, so you have a verifiable record for EU AI Act Article 12.
 - **Drift detection.** See when an agent's behavior shifts from its baseline.
-- **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure.
+- **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure. Self-hosted runs **one agent with one API key**; multiple agents, agent fleets and agent-to-agent messaging are on Cloud.
 
 <p align="center">
   <a href="#quickstart-60-seconds"><img src="docs/assets/why-chain.svg" alt="Animated: db.why() walks from a tool_call back through llm_response to the root-cause user_message" width="900"/></a>
@@ -51,21 +51,21 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 
 ## Quickstart (60 seconds)
 
-From zero to your first causal chain with one command. No repo clone needed.
+One command, one container. No repo clone, no Python, no config files.
 
 <p align="center">
-  <a href="scripts/quickstart-remote.sh"><img src="docs/assets/quickstart-terminal.svg" alt="Terminal animation: one curl command downloads config, pulls images, starts the stack, installs the SDK and prints a causal chain" width="900"/></a>
+  <a href="scripts/quickstart-remote.sh"><img src="docs/assets/quickstart-terminal.svg" alt="Terminal animation: one curl command starts ZizkaDB and prints a causal chain" width="900"/></a>
 </p>
 
-**1. Start Docker.** [Docker](https://docs.docker.com/get-docker/) must be running. The first image pull can take 5–10 minutes; later starts take seconds.
-
-**2. Install and run.** This downloads config and pre-built images, starts Postgres, Qdrant, Redis, the API and the dashboard, then runs a demo agent:
+**1. Run it.** With [Docker](https://docs.docker.com/get-docker/) running:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
-**3. See why.** The demo prints the causal chain behind the agent's tool call:
+This pulls a single image (Postgres, the API and the dashboard together), starts it, and logs a demo agent run. After the download, startup takes a few seconds.
+
+**2. See why.** It prints the causal chain behind the demo agent's tool call:
 
 ```text
 tool_call · lookup_order · ORD-8842
@@ -73,13 +73,39 @@ tool_call · lookup_order · ORD-8842
         └── user_message · Why was my order delayed?
 ```
 
-**4. Open the dashboard.** [localhost:3001](http://localhost:3001) → **Open my dashboard** → Activity → click any event → **Why? (causal)** tab.
+**3. Explore.** The dashboard opens on that agent, already signed in: [localhost:3001/dashboard/activity?agent=support-bot](http://localhost:3001/dashboard/activity?agent=support-bot). Click any event → **Why? (causal)** tab.
+
+Now log your own agent: `pip install zizkadb-sdk`, then see [CONNECT.md](CONNECT.md). The local API is `http://localhost:8000` with key `zizkadb_dev_local`.
+
+<details>
+<summary>Prefer plain <code>docker run</code>? Day-two commands</summary>
+
+The script is a wrapper around this:
+
+```bash
+docker run -d --name zizkadb -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
+  -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
+```
+
+| Do this | Command |
+|---------|---------|
+| Stop / start | `docker stop zizkadb` / `docker start zizkadb` |
+| Logs | `docker logs -f zizkadb` |
+| Upgrade (keeps data) | re-run the quickstart command |
+| Erase everything | `docker rm -f zizkadb && docker volume rm zizkadb_data` |
+| Dashboard port busy | `ZIZKADB_DASHBOARD_PORT=3005` before the quickstart command |
+
+</details>
+
+The single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
-Run the demo again anytime: `pip install zizkadb-sdk && zizkadb demo`
+Self-hosted is single-agent: the first agent name you log with becomes your agent, and a second name is rejected with a message naming it. The `support-bot` demo agent does not count. For several agents, use [ZizkaDB Cloud](https://db.zizka.ai).
 
 ### Self-host from a clone
+
+The full stack (Postgres, Qdrant, Redis, API, dashboard as separate containers) — use this for development, semantic search, or production:
 
 ```bash
 git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
@@ -89,7 +115,7 @@ bash scripts/setup-local.sh
 | Service | URL |
 |---------|-----|
 | API | http://localhost:8000 |
-| Dashboard | http://localhost:3001 → **Open my dashboard** |
+| Dashboard | http://localhost:3001 |
 | Swagger | http://localhost:8000/swagger |
 
 ### Self-host on a server

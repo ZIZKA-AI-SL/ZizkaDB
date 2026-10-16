@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   isErrorEvent,
+  eventActionName,
+  eventLabel,
   eventColor,
   groupBySession,
   topN,
@@ -101,6 +103,30 @@ describe('normalizeSearchResults', () => {
     expect(normalizeSearchResults(null)).toEqual([])
     expect(normalizeSearchResults(undefined)).toEqual([])
     expect(normalizeSearchResults({ results: 'nope' })).toEqual([])
+  })
+})
+
+describe('eventActionName / eventLabel', () => {
+  it('names the tool from data.tool or data.tool_name', () => {
+    expect(eventActionName({ event: 'tool_call', data: { tool: 'lookup_order' } })).toBe('lookup_order')
+    expect(eventActionName({ event: 'tool_error', data: { tool_name: 'refund' } })).toBe('refund')
+    expect(eventLabel({ event: 'tool_call', data: { tool: 'lookup_order' } })).toBe(
+      'tool_call · lookup_order',
+    )
+  })
+
+  it('names the API from data.api, or method + url on api events', () => {
+    expect(eventActionName({ event: 'api_call', data: { api: 'POST api.stripe.com/v1/refunds' } }))
+      .toBe('POST api.stripe.com/v1/refunds')
+    expect(eventActionName({ event: 'api_call', data: { method: 'GET', url: 'https://x.test/o' } }))
+      .toBe('GET https://x.test/o')
+  })
+
+  it('leaves unnamed and unrelated events alone', () => {
+    expect(eventActionName({ event: 'tool_call', data: { args: {} } })).toBeNull()
+    expect(eventActionName({ event: 'tool_call', data: { tool: { nested: true } } })).toBeNull()
+    expect(eventActionName({ event: 'llm_response', data: { method: 'GET', url: 'https://x' } })).toBeNull()
+    expect(eventLabel({ event: 'user_message', data: { text: 'hi' } })).toBe('user_message')
   })
 })
 

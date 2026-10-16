@@ -35,7 +35,8 @@ export function middleware(request: NextRequest) {
     const token = request.cookies.get(USER_TOKEN_COOKIE)?.value?.trim()
     if (!token) {
       const login = new URL('/login', request.url)
-      login.searchParams.set('next', pathname)
+      // Keep the query so deep links (?agent=...) survive sign-in.
+      login.searchParams.set('next', pathname + request.nextUrl.search)
       return withNoIndex(NextResponse.redirect(login))
     }
     return withNoIndex(NextResponse.next())

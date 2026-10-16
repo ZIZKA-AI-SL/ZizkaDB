@@ -3,6 +3,7 @@ from fastapi import Security
 from services.exceptions import forbidden, unauthorized
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from services.auth import verify_api_key, decode_access_token
+from services.runtime_env import is_dev_mode
 
 bearer = HTTPBearer()
 
@@ -10,9 +11,9 @@ bearer = HTTPBearer()
 # Any request with this token is accepted without a DB lookup.
 # Never set this in production managed cloud.
 _DEV_API_KEY = os.getenv("DEV_API_KEY", "")
-# Dev keys are accepted only when ENV is explicitly development (or unset).
-# Anything else — "production", "staging", "prod", typos — rejects them.
-_DEV_MODE = os.getenv("ENV", "development").strip().lower() == "development"
+# Dev keys are accepted only when ENV is explicitly development. Anything
+# else — unset, "production", "staging", "prod", typos — rejects them. Read
+# per call (services.runtime_env), like every other dev-only gate.
 # SDK/MCP default vs legacy self-host .env — accept both in local dev only.
 _KNOWN_DEV_KEYS = frozenset({"zizkadb_dev_local", "agdb_dev_local"})
 
@@ -96,7 +97,7 @@ async def assert_agent_allowed(tenant: dict, agent_id: str) -> None:
 
 def dev_keys_enabled() -> bool:
     """True when the hardcoded dev API keys are accepted (local dev only)."""
-    return _DEV_MODE
+    return is_dev_mode()
 
 
 def is_unbound_api_key(tenant: dict) -> bool:
@@ -109,7 +110,7 @@ def is_unbound_api_key(tenant: dict) -> bool:
 
 
 def _dev_key_accepted(token: str) -> bool:
-    if not _DEV_MODE:
+    if not is_dev_mode():
         return False
     if _DEV_API_KEY:
         if token == _DEV_API_KEY:

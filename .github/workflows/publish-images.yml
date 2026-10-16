@@ -13,6 +13,10 @@ env:
   REGISTRY: ghcr.io
   API_IMAGE: ghcr.io/zizka-ai-sl/zizkadb-api
   DASHBOARD_IMAGE: ghcr.io/zizka-ai-sl/zizkadb-dashboard
+  # Single-container image used by scripts/quickstart-remote.sh.
+  ALLINONE_IMAGE: ghcr.io/zizka-ai-sl/zizkadb
+  # arm64 so Apple Silicon and ARM servers run natively instead of emulated.
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   publish:
@@ -30,6 +34,9 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Publishing tag: ${TAG}"
 
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -40,6 +47,7 @@ jobs:
         name: Build and push API
         with:
           context: core
+          platforms: ${{ env.PLATFORMS }}
           push: true
           tags: |
             ${{ env.API_IMAGE }}:latest
@@ -49,6 +57,7 @@ jobs:
         name: Build and push dashboard
         with:
           context: dashboard
+          platforms: ${{ env.PLATFORMS }}
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -58,12 +67,23 @@ jobs:
             ${{ env.DASHBOARD_IMAGE }}:latest
             ${{ env.DASHBOARD_IMAGE }}:${{ steps.meta.outputs.tag }}
 
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        name: Build and push single-container image
+        with:
+          context: .
+          file: infra/allinone/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: |
+            ${{ env.ALLINONE_IMAGE }}:latest
+            ${{ env.ALLINONE_IMAGE }}:${{ steps.meta.outputs.tag }}
+
       - name: Make GHCR packages public (required for curl quickstart)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for pkg in zizkadb-api zizkadb-dashboard; do
+          for pkg in zizkadb-api zizkadb-dashboard zizkadb; do
             echo "→ Setting visibility=public for ${pkg}"
             gh api --method PATCH "/orgs/ZIZKA-AI-SL/packages/container/${pkg}" \
               -f visibility=public \

@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+from services.actions import action_breakdown
+
 REPORT_VERSION = "1.0"
 
 _VALID_GRANULARITY = {"day", "week"}
@@ -498,13 +500,14 @@ async def build_report(
     # concurrently (≈2 round-trips total rather than ~8 sequential ones).
     summary = await _summary(pool, tenant_id, agent_id, from_dt, to_dt)
 
-    prev_summary, timeseries, top_raw, distribution, sessions, drift = await asyncio.gather(
+    prev_summary, timeseries, top_raw, distribution, sessions, drift, actions = await asyncio.gather(
         _summary(pool, tenant_id, agent_id, prev_from, from_dt),
         _timeseries(pool, tenant_id, agent_id, from_dt, to_dt, granularity),
         _top_events(pool, tenant_id, agent_id, from_dt, to_dt),
         window_metrics(pool, tenant_id, agent_id, from_dt, to_dt),
         _sessions(pool, tenant_id, agent_id, from_dt, to_dt),
         _drift(pool, tenant_id, agent_id, from_dt, to_dt),
+        action_breakdown(pool, tenant_id, agent_id, from_ts=from_dt, to_ts=to_dt),
     )
 
     total = summary["total_events"]
@@ -536,6 +539,8 @@ async def build_report(
             "event_distribution": distribution["event_distribution"],
             "transitions": distribution["transitions"],
         },
+        # Which tools / APIs were called in the period, with error rates.
+        "actions": actions,
         "sessions": sessions,
         "drift": drift,
         "recommendations": build_recommendations(summary, drift, summary["previous"]),

@@ -34,6 +34,8 @@ class ZizkaDBCallbackHandler(AsyncCallbackHandler):
         self.session_id = session_id
         self.last_event_id: str | None = None
         self._run_parents: dict[UUID, str] = {}
+        # Tool name per run, so tool_end / tool_error say which tool they belong to.
+        self._run_tools: dict[UUID, str] = {}
 
     # ── LLM ───────────────────────────────────────────────────────────────
 
@@ -220,9 +222,13 @@ class ZizkaDBCallbackHandler(AsyncCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
+        tool = (serialized or {}).get("name") or kwargs.get("name") or "tool"
+        if len(self._run_tools) >= _RUN_PARENT_MAX:
+            self._run_tools.clear()
+        self._run_tools[run_id] = tool
         result = await self._log(
             event="tool_start",
-            data={"tool": serialized.get("name", "tool"), "input": input_str[:2000]},
+            data={"tool": tool, "input": input_str[:2000]},
             run_id=run_id,
             parent_run_id=parent_run_id,
         )
@@ -240,7 +246,7 @@ class ZizkaDBCallbackHandler(AsyncCallbackHandler):
         text = output if isinstance(output, str) else str(output)
         result = await self._log(
             event="tool_end",
-            data={"output": text[:4000]},
+            data={**self._tool_field(run_id), "output": text[:4000]},
             run_id=run_id,
             parent_run_id=parent_run_id,
         )
@@ -258,7 +264,7 @@ class ZizkaDBCallbackHandler(AsyncCallbackHandler):
         """Log tool failures — previously untracked, breaking causal lineage on errors."""
         result = await self._log(
             event="tool_error",
-            data={"error": str(error), "type": type(error).__name__},
+            data={**self._tool_field(run_id), "error": str(error), "type": type(error).__name__},
             run_id=run_id,
             parent_run_id=parent_run_id,
         )
@@ -266,6 +272,10 @@ class ZizkaDBCallbackHandler(AsyncCallbackHandler):
         self._run_parents.pop(run_id, None)
 
     # ── Internal ──────────────────────────────────────────────────────────
+
+    def _tool_field(self, run_id: UUID) -> dict[str, str]:
+        tool = self._run_tools.pop(run_id, None)
+        return {"tool": tool} if tool else {}
 
     async def _log(
         self,

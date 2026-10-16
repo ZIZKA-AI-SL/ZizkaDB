@@ -27,6 +27,8 @@ jobs:
 
       - name: Start stack
         run: |
+          # Compose requires ENV; keep the job's previous defaults (development, managed).
+          echo 'ENV=development' > infra/.env
           docker compose -f infra/docker-compose.yml up -d --wait --timeout 120
 
       - name: Install test dependencies

@@ -8,11 +8,16 @@ import { BrandLogo } from '@/components/BrandLogo'
 
 type Status = 'loading' | 'unreachable' | 'not_self_hosted' | 'ready'
 
+const AUTO_SIGNIN_KEY = 'zizkadb-auto-signin-at'
+const AUTO_SIGNIN_COOLDOWN_MS = 10_000
+
 /**
  * Self-hosted sign-in. No email, signup or marketing: the API decides between
  * a one-click button (ENV=development) and an admin token (ENV=production).
+ * With `auto`, one-click mode signs in without the click — the button guards
+ * nothing there, so a fresh local install lands straight on the dashboard.
  */
-export function SelfHostLogin({ next }: { next: string }) {
+export function SelfHostLogin({ next, auto = false }: { next: string; auto?: boolean }) {
   const [status, setStatus] = useState<Status>('loading')
   const [mode, setMode] = useState<SelfHostLoginMode | null>(null)
   const [token, setTokenInput] = useState('')
@@ -46,20 +51,34 @@ export function SelfHostLogin({ next }: { next: string }) {
     }
   }, [attempt])
 
-  async function signIn(adminToken?: string) {
-    setSubmitting(true)
-    setError('')
-    try {
-      const data = await selfHostLogin(adminToken)
-      setToken(data.access_token)
-      setNavigating(true)
-      window.location.assign(next)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Sign-in failed')
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  const signIn = useCallback(
+    async (adminToken?: string) => {
+      setSubmitting(true)
+      setError('')
+      try {
+        const data = await selfHostLogin(adminToken)
+        setToken(data.access_token)
+        setNavigating(true)
+        window.location.assign(next)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Sign-in failed')
+      } finally {
+        setSubmitting(false)
+      }
+    },
+    [next],
+  )
+
+  useEffect(() => {
+    if (!auto || status !== 'ready' || mode !== 'one_click') return
+    // At most one automatic attempt per tab every few seconds: if the session
+    // doesn't stick, the dashboard sends us back here and the button shows
+    // instead of a redirect loop.
+    const last = Number(window.sessionStorage.getItem(AUTO_SIGNIN_KEY) || 0)
+    if (Date.now() - last < AUTO_SIGNIN_COOLDOWN_MS) return
+    window.sessionStorage.setItem(AUTO_SIGNIN_KEY, String(Date.now()))
+    signIn()
+  }, [auto, status, mode, signIn])
 
   if (navigating) {
     return (

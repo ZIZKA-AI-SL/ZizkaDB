@@ -5,6 +5,7 @@ import { Activity, RefreshCw, TrendingDown, TrendingUp } from 'lucide-react'
 import type { AgentBaseline, BaselineChange, BaselineWindow } from '@/lib/api'
 import { eventColor, topN } from '@/lib/events'
 import { colors, radii } from '@/lib/design-tokens'
+import { ActionsTable } from './ActionsTable'
 import { EmptyState } from '@/components/ui'
 
 /**
@@ -116,7 +117,8 @@ function ChangeRow({ change }: { change: BaselineChange }) {
   const [scope, ...rest] = change.metric.split('.')
   const detail = rest.join('.')
   const scopeLabel =
-    scope === 'event_distribution' ? 'event' : scope === 'transitions' ? 'transition' : scope
+    scope === 'event_distribution' ? 'event' : scope === 'transitions' ? 'transition' :
+    scope === 'actions' ? 'tool / api' : scope
 
   return (
     <div className="px-4 py-2.5 flex items-center gap-3">
@@ -220,6 +222,15 @@ function WindowCard({
                 <DistRow key={key} label={key} pct={pct} color={colors.info} />
               ))}
             </div>
+          </div>
+        )}
+
+        {(w.actions?.length ?? 0) > 0 && (
+          <div>
+            <div className="text-xs font-medium mb-2" style={{ color: colors.textMuted }}>
+              Tools &amp; APIs called
+            </div>
+            <ActionsTable actions={w.actions} limit={6} bare />
           </div>
         )}
       </div>

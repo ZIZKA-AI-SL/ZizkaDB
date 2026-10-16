@@ -112,7 +112,7 @@ cd dashboard && npm run lint && npm test && npm run build
 
 **Schema migrations** — Fresh install: `core/db/schema.sql` (run by Docker on first boot). Running install: `ALTER TABLE IF EXISTS` in `core/db/connection.py::init_db()` (runs on every startup). Always write idempotent DDL.
 
-**Entitlements** — `PLAN_ENTITLEMENTS` dict in `core/services/entitlements.py` is the single source of truth for per-plan API key caps. Override per-plan at runtime with `API_KEY_LIMIT_<PLAN>=N` env var. Never hardcode plan limits anywhere else.
+**Entitlements** — `PLAN_ENTITLEMENTS` dict in `core/services/entitlements.py` is the single source of truth for per-plan caps (API keys and agents). **Self-hosted is one agent with one API key**, always enforced (`limits_enforced()` is true whenever `DEPLOYMENT_MODE=self_hosted`) and not overridable by env. The agent cap is applied in `core/services/agent_limits.py` on every path that can create an agent (dashboard create, first event for a new agent name, key binding); existing agents are never blocked. Multi-agent features (fleets, A2A) are ZizkaDB Cloud only — never add multi-agent capability to self-hosted. Managed plans can be tuned with `API_KEY_LIMIT_<PLAN>` / `MAX_AGENTS_<PLAN>`. Never hardcode plan limits anywhere else.
 
 ---
 
@@ -147,7 +147,7 @@ cd dashboard && npm run lint && npm test && npm run build
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.
 5. **Idempotent DDL**: all schema changes must use `IF NOT EXISTS` / `IF EXISTS` — the same migration runs on fresh installs and live databases.
 6. **`docker-compose.yml` is production**: never add `--reload` or `../core:/app` volume mounts to the base compose file. Those belong in `docker-compose.dev.yml`.
-7. **Self-hosted security**: always set `ENV=production` in production `.env` — without it, hardcoded dev API keys (`zizkadb_dev_local`) are accepted, bypassing auth entirely.
+7. **Self-hosted security**: development mode is opt-in. Only `ENV=development` enables the hardcoded dev API keys (`zizkadb_dev_local`), `/v1/auth/dev-token` and one-click sign-in; an unset or misspelt `ENV` is production (`core/services/runtime_env.py`). Never set `ENV=development` on a reachable deployment, and gate any new dev-only behaviour on `is_dev_mode()`, never on a raw `os.getenv("ENV")` comparison.
 8. **`NEXT_PUBLIC_DEV_MODE`**: must be `false` in any public-facing deployment — when `true`, the dashboard login screen is bypassed entirely (no OTP required).
 
 ---

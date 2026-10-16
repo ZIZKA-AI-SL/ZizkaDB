@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# ZizkaDB OSS quickstart — NO git clone (when GHCR images are public).
-# Downloads ~4 small files to ~/.zizkadb, pulls pre-built Docker images, runs db.why() demo.
-# If GHCR pull fails, automatically shallow-clones and builds locally.
+# ZizkaDB OSS quickstart — one container, no git clone, no Python needed.
+# Pulls the single ZizkaDB image (Postgres + API + dashboard), starts it, and
+# opens the dashboard on a demo agent's causal chain.
+# If that image is unavailable, falls back to the multi-container compose stack.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 #
+# Options (env): ZIZKADB_IMAGE_TAG, ZIZKADB_DASHBOARD_PORT, ZIZKADB_NO_OPEN=1,
+#                ZIZKADB_QUICKSTART=compose (force the compose stack)
 set -euo pipefail
 
 REF="${ZIZKADB_REF:-main}"
@@ -14,11 +17,16 @@ INSTALL_DIR="${ZIZKADB_HOME:-${HOME}/.zizkadb}"
 INFRA="${INSTALL_DIR}/infra"
 CLONE_DIR="${INSTALL_DIR}/repo"
 
+IMAGE="${ZIZKADB_IMAGE:-ghcr.io/zizka-ai-sl/zizkadb:${ZIZKADB_IMAGE_TAG:-latest}}"
+CONTAINER="zizkadb"
+VOLUME="zizkadb_data"
+API_PORT=8000
+DASHBOARD_PORT="${ZIZKADB_DASHBOARD_PORT:-3001}"
+LEGACY_CONTAINERS="zizkadb_api zizkadb_dashboard zizkadb_postgres zizkadb_qdrant zizkadb_redis"
+
 echo "════════════════════════════════════════════════════════"
-echo "  ZizkaDB — remote quickstart (no repo clone)"
+echo "  ZizkaDB quickstart"
 echo "════════════════════════════════════════════════════════"
-echo ""
-echo "  Install dir: ${INSTALL_DIR}"
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -30,6 +38,127 @@ if ! docker info >/dev/null 2>&1; then
   echo "ERROR: Docker daemon not running. Start Docker Desktop or OrbStack." >&2
   exit 1
 fi
+
+telemetry_ping() {
+  mkdir -p "${INSTALL_DIR}"
+  curl -fsSL "${BASE}/scripts/telemetry-install-ping.sh" -o "${INSTALL_DIR}/telemetry-install-ping.sh" 2>/dev/null \
+    && bash "${INSTALL_DIR}/telemetry-install-ping.sh" docker oss || true
+}
+
+# ── Single-container path ────────────────────────────────────────────────────
+
+port_in_use() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+check_port() {
+  local port="$1" what="$2" hint="$3"
+  if port_in_use "$port"; then
+    echo "ERROR: port ${port} (${what}) is already in use." >&2
+    local legacy
+    legacy="$(docker ps --format '{{.Names}}' | grep -E '^zizkadb_(api|dashboard)$' || true)"
+    if [ -n "$legacy" ]; then
+      echo "  An earlier multi-container ZizkaDB stack is running. Stop it with:" >&2
+      echo "    docker rm -f ${LEGACY_CONTAINERS}" >&2
+      echo "  Its data stays in its Docker volumes; this quickstart starts a new, empty one." >&2
+    else
+      echo "  Find what is using it:  lsof -nP -iTCP:${port} -sTCP:LISTEN" >&2
+      [ -n "$hint" ] && echo "  ${hint}" >&2
+    fi
+    exit 1
+  fi
+}
+
+run_single_container() {
+  local started=$SECONDS
+
+  echo "→ [1/3] Downloading ZizkaDB (one image; first run only)..."
+  if ! docker pull "${IMAGE}"; then
+    echo ""
+    if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+      echo "→ Could not check for updates — using the copy of ${IMAGE} already on this machine."
+    else
+      echo "→ ${IMAGE} is not available — using the multi-container stack instead."
+      return 1
+    fi
+  fi
+
+  # Replace a previous quickstart container; data lives in the volume.
+  docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+  check_port "${API_PORT}" "API" ""
+  check_port "${DASHBOARD_PORT}" "dashboard" "Or pick another: ZIZKADB_DASHBOARD_PORT=3005"
+
+  echo "→ [2/3] Starting..."
+  # 127.0.0.1 only: local mode has a one-click dashboard and a well-known API key.
+  docker run -d --name "${CONTAINER}" --restart unless-stopped \
+    -p "127.0.0.1:${API_PORT}:8000" \
+    -p "127.0.0.1:${DASHBOARD_PORT}:3001" \
+    -v "${VOLUME}:/data" \
+    ${OPENAI_API_KEY:+-e OPENAI_API_KEY} \
+    ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY} \
+    "${IMAGE}" >/dev/null || { echo "ERROR: could not start the ZizkaDB container." >&2; exit 1; }
+
+  echo "→ [3/3] Waiting for the API and dashboard..."
+  local i
+  for i in $(seq 1 90); do
+    if curl -sf "http://localhost:${API_PORT}/health" >/dev/null 2>&1 \
+       && curl -sf -o /dev/null "http://localhost:${DASHBOARD_PORT}/login" 2>/dev/null; then
+      break
+    fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER}" 2>/dev/null)" != "true" ]; then
+      echo "ERROR: ZizkaDB stopped during startup. Last log lines:" >&2
+      docker logs --tail 30 "${CONTAINER}" >&2 || true
+      exit 1
+    fi
+    if [ "$i" -eq 90 ]; then
+      echo "ERROR: ZizkaDB did not become ready in 3 minutes. Check: docker logs ${CONTAINER}" >&2
+      exit 1
+    fi
+    sleep 2
+  done
+
+  # The container logs a demo chain on first start; give it a moment to land.
+  for i in $(seq 1 10); do
+    docker exec "${CONTAINER}" test -f /data/.demo_seeded 2>/dev/null && break
+    sleep 1
+  done
+
+  telemetry_ping
+
+  local url="http://localhost:${DASHBOARD_PORT}/dashboard/activity?agent=support-bot"
+  echo ""
+  echo "════════════════════════════════════════════════════════"
+  echo "  ZizkaDB is running  (ready in $((SECONDS - started))s)"
+  echo "════════════════════════════════════════════════════════"
+  if docker exec "${CONTAINER}" test -s /data/demo-chain.txt 2>/dev/null; then
+    echo ""
+    echo "  Why did the demo agent call lookup_order?"
+    echo ""
+    docker exec "${CONTAINER}" cat /data/demo-chain.txt | sed 's/^/    /'
+  fi
+  echo ""
+  echo "  Dashboard:  ${url}"
+  echo "              click any event → \"Why? (causal)\" tab"
+  echo "  API:        http://localhost:${API_PORT}   (key: zizkadb_dev_local)"
+  echo "  Connect:    https://github.com/${REPO}/blob/${REF}/CONNECT.md"
+  echo ""
+  echo "  Stop:       docker stop ${CONTAINER}        Start again: docker start ${CONTAINER}"
+  echo "  Logs:       docker logs -f ${CONTAINER}"
+  echo "  Upgrade:    re-run this command (your data is kept)"
+  echo "  Erase all:  docker rm -f ${CONTAINER} && docker volume rm ${VOLUME}"
+  echo ""
+
+  if [ -z "${ZIZKADB_NO_OPEN:-}" ] && [ -z "${CI:-}" ] && [ -t 1 ]; then
+    if command -v open >/dev/null 2>&1; then
+      open "${url}" >/dev/null 2>&1 || true
+    elif command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "${url}" >/dev/null 2>&1 || true
+    fi
+  fi
+  return 0
+}
+
+# ── Multi-container fallback (compose: Postgres, Qdrant, Redis, API, dashboard) ─
 
 run_demo() {
   if ! command -v python3 >/dev/null 2>&1; then
@@ -72,7 +201,6 @@ asyncio.run(main())
   echo "════════════════════════════════════════════════════════"
   echo ""
   echo "  Dashboard:  http://localhost:3001/dashboard/activity?agent=support-bot"
-  echo "              (login gate: http://localhost:3001/login → Open my dashboard →)"
   echo "  API:        http://localhost:8000/health"
   echo "  Connect:    https://github.com/${REPO}/blob/${REF}/CONNECT.md"
   echo "  Demo again: ${py} -m zizkadb.cli demo"
@@ -97,40 +225,45 @@ fallback_shallow_clone() {
   exec bash "${CLONE_DIR}/scripts/quickstart.sh"
 }
 
-mkdir -p "${INFRA}"
+run_compose_stack() {
+  mkdir -p "${INFRA}"
 
-echo "→ Downloading compose + schema (not the full repo)..."
-curl -fsSL "${BASE}/infra/docker-compose.quickstart.yml" -o "${INFRA}/docker-compose.quickstart.yml"
-curl -fsSL "${BASE}/core/db/schema.sql" -o "${INFRA}/schema.sql"
-curl -fsSL "${BASE}/infra/.env.quickstart" -o "${INFRA}/.env"
+  echo "→ Downloading compose + schema (not the full repo)..."
+  curl -fsSL "${BASE}/infra/docker-compose.quickstart.yml" -o "${INFRA}/docker-compose.quickstart.yml"
+  curl -fsSL "${BASE}/core/db/schema.sql" -o "${INFRA}/schema.sql"
+  curl -fsSL "${BASE}/infra/.env.quickstart" -o "${INFRA}/.env"
 
-echo "→ Pulling pre-built images from ghcr.io/zizka-ai-sl/ (first run may take 5–10 min)..."
-cd "${INFRA}"
-if ! docker compose -f docker-compose.quickstart.yml pull; then
-  fallback_shallow_clone
+  echo "→ Pulling pre-built images from ghcr.io/zizka-ai-sl/ (first run may take 5–10 min)..."
+  cd "${INFRA}"
+  if ! docker compose -f docker-compose.quickstart.yml pull; then
+    fallback_shallow_clone
+  fi
+
+  echo "→ Starting stack (postgres, qdrant, redis, api, dashboard)..."
+  # Recreate so containers from a clone-based setup (same project "infra") never
+  # keep a stale network reference. Data lives in volumes.
+  docker compose -f docker-compose.quickstart.yml up -d --force-recreate --remove-orphans
+
+  echo "→ Waiting for API..."
+  for i in $(seq 1 60); do
+    if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+    if [ "$i" -eq 60 ]; then
+      echo "ERROR: API did not become healthy. Check: docker compose -f ${INFRA}/docker-compose.quickstart.yml logs api" >&2
+      exit 1
+    fi
+  done
+
+  telemetry_ping
+
+  run_demo
+
+  echo "  Stop:  cd ${INFRA} && docker compose -f docker-compose.quickstart.yml down"
+  echo ""
+}
+
+if [ "${ZIZKADB_QUICKSTART:-}" = "compose" ] || ! run_single_container; then
+  run_compose_stack
 fi
-
-echo "→ Starting stack (postgres, qdrant, redis, api, dashboard)..."
-# Recreate so containers from a clone-based setup (same project "infra") never
-# keep a stale network reference. Data lives in volumes.
-docker compose -f docker-compose.quickstart.yml up -d --force-recreate --remove-orphans
-
-echo "→ Waiting for API..."
-for i in $(seq 1 60); do
-  if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-  if [ "$i" -eq 60 ]; then
-    echo "ERROR: API did not become healthy. Check: docker compose -f ${INFRA}/docker-compose.quickstart.yml logs api" >&2
-    exit 1
-  fi
-done
-
-curl -fsSL "${BASE}/scripts/telemetry-install-ping.sh" -o "${INSTALL_DIR}/telemetry-install-ping.sh"
-bash "${INSTALL_DIR}/telemetry-install-ping.sh" docker oss || true
-
-run_demo
-
-echo "  Stop:  cd ${INFRA} && docker compose -f docker-compose.quickstart.yml down"
-echo ""

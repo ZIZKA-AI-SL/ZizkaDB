@@ -12,10 +12,10 @@ export default defineConfig({
     include: ['**/*.test.{ts,tsx}'],
     exclude: ['node_modules/**', '.next/**'],
     // The default worker-thread pool times out its RPC ("Timeout calling fetch
-    // /@vite/env") on slow/synced filesystems. A single forked process avoids
-    // the worker RPC entirely; generous timeouts absorb slow cold transforms.
+    // /@vite/env") on slow/synced filesystems. Keep forked tests in one worker.
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    maxWorkers: 1,
+    fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 30_000,
     teardownTimeout: 30_000,

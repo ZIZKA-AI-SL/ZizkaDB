@@ -11,6 +11,7 @@ import uuid
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
 from services.embeddings import generate_embedding, event_to_text
+from services.agent_limits import reserve_agent_slot
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request
 
@@ -52,10 +53,13 @@ async def write_event(
                 f"parent_id '{parent_id}' does not exist or belongs to a different tenant"
             )
 
+    # A new agent name creates an agent: check the plan has room for it.
+    await reserve_agent_slot(pool, tenant_id=tenant_id, agent_id=agent)
+
     await pool.execute(
         """
-        INSERT INTO agents (agent_id, tenant_id)
-        VALUES ($1, $2)
+        INSERT INTO agents (agent_id, tenant_id, event_count)
+        VALUES ($1, $2, 1)
         ON CONFLICT (agent_id, tenant_id)
         DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
         """,
