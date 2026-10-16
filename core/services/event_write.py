@@ -10,7 +10,7 @@ from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
 from services.embeddings import generate_embedding, event_to_text
 from services.agent_limits import reserve_agent_slot
-from services.checksum import CHECKSUM_COLUMNS, compute_row_checksum_v2
+from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request
 
@@ -63,37 +63,58 @@ async def write_event(
     embed_on = embeddings_enabled()
     initial_status = "pending" if embed_on else "skipped"
 
-    # The v2 checksum covers timestamp and sequence_no, which only exist
-    # after INSERT, so it is written in the same transaction as the insert —
-    # no reader ever observes an event without its checksum. It is computed
-    # from the RETURNING row (not the request values) so it hashes exactly
-    # what the verifier will later read back.
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                f"""
-                INSERT INTO events (
-                    tenant_id, agent_id, event_type, data,
-                    parent_event_id, session_id, metadata, index_status
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                RETURNING {CHECKSUM_COLUMNS}
-                """,
-                tenant_id,
-                agent,
-                event,
-                json.dumps(data),
-                parent_id,
-                session_id,
-                json.dumps(metadata) if metadata else None,
-                initial_status,
-            )
-            checksum = compute_row_checksum_v2(row)
-            await conn.execute(
-                "UPDATE events SET checksum = $1 WHERE event_id = $2",
-                checksum,
-                row["event_id"],
-            )
+    # The v2 checksum covers timestamp and sequence_no, so take both from
+    # Postgres up front, along with the JSONB / UUID values in the canonical
+    # form the verifier will read back, then insert the row once with its
+    # checksum. No second write per event, and no reader ever sees an event
+    # without its checksum.
+    data_json = json.dumps(data)
+    metadata_json = json.dumps(metadata) if metadata else None
+    canonical = await pool.fetchrow(
+        """
+        SELECT nextval(pg_get_serial_sequence('events', 'sequence_no')) AS sequence_no,
+               now() AS timestamp,
+               $1::jsonb AS data,
+               $2::jsonb AS metadata,
+               $3::uuid AS parent_event_id
+        """,
+        data_json,
+        metadata_json,
+        parent_id,
+    )
+    checksum = compute_row_checksum_v2({
+        "tenant_id": tenant_id,
+        "agent_id": agent,
+        "event_type": event,
+        "data": canonical["data"],
+        "parent_event_id": canonical["parent_event_id"],
+        "session_id": session_id,
+        "timestamp": canonical["timestamp"],
+        "sequence_no": canonical["sequence_no"],
+        "metadata": canonical["metadata"],
+    })
+
+    row = await pool.fetchrow(
+        """
+        INSERT INTO events (
+            tenant_id, agent_id, event_type, data, parent_event_id, session_id,
+            metadata, index_status, sequence_no, timestamp, checksum
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING event_id, timestamp, sequence_no
+        """,
+        tenant_id,
+        agent,
+        event,
+        data_json,
+        canonical["parent_event_id"],
+        session_id,
+        metadata_json,
+        initial_status,
+        canonical["sequence_no"],
+        canonical["timestamp"],
+        checksum,
+    )
 
     event_id = str(row["event_id"])
 

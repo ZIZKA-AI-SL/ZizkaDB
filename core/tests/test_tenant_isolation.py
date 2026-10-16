@@ -1,6 +1,6 @@
 """Regression tests for cross-tenant leaks via parent_event_id (write_event validation + baseline transitions query)."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import datetime
 
 import pytest
@@ -18,15 +18,6 @@ PARENT_EVENT_ID = "33333333-3333-3333-3333-333333333333"
 @pytest.fixture
 def mock_pool(monkeypatch):
     pool = AsyncMock()
-    # Insert + checksum UPDATE run in pool.acquire()/conn.transaction().
-    acquire = MagicMock()
-    acquire.__aenter__ = AsyncMock(return_value=pool)
-    acquire.__aexit__ = AsyncMock(return_value=None)
-    pool.acquire = MagicMock(return_value=acquire)
-    tx = MagicMock()
-    tx.__aenter__ = AsyncMock(return_value=None)
-    tx.__aexit__ = AsyncMock(return_value=None)
-    pool.transaction = MagicMock(return_value=tx)
     monkeypatch.setattr("services.event_write.get_pool", lambda: pool)
     monkeypatch.setattr("services.event_write.get_qdrant", lambda: AsyncMock())
     monkeypatch.setattr(
