@@ -53,10 +53,14 @@ async def api_as():
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     )
 
-    def _as(tenant_id: str, agent_id: str | None = None) -> httpx.AsyncClient:
+    def _as(
+        tenant_id: str, agent_id: str | None = None, key_id: str | None = None
+    ) -> httpx.AsyncClient:
         tenant = {"tenant_id": tenant_id, "user_id": None}
         if agent_id:
             tenant["agent_id"] = agent_id
+        if key_id:
+            tenant["key_id"] = key_id
         app.dependency_overrides[get_tenant] = lambda: tenant
         return client
 
@@ -74,6 +78,7 @@ async def test_impact_walks_every_branch_downstream(tree, api_as):
     body = response.json()
     assert body["node_count"] == 5
     assert body["truncated"] is False
+    assert body["depth_truncated"] is False
     depths = {n["event_id"]: n["depth"] for n in body["nodes"]}
     assert depths == {
         tree["root"]: 0,
@@ -103,7 +108,19 @@ async def test_impact_depth_limits_the_walk(tree, api_as):
     assert {n["event_id"] for n in one.json()["nodes"]} == {
         tree["root"], tree["plan"], tree["reply"]
     }
+    assert one.json()["depth_truncated"] is True  # tool_call lies below plan
     assert [n["event_id"] for n in zero.json()["nodes"]] == [tree["root"]]
+    assert zero.json()["depth_truncated"] is True
+
+
+async def test_depth_truncated_is_false_when_the_cut_level_has_no_children(tree, api_as):
+    # From plan: plan(0) → tool(1) → error(2); depth=2 reaches the last leaf.
+    response = await api_as(tree["tenant_id"]).get(
+        f"/v1/events/{tree['plan']}/impact", params={"depth": 2}
+    )
+
+    assert response.json()["node_count"] == 3
+    assert response.json()["depth_truncated"] is False
 
 
 async def test_impact_rejects_out_of_range_depth(tree, api_as):
@@ -170,3 +187,25 @@ async def test_scoped_key_cannot_anchor_on_another_agents_event(tree, api_as):
 
     scoped = await api_as(tree["tenant_id"], agent_id=AGENT).get(url)
     assert scoped.status_code == 404
+
+
+async def test_unbound_key_is_bound_to_the_anchor_agent_and_scoped(tree, api_as, pg_db):
+    # tool_call → (billing-bot) charge → (support-bot) follow_up
+    charge = await _log(tree["tenant_id"], "charge", tree["tool"], agent=OTHER_AGENT)
+    await _log(tree["tenant_id"], "follow_up", charge)
+    key_id = await pg_db.fetchval(
+        """
+        INSERT INTO api_keys (tenant_id, key_hash, key_prefix)
+        VALUES ($1, 'impact-test-hash', 'zk_test')
+        RETURNING key_id
+        """,
+        tree["tenant_id"],
+    )
+    client = api_as(tree["tenant_id"], key_id=str(key_id))
+
+    response = await client.get(f"/v1/events/{tree['tool']}/impact")
+
+    assert response.status_code == 200
+    assert {n["event_id"] for n in response.json()["nodes"]} == {tree["tool"], tree["error"]}
+    bound = await pg_db.fetchval("SELECT agent_id FROM api_keys WHERE key_id = $1", key_id)
+    assert bound == AGENT
