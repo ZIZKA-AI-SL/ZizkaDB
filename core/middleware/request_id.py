@@ -12,7 +12,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 REQUEST_ID_HEADER = "X-Request-ID"
-_SAFE_REQUEST_ID_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
+_SAFE_REQUEST_ID_RE = re.compile(r"[a-zA-Z0-9_\-\.]{1,64}")
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         incoming = (request.headers.get(REQUEST_ID_HEADER) or "").strip()
-        if incoming and _SAFE_REQUEST_ID_RE.match(incoming):
+        if incoming and _SAFE_REQUEST_ID_RE.fullmatch(incoming):
             request_id = incoming
         else:
             request_id = str(uuid.uuid4())
