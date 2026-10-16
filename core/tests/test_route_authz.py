@@ -39,13 +39,16 @@ async def test_context_rejects_cross_agent_scoped_key(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_diff_rejects_cross_agent_scoped_key(monkeypatch):
-    """A scoped key diffing a session owned by another agent is 403."""
+    """A scoped key diffing another agent's session sees no rows and gets 404."""
     pool = AsyncMock()
-    pool.fetch.return_value = [{"agent_id": "other"}]  # session belongs to 'other'
+    pool.fetch.return_value = []  # SQL filter drops 'other' agent's rows
     monkeypatch.setattr("api.memory.get_pool", lambda: pool)
     with pytest.raises(HTTPException) as exc:
         await session_diff("sess-1", tenant=SCOPED_TENANT)
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
+    sql, *params = pool.fetch.await_args.args
+    assert "agent_id = $3" in sql
+    assert params[-1] == "mine"
 
 
 # ── /v1/memory/forget ─────────────────────────────────────────────────────────
