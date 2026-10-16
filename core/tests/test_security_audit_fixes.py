@@ -12,10 +12,10 @@ from fastapi.testclient import TestClient
 from api.auth import router as auth_router
 from api.deps import require_dashboard_session
 from api.memory import session_diff
-from api.utils import client_ip
+from api.utils import client_ip, parse_trusted_proxies
 from middleware.request_id import RequestIdMiddleware, REQUEST_ID_HEADER
 from main import app
-from services.auth import verify_otp
+from services.auth import OTP_MAX_ATTEMPTS, verify_otp
 from services.event_write import write_event
 from services.rate_limiter import InMemoryStorage
 
@@ -37,12 +37,11 @@ async def test_diff_unbound_key_is_400():
 
 
 @pytest.mark.asyncio
-async def test_diff_scoped_agent_filters_out_other_agent_events(monkeypatch):
-    """Scoped key only sees its own events in a multi-agent session."""
+async def test_diff_scoped_agent_filters_in_sql(monkeypatch):
+    """Scoped key filters by agent in SQL, so other agents' rows never load."""
     pool = AsyncMock()
     now = datetime.now(timezone.utc)
-    # Session has event from 'mine' and event from 'other'
-    rows = [
+    pool.fetch.return_value = [
         {
             "event_id": str(uuid4()),
             "agent_id": "mine",
@@ -51,25 +50,53 @@ async def test_diff_scoped_agent_filters_out_other_agent_events(monkeypatch):
             "timestamp": now,
             "parent_event_id": None,
         },
-        {
-            "event_id": str(uuid4()),
-            "agent_id": "other",
-            "event_type": "INTERNAL_TOOL",
-            "data": {"secret": "confidential_other_data"},
-            "timestamp": now,
-            "parent_event_id": None,
-        },
     ]
-    pool.fetch.return_value = rows
     pool.fetchrow.return_value = None
     monkeypatch.setattr("api.memory.get_pool", lambda: pool)
 
     res = await session_diff("sess-1", tenant={"tenant_id": "t-1", "agent_id": "mine"})
-    # 'other' agent's event must not be returned in top_events or event_count
+
+    sql, *params = pool.fetch.await_args.args
+    assert "($3::text IS NULL OR agent_id = $3)" in sql
+    assert params == ["t-1", "sess-1", "mine"]
     assert res["event_count"] == 1
-    assert len(res["top_events"]) == 1
     assert res["top_events"][0]["event"] == "USER_QUERY"
-    assert "confidential_other_data" not in str(res)
+
+
+@pytest.mark.asyncio
+async def test_diff_scoped_agent_not_first_in_session_is_allowed(monkeypatch):
+    """Agent B may diff a session whose first event belongs to agent A."""
+    pool = AsyncMock()
+    # SQL already filtered out agent A's (earlier) rows.
+    pool.fetch.return_value = [
+        {
+            "event_id": str(uuid4()),
+            "agent_id": "agent-b",
+            "event_type": "TOOL_CALL",
+            "data": {},
+            "timestamp": datetime.now(timezone.utc),
+            "parent_event_id": None,
+        },
+    ]
+    pool.fetchrow.return_value = None
+    monkeypatch.setattr("api.memory.get_pool", lambda: pool)
+
+    res = await session_diff(
+        "sess-1", tenant={"tenant_id": "t-1", "agent_id": "agent-b"}
+    )
+    assert res["event_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_diff_scoped_agent_without_events_is_404(monkeypatch):
+    """A session with no events for the scoped agent is reported as not found."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    monkeypatch.setattr("api.memory.get_pool", lambda: pool)
+
+    with pytest.raises(HTTPException) as exc:
+        await session_diff("sess-1", tenant={"tenant_id": "t-1", "agent_id": "mine"})
+    assert exc.value.status_code == 404
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -94,61 +121,160 @@ def test_auth_test_event_dependency_is_dashboard_session():
 # 3. Client IP Trusted Proxy Validation
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_client_ip_untrusted_proxy_ignores_x_forwarded_for():
+def _ip_request(peer: str, xff: str | None = None) -> MagicMock:
+    request = MagicMock()
+    request.client.host = peer
+    request.headers = {"x-forwarded-for": xff} if xff is not None else {}
+    return request
+
+
+@pytest.fixture
+def trusted_proxies(monkeypatch):
+    def _set(raw: str) -> None:
+        monkeypatch.setattr(
+            "api.utils.TRUSTED_PROXIES", parse_trusted_proxies(raw)
+        )
+    return _set
+
+
+def test_client_ip_untrusted_proxy_ignores_x_forwarded_for(trusted_proxies):
     """Untrusted peer IP cannot spoof X-Forwarded-For."""
-    from api.utils import _parse_trusted_proxies
-    _parse_trusted_proxies.cache_clear()
-    mock_request = MagicMock()
-    mock_request.client.host = "203.0.113.50"
-    mock_request.headers = {"x-forwarded-for": "10.0.0.1"}
-
-    with patch.dict("os.environ", {"TRUSTED_PROXIES": "127.0.0.1"}):
-        _parse_trusted_proxies.cache_clear()
-        ip = client_ip(mock_request)
-        assert ip == "203.0.113.50"
-    _parse_trusted_proxies.cache_clear()
+    trusted_proxies("127.0.0.1")
+    assert client_ip(_ip_request("203.0.113.50", "10.0.0.1")) == "203.0.113.50"
 
 
-def test_client_ip_trusted_proxy_accepts_x_forwarded_for():
+def test_client_ip_trusted_proxy_accepts_x_forwarded_for(trusted_proxies):
     """Trusted proxy IP allows extracting client IP from X-Forwarded-For."""
-    from api.utils import _parse_trusted_proxies
-    _parse_trusted_proxies.cache_clear()
-    mock_request = MagicMock()
-    mock_request.client.host = "127.0.0.1"
-    mock_request.headers = {"x-forwarded-for": "203.0.113.50, 10.0.0.1"}
+    trusted_proxies("127.0.0.1")
+    assert client_ip(_ip_request("127.0.0.1", "203.0.113.50")) == "203.0.113.50"
 
-    with patch.dict("os.environ", {"TRUSTED_PROXIES": "127.0.0.1"}):
-        _parse_trusted_proxies.cache_clear()
-        ip = client_ip(mock_request)
-        assert ip == "203.0.113.50"
-    _parse_trusted_proxies.cache_clear()
+
+def test_client_ip_spoofed_left_hop_is_ignored(trusted_proxies):
+    """nginx appends the real IP; a client-supplied left-most value is ignored."""
+    trusted_proxies("172.18.0.1")
+    request = _ip_request("172.18.0.1", "6.6.6.6, 203.0.113.9")
+    assert client_ip(request) == "203.0.113.9"
+
+
+def test_client_ip_skips_multiple_trusted_hops(trusted_proxies):
+    """Walk right-to-left past every trusted hop to the first untrusted one."""
+    trusted_proxies("127.0.0.1,10.0.0.0/8")
+    request = _ip_request("127.0.0.1", "6.6.6.6, 203.0.113.9, 10.1.2.3")
+    assert client_ip(request) == "203.0.113.9"
+
+
+def test_client_ip_default_trusts_docker_bridge(monkeypatch):
+    """Default config trusts the Docker bridge gateway nginx traffic arrives from."""
+    from api.utils import _DEFAULT_TRUSTED_PROXIES
+    monkeypatch.setattr(
+        "api.utils.TRUSTED_PROXIES", parse_trusted_proxies(_DEFAULT_TRUSTED_PROXIES)
+    )
+    assert client_ip(_ip_request("172.18.0.1", "203.0.113.9")) == "203.0.113.9"
+    assert "testclient" not in _DEFAULT_TRUSTED_PROXIES
+
+
+def test_client_ip_invalid_trusted_entries_are_skipped():
+    """Non-IP entries (e.g. hostnames) are dropped rather than matched as strings."""
+    networks = parse_trusted_proxies("127.0.0.1, testclient, ,10.0.0.0/8")
+    assert [str(n) for n in networks] == ["127.0.0.1/32", "10.0.0.0/8"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. OTP Attempt Counter & Lockout
 # ──────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_otp_attempt_counter_burns_after_limit(monkeypatch):
-    """5 failed attempts burn the OTP code and reject subsequent tries."""
+def _otp_pool(update_result):
     pool = AsyncMock()
     otp_hash = bcrypt.hashpw(b"123456", bcrypt.gensalt()).decode()
-    row = {
-        "otp_id": str(uuid4()),
-        "otp_hash": otp_hash,
-        "attempts": 4,  # Next failure will reach max_attempts (5)
-        "max_attempts": 5,
-    }
-    pool.fetchrow.return_value = row
+    pool.fetchrow.side_effect = [
+        {"otp_id": "otp-1", "otp_hash": otp_hash},
+        update_result,
+    ]
+    return pool
+
+
+@pytest.mark.asyncio
+async def test_otp_wrong_guess_increments_atomically(monkeypatch):
+    """A wrong guess is counted with one atomic UPDATE, not read-modify-write."""
+    pool = _otp_pool({"attempts": 1, "used": False})
     monkeypatch.setattr("services.auth.get_pool", lambda: pool)
 
-    # 5th failed attempt should burn OTP
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ValueError, match="Invalid OTP"):
         await verify_otp("user@example.com", "999999")
-    assert "Too many failed attempts" in str(exc.value)
-    # Verify pool execute burned the OTP (used = TRUE)
-    executed_sql = pool.execute.await_args.args[0]
-    assert "used = TRUE" in executed_sql
+
+    sql, otp_id, max_attempts = pool.fetchrow.await_args.args
+    assert "attempts = attempts + 1" in sql
+    assert "used = FALSE" in sql
+    assert (otp_id, max_attempts) == ("otp-1", OTP_MAX_ATTEMPTS)
+
+
+@pytest.mark.asyncio
+async def test_otp_attempt_counter_burns_after_limit(monkeypatch):
+    """The guess that reaches the limit burns the code."""
+    pool = _otp_pool({"attempts": OTP_MAX_ATTEMPTS, "used": True})
+    monkeypatch.setattr("services.auth.get_pool", lambda: pool)
+
+    with pytest.raises(ValueError, match="Too many failed attempts"):
+        await verify_otp("user@example.com", "999999")
+
+
+@pytest.mark.asyncio
+async def test_otp_burned_by_concurrent_request(monkeypatch):
+    """No row back means a concurrent request already burned the code."""
+    pool = _otp_pool(None)
+    monkeypatch.setattr("services.auth.get_pool", lambda: pool)
+
+    with pytest.raises(ValueError, match="Too many failed attempts"):
+        await verify_otp("user@example.com", "999999")
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_otp_concurrent_wrong_guesses_burn_after_limit(monkeypatch):
+    """N parallel wrong guesses against real Postgres burn the code after 5."""
+    import asyncio
+    import os
+
+    import asyncpg
+
+    dsn = os.getenv(
+        "DATABASE_URL", "postgresql://zizkadb:zizkadb@localhost:5432/zizkadb"
+    )
+    pool = await asyncpg.create_pool(dsn, min_size=10, max_size=20)
+    email = f"otp-race-{uuid4().hex}@example.com"
+    otp_hash = bcrypt.hashpw(b"123456", bcrypt.gensalt(rounds=4)).decode()
+    try:
+        await pool.execute(
+            """
+            INSERT INTO auth_otps (email, otp_hash, expires_at)
+            VALUES ($1, $2, NOW() + INTERVAL '15 minutes')
+            """,
+            email, otp_hash,
+        )
+        monkeypatch.setattr("services.auth.get_pool", lambda: pool)
+
+        guesses = 20
+        results = await asyncio.gather(
+            *(verify_otp(email, "999999") for _ in range(guesses)),
+            return_exceptions=True,
+        )
+        messages = [str(r) for r in results]
+        assert all(isinstance(r, ValueError) for r in results)
+
+        row = await pool.fetchrow(
+            "SELECT attempts, used FROM auth_otps WHERE email = $1", email
+        )
+        assert row["used"] is True
+        assert row["attempts"] == OTP_MAX_ATTEMPTS
+        # Exactly OTP_MAX_ATTEMPTS - 1 guesses saw a plain "Invalid OTP".
+        assert messages.count("Invalid OTP") == OTP_MAX_ATTEMPTS - 1
+
+        # The correct code no longer works once burned.
+        with pytest.raises(ValueError, match="expired or not found"):
+            await verify_otp(email, "123456")
+    finally:
+        await pool.execute("DELETE FROM auth_otps WHERE email = $1", email)
+        await pool.close()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -167,7 +293,7 @@ async def test_write_event_malformed_parent_id_returns_400():
             parent_id="not-a-valid-uuid-1234",
         )
     assert exc.value.status_code == 400
-    assert "not a valid UUID" in exc.value.detail
+    assert exc.value.detail == "parent_id is not a valid UUID"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
