@@ -22,6 +22,7 @@ IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 def parse_trusted_proxies(raw: str) -> tuple[IPNetwork, ...]:
     """Parse a comma-separated list of IPs/CIDRs into networks, skipping bad entries."""
     networks: list[IPNetwork] = []
+    invalid = 0
     for item in raw.split(","):
         item = item.strip()
         if not item:
@@ -29,7 +30,10 @@ def parse_trusted_proxies(raw: str) -> tuple[IPNetwork, ...]:
         try:
             networks.append(ipaddress.ip_network(item, strict=False))
         except ValueError:
-            log.warning("Ignoring invalid TRUSTED_PROXIES entry: %r", item)
+            invalid += 1
+    if invalid:
+        # Count only: env values are not echoed into logs.
+        log.warning("Ignoring %d invalid TRUSTED_PROXIES entr%s", invalid, "y" if invalid == 1 else "ies")
     return tuple(networks)
 
 
