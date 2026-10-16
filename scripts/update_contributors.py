@@ -21,16 +21,17 @@ README = ROOT / "README.md"
 EXTRA = ROOT / ".github" / "contributors-extra.txt"
 START, END = "<!-- CONTRIBUTORS:START -->", "<!-- CONTRIBUTORS:END -->"
 COLS = 4
+LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
 
 
 def api(url: str) -> list:
     out: list = []
     while url:
         req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-        token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-        if token:
-            req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req) as resp:
+        if TOKEN:
+            req.add_header("Authorization", f"Bearer {TOKEN}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
             out.extend(json.load(resp))
             m = re.search(r'<([^>]+)>;\s*rel="next"', resp.headers.get("Link", ""))
             url = m.group(1) if m else None
@@ -38,7 +39,8 @@ def api(url: str) -> list:
 
 
 def is_bot(user: dict) -> bool:
-    return user.get("type") == "Bot" or user["login"].endswith("[bot]")
+    # "ghost" is GitHub's placeholder for deleted accounts
+    return user.get("type") == "Bot" or user["login"].endswith("[bot]") or user["login"] == "ghost"
 
 
 def collect(repo: str) -> list[str]:
@@ -59,8 +61,11 @@ def collect(repo: str) -> list[str]:
     if EXTRA.exists():
         for line in EXTRA.read_text().splitlines():
             login = line.split("#", 1)[0].strip()
-            if login:
-                add(login, 0)
+            if not login:
+                continue
+            if not LOGIN_RE.match(login):
+                sys.exit(f"{EXTRA.name}: invalid GitHub login {login!r}")
+            add(login, 0)
     return [names[k] for k, _ in sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
