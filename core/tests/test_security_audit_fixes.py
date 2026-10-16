@@ -344,3 +344,23 @@ def test_community_upload_valid_png_accepted(tmp_path, monkeypatch):
     )
     assert res.status_code == 200
     assert "url" in res.json()
+
+
+def test_community_media_serves_uploaded_file(tmp_path, monkeypatch):
+    """A file named like an upload is served with hardening headers."""
+    monkeypatch.setattr("api.community.UPLOAD_DIR", tmp_path)
+    name = f"{uuid4().hex}.png"
+    (tmp_path / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    res = client.get(f"/v1/community/media/{name}")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "image/png"
+    assert res.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize("name", ["..", "...", "x.png", f"{'a' * 32}.svg", f"{'A' * 32}.png"])
+def test_community_media_rejects_non_upload_names(tmp_path, monkeypatch, name):
+    """Only <32 hex>.<image ext> names are served; traversal-ish names 404."""
+    monkeypatch.setattr("api.community.UPLOAD_DIR", tmp_path / "uploads")
+    (tmp_path / "uploads").mkdir()
+    res = client.get(f"/v1/community/media/{name}")
+    assert res.status_code == 404
