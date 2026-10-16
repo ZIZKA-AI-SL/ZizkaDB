@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed: GDPR forget and agent delete failed on events with causal children
+
+- `DELETE /v1/memory/forget` and `DELETE /v1/agents/{agent_id}` returned 500 (`events_parent_event_id_fkey` violation) whenever a deleted event was the parent of another event — e.g. a planner decision that an executor's action points to. Forget had already removed the vectors from Qdrant before the Postgres delete failed.
+- `events.parent_event_id` is now `ON DELETE SET NULL`: the child event keeps its own record and only loses the link to the erased parent. Existing databases are migrated on API startup (idempotent).
+
 ### Compose: no development defaults on servers
 
 - **Breaking for `infra/docker-compose.yml` users whose `infra/.env` has no `ENV` line.** `ENV` is now required; `docker compose` stops with `Set ENV in infra/.env - production for a server, development for local use only`. It used to default to `development`, which turned on the dev API key and login-free dev-token on a public port. `.env.example` no longer sets `ENV` (a server copy would otherwise default to development); `scripts/setup-local.sh` adds `ENV=development` to a local `infra/.env`, new or existing, that does not set it.
