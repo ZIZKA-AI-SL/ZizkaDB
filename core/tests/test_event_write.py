@@ -2,6 +2,7 @@ import datetime
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 
+from services.checksum import compute_event_checksum_v2
 from services.event_write import _pgvector_literal, write_event
 
 
@@ -11,6 +12,34 @@ def test_pgvector_literal_formats_as_bracketed_csv():
     input format so `$1::vector` can parse it."""
     assert _pgvector_literal([0.1, -0.2, 3.0]) == "[0.1,-0.2,3.0]"
     assert _pgvector_literal([]) == "[]"
+
+
+def _db_row(row: dict) -> dict:
+    """Shape of INSERT ... RETURNING for the checksum columns."""
+    return {
+        "tenant_id": "tenant1",
+        "agent_id": "agent1",
+        "event_type": "message",
+        "data": "{}",
+        "parent_event_id": None,
+        "session_id": None,
+        "metadata": None,
+        "checksum": None,
+        **row,
+    }
+
+
+def _route_transaction_to(pool):
+    """pool.acquire() + conn.transaction() yield the pool itself, so the
+    insert and checksum UPDATE land on the same mock as other statements."""
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=pool)
+    acquire.__aexit__ = AsyncMock(return_value=None)
+    pool.acquire = MagicMock(return_value=acquire)
+    tx = MagicMock()
+    tx.__aenter__ = AsyncMock(return_value=None)
+    tx.__aexit__ = AsyncMock(return_value=None)
+    pool.transaction = MagicMock(return_value=tx)
 
 
 @pytest.fixture
@@ -28,7 +57,8 @@ def mock_pool(monkeypatch):
         "sequence_no": 7,
     }
 
-    pool.fetchrow.return_value = row
+    pool.fetchrow.return_value = _db_row(row)
+    _route_transaction_to(pool)
 
     monkeypatch.setattr(
         "services.event_write.get_pool",
@@ -182,13 +212,11 @@ async def test_usage_meter_failure_does_not_fail_request(
         "sequence_no": 1,
     }
 
-    pool.fetchrow.return_value = row
+    pool.fetchrow.return_value = _db_row(row)
+    _route_transaction_to(pool)
 
-    calls = {"count": 0}
-
-    async def execute(*args, **kwargs):
-        calls["count"] += 1
-        if calls["count"] == 4:
+    async def execute(sql, *args, **kwargs):
+        if "usage_daily" in sql:
             raise RuntimeError("usage table failed")
 
     pool.execute.side_effect = execute
@@ -221,3 +249,54 @@ async def test_usage_meter_failure_does_not_fail_request(
     )
 
     assert result["event_id"] == "abc"
+
+
+@pytest.mark.asyncio
+async def test_write_event_stores_v2_checksum_of_returned_row(
+    monkeypatch,
+    mock_pool,
+    mock_qdrant,
+):
+    """The checksum hashes the RETURNING row (what the verifier reads back)
+    and the UPDATE persists exactly that value."""
+    monkeypatch.setattr("services.event_write.embeddings_enabled", lambda: False)
+    returned = mock_pool.fetchrow.return_value
+    returned.update(
+        data='{"text": "hello"}',
+        parent_event_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        session_id="sess-1",
+        metadata='{"trace": "t-1"}',
+    )
+    mock_pool.fetchval = AsyncMock(return_value="tenant1")
+
+    result = await write_event(
+        tenant_id="tenant1",
+        agent="agent1",
+        event="message",
+        data={"text": "hello"},
+        parent_id="AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        session_id="sess-1",
+        metadata={"trace": "t-1"},
+    )
+
+    expected = compute_event_checksum_v2(
+        tenant_id="tenant1",
+        agent_id="agent1",
+        event_type="message",
+        data={"text": "hello"},
+        parent_event_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        session_id="sess-1",
+        timestamp=returned["timestamp"],
+        sequence_no=7,
+        metadata={"trace": "t-1"},
+    )
+    assert result["checksum"] == expected
+
+    insert_sql = mock_pool.fetchrow.await_args.args[0]
+    assert "checksum" not in insert_sql.split("RETURNING")[0]
+    update = next(
+        c.args for c in mock_pool.execute.await_args_list
+        if "UPDATE events SET checksum" in c.args[0]
+    )
+    assert update[1:] == (expected, returned["event_id"])
+    mock_pool.transaction.assert_called_once()
