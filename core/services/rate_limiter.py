@@ -197,6 +197,7 @@ class RedisStorage(RateLimitStorage):
             key_prefix: Prefix prepended to all Redis keys to isolate rate limiting data.
         """
         self.key_prefix = key_prefix
+        self._script = None  # (redis client, registered script)
 
     def _get_redis_key(self, key: str) -> str:
         """Generate a prefixed Redis key string."""
@@ -251,24 +252,29 @@ class RedisStorage(RateLimitStorage):
         if keys:
             await redis_client.delete(*keys)
 
+    def _rate_limit_script(self, redis_client):
+        """Register the Lua script once per client; calls then use EVALSHA."""
+        if self._script is None or self._script[0] is not redis_client:
+            self._script = (redis_client, redis_client.register_script(self._RATE_LIMIT_LUA))
+        return self._script[1]
+
     async def check_and_record_hit(
         self, key: str, limit: int, window_sec: int, now: float
     ) -> bool:
-        """Atomically check if key is under limit and record hit via Redis Lua script."""
+        """Atomically check if key is under limit and record hit via Redis Lua script.
+
+        Errors are not swallowed here: callers decide whether to fail closed
+        (auth) or fall back loudly (``check_rate_fail_open``). A silent fallback
+        to check-then-record would reintroduce the race this script prevents.
+        """
         redis_client = get_redis()
-        rkey = self._get_redis_key(key)
+        script = self._rate_limit_script(redis_client)
         val = f"{now}:{uuid.uuid4().hex}"
-        try:
-            allowed = await redis_client.eval(
-                self._RATE_LIMIT_LUA, 1, rkey, limit, window_sec, now, val,
-            )
-            return bool(allowed)
-        except Exception:
-            hits = await self.get_hits(key, window_sec)
-            if len(hits) >= limit:
-                return False
-            await self.record_hit(key, now, window_sec)
-            return True
+        allowed = await script(
+            keys=[self._get_redis_key(key)],
+            args=[limit, window_sec, now, val],
+        )
+        return bool(allowed)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
