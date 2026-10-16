@@ -73,3 +73,41 @@ class ZizkaDBCrewLogger:
         )
         self.last_event_id = result.event_id
         return result
+
+    async def log_tool(
+        self,
+        tool: str,
+        *,
+        args: Any = None,
+        parent_id: str | None = None,
+    ) -> LogResult:
+        """Log a tool a crew agent is about to use, by name."""
+        result = await self.db.log_tool(
+            self.agent,
+            tool,
+            args=args,
+            parent_id=parent_id or self.last_event_id,
+            session_id=self.session_id,
+        )
+        self.last_event_id = result.event_id
+        return result
+
+    async def log_tool_result(
+        self,
+        tool: str,
+        *,
+        result: Any = None,
+        error: str | BaseException | None = None,
+        parent_id: str | None = None,
+    ) -> LogResult:
+        """Log a tool's output, or its failure when ``error`` is given."""
+        logged = await self.db.log_tool_result(
+            self.agent,
+            tool,
+            result=result,
+            error=error,
+            parent_id=parent_id or self.last_event_id,
+            session_id=self.session_id,
+        )
+        self.last_event_id = logged.event_id
+        return logged

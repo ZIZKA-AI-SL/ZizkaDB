@@ -19,6 +19,7 @@ const assign = vi.fn()
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.sessionStorage.clear()
   Object.defineProperty(window, 'location', { value: { assign }, writable: true })
 })
 
@@ -63,6 +64,34 @@ describe('SelfHostLogin', () => {
     render(<SelfHostLogin next="/dashboard" />)
     fireEvent.click(await screen.findByRole('button', { name: /retry/i }))
     expect(await screen.findByRole('button', { name: /open my dashboard/i })).toBeTruthy()
+  })
+
+  it('auto: one-click mode signs in without a click', async () => {
+    getSelfHostConfig.mockResolvedValue({ self_hosted: true, login: 'one_click' })
+    selfHostLogin.mockResolvedValue({ access_token: 'jwt' })
+    render(<SelfHostLogin next="/dashboard/activity?agent=support-bot" auto />)
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/dashboard/activity?agent=support-bot'))
+    expect(selfHostLogin).toHaveBeenCalledTimes(1)
+    expect(setToken).toHaveBeenCalledWith('jwt')
+  })
+
+  it('auto: a second visit right after falls back to the button (no redirect loop)', async () => {
+    getSelfHostConfig.mockResolvedValue({ self_hosted: true, login: 'one_click' })
+    selfHostLogin.mockResolvedValue({ access_token: 'jwt' })
+    const first = render(<SelfHostLogin next="/dashboard" auto />)
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
+    first.unmount()
+
+    render(<SelfHostLogin next="/dashboard" auto />)
+    expect(await screen.findByRole('button', { name: /open my dashboard/i })).toBeTruthy()
+    expect(selfHostLogin).toHaveBeenCalledTimes(1)
+  })
+
+  it('auto: never signs in by itself when an admin token is required', async () => {
+    getSelfHostConfig.mockResolvedValue({ self_hosted: true, login: 'admin_token' })
+    render(<SelfHostLogin next="/dashboard" auto />)
+    await screen.findByLabelText(/admin token/i)
+    expect(selfHostLogin).not.toHaveBeenCalled()
   })
 
   it('never shows signup, email or website links', async () => {

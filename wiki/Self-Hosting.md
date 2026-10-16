@@ -142,11 +142,11 @@ Configure in `infra/.env`:
 - `QDRANT_URL`
 - `JWT_SECRET` / `JWT_REFRESH_SECRET`
 - `SELFHOST_ADMIN_TOKEN` — required to sign in to the dashboard when `ENV=production` (no email/SMTP needed)
-- `ENV=production` (disables dev key bypass)
+- `ENV=production` (disables dev key bypass). `infra/docker-compose.yml` requires `ENV` and stops with an error if it is missing; never use `ENV=development` on a server
 - `DEV_API_KEY` — set a unique random value (`openssl rand -hex 24`) — the API refuses to start in production if it is empty or the default, and never accepts it as auth there
 - `DEPLOYMENT_MODE=self_hosted` — keep this set even in production. `ENV=production` alone doesn't distinguish a self-hosted install from managed cloud (both use it), so this separate flag is what makes plan-based entitlement checks (e.g. API key limits) resolve to the Self-Hosted plan instead of whatever is in `users.plan`.
 - `EMBEDDINGS_ENABLED=false` — default for self-host. Set to `true` only when you want semantic search / vector indexing; then configure `OPENAI_API_KEY` (or your provider key in Dashboard → Settings).
-- `API_KEY_LIMITS_ENFORCED=true` — enable per-plan API key caps (Self-Hosted: 1, Pro: 2, Team: 5). Default `false`; self-hosted installs are uncapped unless you set this.
+- **One agent, one API key.** A self-hosted install runs a single agent with a single active API key; this is always enforced and cannot be changed by env vars. The first agent name you log with takes the slot (the `support-bot` demo agent does not count). Agents that already existed before upgrading keep working, but no new ones can be added. Multiple agents, agent fleets and agent-to-agent messaging are on [ZizkaDB Cloud](https://db.zizka.ai).
 
 Validate production config before deploy:
 

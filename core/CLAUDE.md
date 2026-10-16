@@ -35,6 +35,8 @@ Swagger UI: `http://localhost:8000/swagger` · OpenAPI schema: `/openapi.json`
 
 ### A2A (`POST /v1/a2a/messages`)
 
+**Managed cloud only**: on `DEPLOYMENT_MODE=self_hosted` the route returns 403 (self-hosted is single-agent, see `services/agent_limits.py`).
+
 SDK-only. Auth is `get_tenant`, but a **tenant-wide key or JWT without `agent_id` is 403** — the sender is never a request field.
 
 | Rule | Result |
@@ -121,6 +123,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 | `services/token_optimization_config.py` | Tunable thresholds for the deterministic Token Optimization detectors |
 | `services/token_optimization_models.py` | `TokenOptimizationSuggestion`/`Aggregates`/`Result` dataclasses (unrelated to `services/suggestions/`'s types) |
 | `services/token_optimization.py` | 5 deterministic (no-LLM) detectors + orchestrator — see ADR-007 |
+| `services/actions.py` | Which tool / API an event names (`data.tool`, `data.api`) + per-action call counts and error rates; the only place those payload keys are read in SQL |
 
 ---
 
@@ -140,7 +143,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 2. Runs `ALTER TABLE` migrations idempotently
 3. Creates community/SDK/marketing tables if missing
 4. Backfills `users.plan = 'pro'` for users with `plan IS NULL`
-5. Seeds a dev tenant (and logs a `DEV MODE` warning) only when `ENV` is `development` or unset — same gate as dev-key acceptance (`api.deps.dev_keys_enabled()`)
+5. Seeds a dev tenant (and logs a `DEV MODE` warning) only when `ENV=development` — same gate as dev-key acceptance (`api.deps.dev_keys_enabled()`). An unset `ENV` is production (`services/runtime_env.py::is_dev_mode`)
 
 ---
 

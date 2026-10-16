@@ -169,6 +169,17 @@ export interface AgentEvent {
   index_status?: 'pending' | 'indexed' | 'failed' | 'skipped'
 }
 
+/** One tool or API an agent called, with its call count and error rate. */
+export interface AgentAction {
+  kind: 'tool' | 'api'
+  name: string
+  calls: number
+  errors: number
+  error_rate_pct: number
+  /** Share of all named tool/API calls in scope. */
+  share_pct: number
+}
+
 export interface AgentStats {
   total_events: number
   unique_event_types: number
@@ -176,6 +187,7 @@ export interface AgentStats {
   first_event: string | null
   last_event: string | null
   top_events: { event: string; count: number }[]
+  top_actions?: AgentAction[]
 }
 
 export interface WhyChain {
@@ -333,6 +345,8 @@ export interface BaselineWindow {
   avg_events_per_session: number
   avg_session_seconds: number
   error_rate_pct: number
+  actions?: AgentAction[]
+  action_distribution?: Record<string, number>
 }
 
 export interface BaselineChange {
@@ -444,6 +458,7 @@ export interface ReportPayload {
     event_distribution: Record<string, number>
     transitions: Record<string, number>
   }
+  actions?: AgentAction[]
   sessions: ReportSession[]
   drift: ReportDrift | null
   recommendations: ReportRecommendation[]

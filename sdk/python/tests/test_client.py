@@ -172,3 +172,75 @@ def test_log_sends_null_for_omitted_parent_and_session(monkeypatch):
     body = json.loads(captured["body"])
     assert body["parent_id"] is None
     assert body["session_id"] is None
+
+
+# ── Named tool / API helpers ─────────────────────────────────────────────────
+
+def _capture_events(monkeypatch):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.read().decode()))
+        return httpx.Response(
+            200,
+            json={
+                "event_id": f"00000000-0000-0000-0000-00000000000{len(bodies)}",
+                "timestamp": "2026-06-19T00:00:00Z",
+                "sequence_no": len(bodies),
+                "checksum": "abc123",
+            },
+        )
+
+    return _client(monkeypatch, handler), bodies
+
+
+def test_log_tool_names_the_tool(monkeypatch):
+    db, bodies = _capture_events(monkeypatch)
+    try:
+        asyncio.run(db.log_tool("bot", "lookup_order", args={"order_id": "ORD-1"}, session_id="s1"))
+    finally:
+        asyncio.run(_close(db))
+
+    assert bodies[0]["event"] == "tool_call"
+    assert bodies[0]["data"] == {"tool": "lookup_order", "args": {"order_id": "ORD-1"}}
+    assert bodies[0]["session_id"] == "s1"
+
+
+def test_log_tool_result_success_and_error(monkeypatch):
+    db, bodies = _capture_events(monkeypatch)
+    try:
+        asyncio.run(db.log_tool_result("bot", "lookup_order", result={"ok": True}, duration_ms=12))
+        asyncio.run(db.log_tool_result("bot", "lookup_order", error=TimeoutError("slow")))
+    finally:
+        asyncio.run(_close(db))
+
+    assert bodies[0]["event"] == "tool_result"
+    assert bodies[0]["data"] == {"tool": "lookup_order", "result": {"ok": True}, "duration_ms": 12}
+    assert bodies[1]["event"] == "tool_error"
+    assert bodies[1]["data"] == {"tool": "lookup_order", "error": "slow", "type": "TimeoutError"}
+
+
+def test_log_api_names_the_call_and_drops_secrets_from_the_url(monkeypatch):
+    db, bodies = _capture_events(monkeypatch)
+    try:
+        asyncio.run(
+            db.log_api(
+                "bot", "post",
+                "https://user:pw@api.stripe.com:8443/v1/refunds?api_key=sk_live_secret#frag",
+                status=502, duration_ms=310,
+            )
+        )
+        asyncio.run(db.log_api("bot", "GET", "/internal/orders?token=abc", name="orders.list"))
+    finally:
+        asyncio.run(_close(db))
+
+    assert bodies[0]["event"] == "api_call"
+    assert bodies[0]["data"] == {
+        "api": "POST api.stripe.com:8443/v1/refunds",
+        "method": "POST",
+        "url": "https://api.stripe.com:8443/v1/refunds",
+        "status": 502,
+        "duration_ms": 310,
+    }
+    assert "secret" not in json.dumps(bodies[0]) and "pw@" not in json.dumps(bodies[0])
+    assert bodies[1]["data"] == {"api": "orders.list", "method": "GET", "url": "/internal/orders"}

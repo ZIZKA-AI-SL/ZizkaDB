@@ -7,7 +7,13 @@ import { redirect } from 'next/navigation'
  * `?agent=`, so this page's content lives in Activity/Behavior. Kept as a
  * permanent redirect so existing links and bookmarks keep working.
  */
-export default function LegacyAgentPage({ params }: { params: { id: string } }) {
-  const agent = decodeURIComponent(params.id)
+export default async function LegacyAgentPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  const { id } = await params
+  const agent = decodeURIComponent(id)
+
   redirect(`/dashboard/activity?agent=${encodeURIComponent(agent)}`)
 }

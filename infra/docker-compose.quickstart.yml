@@ -4,6 +4,9 @@
 #   docker compose -f infra/docker-compose.quickstart.yml up -d
 #
 # Requires schema.sql alongside this file (downloaded automatically by quickstart-remote.sh).
+#
+# Local use only: ENV=development (dev API key, one-click dashboard), so every
+# port is published on 127.0.0.1. For a server use infra/docker-compose.yml.
 
 services:
   postgres:
@@ -14,7 +17,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zizkadb}
       POSTGRES_DB: ${POSTGRES_DB:-zizkadb}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
@@ -28,8 +31,8 @@ services:
     image: qdrant/qdrant:v1.13.5
     container_name: zizkadb_qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
@@ -39,7 +42,7 @@ services:
     image: redis:7-alpine
     container_name: zizkadb_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -54,7 +57,7 @@ services:
     pull_policy: always
     container_name: zizkadb_api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-zizkadb}:${POSTGRES_PASSWORD:-zizkadb}@postgres:5432/${POSTGRES_DB:-zizkadb}
       QDRANT_URL: http://qdrant:6333
@@ -80,7 +83,7 @@ services:
     pull_policy: always
     container_name: zizkadb_dashboard
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
       NODE_ENV: production
       HOSTNAME: "0.0.0.0"

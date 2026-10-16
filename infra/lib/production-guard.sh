@@ -20,19 +20,23 @@ _zizka_load_env() {
   fi
 }
 
+# Production unless ENV is explicitly development (any case, outer spaces trimmed),
+# matching the API (core/services/runtime_env.py). An unset ENV is production.
 zizka_is_production() {
   _zizka_load_env
-  [ "${ENV:-development}" = "production" ]
+  local env_val
+  env_val="$(printf '%s' "${ENV:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  [ "$env_val" != "development" ]
 }
 
-# Abort if ENV=production — used before any destructive local-only command.
+# Abort unless ENV=development — used before any destructive local-only command.
 zizka_refuse_if_production() {
   if zizka_is_production; then
     echo "" >&2
     echo "════════════════════════════════════════════════════════" >&2
     echo "  REFUSED — production environment detected" >&2
     echo "════════════════════════════════════════════════════════" >&2
-    echo "  infra/.env has ENV=production." >&2
+    echo "  infra/.env does not set ENV=development (unset counts as production)." >&2
     echo "  This command would destroy customer data." >&2
     echo "" >&2
     echo "  Safe production deploy:" >&2

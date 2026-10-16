@@ -50,27 +50,70 @@ async def test_diff_rejects_cross_agent_scoped_key(monkeypatch):
 
 # ── /v1/memory/forget ─────────────────────────────────────────────────────────
 
+class _ForgetTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _ForgetConn:
+    """Connection forget() acquires (#234): records the id SELECT's args."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.fetch_calls = []
+
+    def transaction(self):
+        return _ForgetTxn()
+
+    async def fetch(self, query, *args):
+        self.fetch_calls.append((query, args))
+        return self._rows
+
+    async def execute(self, query, *args):
+        return "OK"
+
+
+class _ForgetAcquire:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _ForgetPool:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        return _ForgetAcquire(self._conn)
+
+
 @pytest.mark.asyncio
 async def test_forget_constrains_query_to_scoped_agent(monkeypatch):
     """A scoped key's forget must filter the SELECT by its own agent_id."""
-    pool = AsyncMock()
-    pool.fetch.return_value = []  # no matches → early return, no delete
-    monkeypatch.setattr("api.memory.get_pool", lambda: pool)
+    conn = _ForgetConn([])  # no matches → early return, no delete
+    monkeypatch.setattr("api.memory.get_pool", lambda: _ForgetPool(conn))
     await forget(ForgetRequest(filter_key="user_id", filter_value="u1"), tenant=SCOPED_TENANT)
 
-    sql, *_ = pool.fetch.await_args.args
+    sql, args = conn.fetch_calls[0]
     assert "agent_id = $4" in sql
-    assert pool.fetch.await_args.args[-1] == "mine"  # scoped agent bound as $4
+    assert args[-1] == "mine"  # scoped agent bound as $4
 
 
 @pytest.mark.asyncio
 async def test_forget_full_key_stays_tenant_wide(monkeypatch):
     """An unscoped key passes NULL for the agent filter (tenant-wide forget)."""
-    pool = AsyncMock()
-    pool.fetch.return_value = []
-    monkeypatch.setattr("api.memory.get_pool", lambda: pool)
+    conn = _ForgetConn([])
+    monkeypatch.setattr("api.memory.get_pool", lambda: _ForgetPool(conn))
     await forget(ForgetRequest(filter_key="user_id", filter_value="u1"), tenant=FULL_TENANT)
-    assert pool.fetch.await_args.args[-1] is None  # $4 is NULL → no agent constraint
+    assert conn.fetch_calls[0][1][-1] is None  # $4 is NULL → no agent constraint
 
 
 # ── /v1/events/{id}/why ───────────────────────────────────────────────────────

@@ -40,6 +40,10 @@ async def run_proxy(agent: str, cmd: list[str]) -> int:
         stderr=asyncio.subprocess.PIPE,
     )
 
+    # JSON-RPC id → tool name for calls still in flight, so each result or
+    # error is logged against the tool that produced it.
+    pending: dict[str, str | None] = {}
+
     async def forward_stdin_to_child():
         assert proc.stdin and proc.stdout
         while True:
@@ -51,6 +55,8 @@ async def run_proxy(agent: str, cmd: list[str]) -> int:
                 msg = json.loads(line)
                 if msg.get("method") == "tools/call":
                     params = msg.get("params") or {}
+                    if msg.get("id") is not None:
+                        pending[json.dumps(msg["id"])] = params.get("name")
                     await log_tool(
                         agent,
                         "mcp_tool_call",
@@ -69,8 +75,13 @@ async def run_proxy(agent: str, cmd: list[str]) -> int:
                 break
             try:
                 msg = json.loads(line)
-                if msg.get("result") is not None and "tools/call" in json.dumps(msg):
-                    await log_tool(agent, "mcp_tool_result", {"result": msg.get("result")})
+                key = json.dumps(msg.get("id")) if isinstance(msg, dict) else None
+                if key in pending:
+                    tool = pending.pop(key)
+                    if msg.get("error") is not None:
+                        await log_tool(agent, "mcp_tool_error", {"tool": tool, "error": msg["error"]})
+                    else:
+                        await log_tool(agent, "mcp_tool_result", {"tool": tool, "result": msg.get("result")})
             except json.JSONDecodeError:
                 pass
             sys.stdout.buffer.write(line)

@@ -129,3 +129,57 @@ it('localhost auto-injects dev key', async () => {
 afterAll(() => {
   globalThis.fetch = _originalFetch
 })
+
+
+function captureEvents() {
+  const bodies = []
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body))
+    return jsonResponse({
+      event_id: `00000000-0000-0000-0000-00000000000${bodies.length}`,
+      timestamp: '2026-06-19T00:00:00Z',
+      sequence_no: bodies.length,
+      checksum: 'abc123',
+    })
+  }
+  return bodies
+}
+
+it('logTool / logToolResult name the tool', async () => {
+  const bodies = captureEvents()
+  const db = new ZizkaDB({ apiKey: 'zizkadb_live_test', host: 'https://example.test' })
+
+  await db.logTool({ agent: 'bot', tool: 'lookup_order', args: { orderId: 'ORD-1' } })
+  await db.logToolResult({ agent: 'bot', tool: 'lookup_order', result: { ok: true }, durationMs: 12 })
+  await db.logToolResult({ agent: 'bot', tool: 'lookup_order', error: new TypeError('bad') })
+
+  expect(bodies[0].event).toBe('tool_call')
+  expect(bodies[0].data).toEqual({ tool: 'lookup_order', args: { orderId: 'ORD-1' } })
+  expect(bodies[1].event).toBe('tool_result')
+  expect(bodies[1].data).toEqual({ tool: 'lookup_order', result: { ok: true }, duration_ms: 12 })
+  expect(bodies[2].event).toBe('tool_error')
+  expect(bodies[2].data).toEqual({ tool: 'lookup_order', error: 'bad', type: 'TypeError' })
+})
+
+it('logApi names the call and drops secrets from the url', async () => {
+  const bodies = captureEvents()
+  const db = new ZizkaDB({ apiKey: 'zizkadb_live_test', host: 'https://example.test' })
+
+  await db.logApi({
+    agent: 'bot',
+    method: 'post',
+    url: 'https://user:pw@api.stripe.com:8443/v1/refunds?api_key=sk_live_secret#frag',
+    status: 502,
+  })
+  await db.logApi({ agent: 'bot', method: 'GET', url: '/internal/orders?token=abc', name: 'orders.list' })
+
+  expect(bodies[0].event).toBe('api_call')
+  expect(bodies[0].data).toEqual({
+    api: 'POST api.stripe.com:8443/v1/refunds',
+    method: 'POST',
+    url: 'https://api.stripe.com:8443/v1/refunds',
+    status: 502,
+  })
+  expect(JSON.stringify(bodies[0])).not.toMatch(/secret|pw@/)
+  expect(bodies[1].data).toEqual({ api: 'orders.list', method: 'GET', url: '/internal/orders' })
+})

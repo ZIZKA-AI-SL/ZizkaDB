@@ -16,6 +16,33 @@ export function isErrorEvent(eventType: string): boolean {
   return ERROR_HINTS.some((h) => t.includes(h))
 }
 
+/**
+ * Which tool or API an event is about, read from its payload: `data.tool`
+ * (or `tool_name`) for tools, `data.api` — or method + endpoint/url on
+ * `api_*` / `http_*` events — for APIs. Mirrors core/services/actions.py.
+ */
+export function eventActionName(event: Pick<AgentEvent, 'event' | 'data'>): string | null {
+  const data = (event.data ?? {}) as Record<string, unknown>
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+
+  const named = text(data.tool) ?? text(data.tool_name) ?? text(data.api)
+  if (named) return named
+
+  const type = (event.event || '').toLowerCase()
+  if (type.startsWith('api') || type.startsWith('http')) {
+    const target = text(data.endpoint) ?? text(data.url)
+    const parts = [text(data.method), target].filter(Boolean)
+    if (parts.length) return parts.join(' ')
+  }
+  return null
+}
+
+/** `tool_call · lookup_order` when the event names its tool/API, else the type. */
+export function eventLabel(event: Pick<AgentEvent, 'event' | 'data'>): string {
+  const name = eventActionName(event)
+  return name ? `${event.event} · ${name}` : event.event
+}
+
 /** Stable colour per event type (errors red, lifecycle green, else neutral). */
 export function eventColor(type: string): string {
   const t = (type || '').toLowerCase()

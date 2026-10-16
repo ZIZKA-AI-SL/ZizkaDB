@@ -82,7 +82,7 @@ There is no AWS pipeline, no CodeDeploy, no ECS task definition.
 
 **`infra/.env` must never be committed to git** — `.gitignore` lists `.env` at the repo root but `infra/.env` has historically been tracked. If it appears in `git status` as tracked, run `git rm --cached infra/.env`, add `infra/.env` to `.gitignore`, and rotate all secrets in it. Once pushed to a public repo, secrets in git history are permanently compromised.
 
-**`ENV=production` is required for deployed instances** — without it, hardcoded dev API keys (`zizkadb_dev_local`, `agdb_dev_local`) are accepted as valid auth tokens. Always set `ENV=production` in `infra/.env` before exposing the API to the internet.
+**Never set `ENV=development` on a deployed instance** — it makes hardcoded dev API keys (`zizkadb_dev_local`, `agdb_dev_local`) valid auth tokens. Development mode is opt-in: an unset `ENV` is treated as production (`core/services/runtime_env.py`), and `infra/docker-compose.yml` requires `ENV` to be set in `infra/.env` (it has no default). The local quickstart compose is the exception: it runs `ENV=development` and binds every port to `127.0.0.1`.
 
 ## iCloud Drive warning
 

@@ -5,7 +5,6 @@ tenant-wide access, and reads must never bind a key to an arbitrary row's agent.
 """
 
 import datetime
-import importlib
 import uuid
 from unittest.mock import AsyncMock
 
@@ -53,7 +52,8 @@ def claim(monkeypatch):
 @pytest.mark.parametrize(
     ("env", "accepted"),
     [
-        (None, True),
+        (None, False),
+        ("", False),
         ("development", True),
         (" Development ", True),
         ("production", False),
@@ -67,14 +67,9 @@ def test_dev_key_only_in_development(monkeypatch, env, accepted):
         monkeypatch.delenv("ENV", raising=False)
     else:
         monkeypatch.setenv("ENV", env)
-    monkeypatch.delenv("DEV_API_KEY", raising=False)
-    try:
-        mod = importlib.reload(deps)
-        assert mod._dev_key_accepted("zizkadb_dev_local") is accepted
-        assert mod.dev_keys_enabled() is accepted
-    finally:
-        monkeypatch.delenv("ENV", raising=False)
-        importlib.reload(deps)
+    monkeypatch.setattr(deps, "_DEV_API_KEY", "")
+    assert deps._dev_key_accepted("zizkadb_dev_local") is accepted
+    assert deps.dev_keys_enabled() is accepted
 
 
 def test_is_unbound_api_key():

@@ -23,6 +23,7 @@ from api.demo_requests import router as demo_requests_router
 from api.community import router as community_router
 from api.marketing_subscriptions import router as marketing_subscriptions_router
 from middleware.request_id import RequestIdMiddleware
+from services.runtime_env import env_name, is_dev_mode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,7 +42,18 @@ def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:
 
 
 _DEFAULT_DEV_KEYS = frozenset({"zizkadb_dev_local", "agdb_dev_local"})
-_DEFAULT_JWT_SECRETS = frozenset({"", "dev-secret-change-in-production"})
+# Values published in .env.example, Compose defaults, and auth.py dev fallbacks.
+_DEFAULT_JWT_SECRETS = frozenset(
+    {
+        "",
+        "dev-secret",
+        "dev-refresh-secret",
+        "dev-secret-change-in-production",
+        "dev-refresh-secret-change-in-production",
+        "change-this-to-a-random-32-char-string",
+        "change-this-to-another-random-32-char-string",
+    }
+)
 # Self-host dashboard admin token: the login rate limit keys on client IP, which
 # a client can vary, so the token itself must resist brute force.
 _MIN_SELFHOST_ADMIN_TOKEN_LEN = 16
@@ -52,19 +64,30 @@ def validate_production_startup(
     dev_key: str,
     jwt_secret: str,
     selfhost_admin_token: str = "",
+    jwt_refresh_secret: str = "",
 ) -> None:
-    """Refuse production boot with known-insecure defaults."""
-    if env != "production":
+    """Refuse production boot with known-insecure defaults.
+
+    Production is every ``ENV`` other than ``development`` (see
+    ``services.runtime_env``), so an unset, misspelt or ``staging`` value is
+    checked too.
+    """
+    if env.strip().lower() == "development":
         return
-    if not dev_key or dev_key in _DEFAULT_DEV_KEYS:
+    # Dev keys are never accepted outside development, so an empty DEV_API_KEY
+    # is fine; a known default is still refused as a sign of a copied dev config.
+    if dev_key in _DEFAULT_DEV_KEYS:
         raise RuntimeError(
-            "Refusing to start with ENV=production and a dev/default DEV_API_KEY. "
-            "Unset DEV_API_KEY or set a unique secret in infra/.env."
+            "Refusing to start in production mode (ENV is not 'development') with a "
+            "dev/default DEV_API_KEY. Unset DEV_API_KEY or set a unique secret in "
+            "infra/.env. For local development set ENV=development."
         )
-    if jwt_secret in _DEFAULT_JWT_SECRETS:
+    if jwt_secret in _DEFAULT_JWT_SECRETS or jwt_refresh_secret in _DEFAULT_JWT_SECRETS:
         raise RuntimeError(
-            "Refusing to start with ENV=production and default JWT_SECRET. "
-            "Set a strong JWT_SECRET in infra/.env."
+            "Refusing to start in production mode (ENV is not 'development') with a "
+            "published or default JWT secret. Set strong JWT_SECRET and "
+            "JWT_REFRESH_SECRET in infra/.env. For local development set "
+            "ENV=development."
         )
     token = selfhost_admin_token.strip()
     if token and len(token) < _MIN_SELFHOST_ADMIN_TOKEN_LEN:
@@ -77,13 +100,13 @@ def validate_production_startup(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    env = os.getenv("ENV", "development")
-    if env == "production":
+    if not is_dev_mode():
         validate_production_startup(
-            env,
+            env_name(),
             os.getenv("DEV_API_KEY", ""),
             os.getenv("JWT_SECRET", ""),
             os.getenv("SELFHOST_ADMIN_TOKEN", ""),
+            os.getenv("JWT_REFRESH_SECRET", ""),
         )
         from services.entitlements import limits_enforced
 
@@ -100,8 +123,9 @@ async def lifespan(app: FastAPI):
 
     if dev_keys_enabled():
         logger.warning(
-            "DEV MODE: hardcoded dev API keys (zizkadb_dev_local) are accepted. "
-            "Set ENV=production for any public deployment."
+            "DEV MODE (ENV=development): hardcoded dev API keys (zizkadb_dev_local) "
+            "are accepted and /v1/auth/dev-token issues tokens without a login. "
+            "Never use ENV=development on a reachable deployment."
         )
         await _ensure_dev_tenant(get_pool())
     logger.info("ZizkaDB started")

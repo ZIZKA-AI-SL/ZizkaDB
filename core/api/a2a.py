@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import get_tenant
 from db.connection import get_pool
+from services.entitlements import is_self_hosted_deployment
 from services.event_write import write_event
 from services.exceptions import bad_request, forbidden, not_found
 
@@ -35,6 +36,15 @@ async def send_message(
     The sender is derived exclusively from the authenticated
     agent-scoped API key and cannot be supplied by the client.
     """
+
+    # Multi-agent feature: managed cloud only. Self-hosted is single-agent.
+    if is_self_hosted_deployment():
+        raise forbidden(
+            detail=(
+                "Agent-to-agent communication is available on ZizkaDB Cloud "
+                "(https://db.zizka.ai). Self-hosted deployments run a single agent."
+            )
+        )
 
     tenant_id = tenant["tenant_id"]
     sender_agent = tenant.get("agent_id")

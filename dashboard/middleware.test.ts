@@ -59,6 +59,13 @@ describe('middleware — self-hosted', () => {
     expect(location(mw(request('/dashboard/reports', 'jwt')))).toBeNull()
   })
 
+  it('keeps the query string of a deep link in ?next', async () => {
+    const mw = await loadMiddleware('self_hosted')
+    expect(location(mw(request('/dashboard/activity?agent=support-bot')))).toBe(
+      '/login?next=%2Fdashboard%2Factivity%3Fagent%3Dsupport-bot',
+    )
+  })
+
   it('marks every response noindex', async () => {
     const mw = await loadMiddleware('self_hosted')
     expect(mw(request('/login')).headers.get('x-robots-tag')).toBe('noindex, nofollow')

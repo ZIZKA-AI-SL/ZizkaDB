@@ -94,7 +94,13 @@ function LoginForm() {
 
   // Self-hosted: no email/OTP, signup or website links — just the owner sign-in.
   if (IS_SELF_HOSTED) {
-    return <SelfHostLogin next={safeNext} />;
+    // Skip the automatic one-click sign-in right after an explicit sign-out.
+    return (
+      <SelfHostLogin
+        next={safeNext}
+        auto={searchParams.get("signed_out") !== "1"}
+      />
+    );
   }
 
   if (navigating) {

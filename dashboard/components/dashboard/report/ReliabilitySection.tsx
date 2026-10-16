@@ -23,7 +23,7 @@ function ChangeRow({ change }: { change: BaselineChange }) {
       <Icon size={13} style={{ color }} />
       <div className="flex-1 min-w-0">
         <span className="text-xs uppercase tracking-wider mr-2" style={{ color: colors.textFaint }}>
-          {scope === 'event_distribution' ? 'event' : scope === 'transitions' ? 'transition' : scope}
+          {scope === 'event_distribution' ? 'event' : scope === 'transitions' ? 'transition' : scope === 'actions' ? 'tool / api' : scope}
         </span>
         <span className="text-sm font-mono truncate" style={{ color: colors.text }} title={detail}>
           {detail}

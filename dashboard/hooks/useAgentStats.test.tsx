@@ -20,7 +20,7 @@ function stats(): AgentStats {
     sessions: 1,
     top_events: [],
     last_event_at: '2026-01-01T00:00:00Z',
-  } as AgentStats
+  } as unknown as AgentStats
 }
 
 describe('useAgentStats', () => {

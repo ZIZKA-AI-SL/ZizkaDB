@@ -2,7 +2,8 @@ import { AsyncLocalStorage } from 'async_hooks'
 import { randomUUID } from 'crypto'
 
 const MID_CHAIN = new Set([
-  'tool_call', 'tool_start', 'tool_end', 'llm_end', 'retrieval', 'crew_task', 'decision',
+  'tool_call', 'tool_start', 'tool_end', 'tool_result', 'api_call', 'llm_end', 'retrieval',
+  'crew_task', 'decision',
 ])
 
 interface LineageState {

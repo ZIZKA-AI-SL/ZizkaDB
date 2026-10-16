@@ -19,6 +19,7 @@ MID_CHAIN_EVENT_TYPES = frozenset({
     "tool_start",
     "tool_end",
     "tool_result",
+    "api_call",
     "llm_end",
     "retrieval",
     "rerank",

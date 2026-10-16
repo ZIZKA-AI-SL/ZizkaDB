@@ -1,0 +1,21 @@
+# Build context is the repo root; send only what the image needs.
+*
+!core
+!dashboard
+!infra/allinone/entrypoint.sh
+!infra/allinone/seed_demo.py
+
+core/tests
+core/.pytest_cache
+core/.ruff_cache
+core/.env*
+core/*.md
+**/__pycache__
+**/*.pyc
+
+dashboard/node_modules
+dashboard/.next
+dashboard/coverage
+dashboard/.turbo
+dashboard/.env*
+dashboard/*.md

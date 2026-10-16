@@ -14,6 +14,7 @@ import {
 import { getToken } from '@/lib/auth'
 import { colors, radii } from '@/lib/design-tokens'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui'
+import { eventLabel } from '@/lib/events'
 import { EventDot } from './EventList'
 
 export function SessionTimelineSegment() {
@@ -132,7 +133,7 @@ export function SessionTimelineSegment() {
                 <EventDot type={e.event} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-xs">
-                    <span className="font-mono font-semibold">{e.event}</span>
+                    <span className="font-mono font-semibold">{eventLabel(e)}</span>
                     <span style={{ color: colors.textFaint }}>{e.agent}</span>
                   </div>
                   <div className="text-xs" style={{ color: colors.textMuted }}>
@@ -154,7 +155,7 @@ export function SessionTimelineSegment() {
                 <p className="mb-2 font-medium">{whyChain.chain_length} events in chain</p>
                 {whyChain.chain.map((ev) => (
                   <div key={ev.event_id} className="font-mono truncate">
-                    {ev.agent} · {ev.event}
+                    {ev.agent} · {eventLabel(ev)}
                   </div>
                 ))}
               </div>

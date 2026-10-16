@@ -8,6 +8,7 @@ import { ExecutiveSummary } from './ExecutiveSummary'
 import { TrendChart } from './TrendChart'
 import { DistributionBars } from './DistributionBars'
 import { SessionsTable } from './SessionsTable'
+import { ActionsTable } from '../ActionsTable'
 import { ReliabilitySection } from './ReliabilitySection'
 import { InsightsSection } from './InsightsSection'
 
@@ -51,6 +52,8 @@ export function ReportView({
         />
         <ReliabilitySection drift={report.drift} summary={report.summary} />
       </div>
+
+      <ActionsTable actions={report.actions} limit={12} />
 
       <SessionsTable sessions={report.sessions} />
 

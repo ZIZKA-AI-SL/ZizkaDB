@@ -8,6 +8,7 @@ MID_CHAIN_EVENT_TYPES = frozenset({
     "tool_end",
     "tool_result",
     "tool_error",
+    "api_call",
     "llm_end",
     "llm_error",
     "chain_end",
@@ -20,6 +21,7 @@ MID_CHAIN_EVENT_TYPES = frozenset({
     "graph_node_done",
     "mcp_tool_call",
     "mcp_tool_result",
+    "mcp_tool_error",
     "decision",
     "assistant_response",
 })
