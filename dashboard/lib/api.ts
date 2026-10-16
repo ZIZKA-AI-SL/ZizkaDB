@@ -208,6 +208,7 @@ export interface ImpactTree {
   event_id: string
   node_count: number
   truncated: boolean
+  depth_truncated: boolean
   nodes: ImpactNode[]
 }
 

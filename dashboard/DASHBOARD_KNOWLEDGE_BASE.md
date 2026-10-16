@@ -636,10 +636,10 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 **Events / Search / Memory (dashboard read side):**
 | Dashboard fn | Method · Path | Backend |
 |---|---|---|
-| `getEvents` | GET `/v1/events` | `events.py:64` |
-| `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:123` |
-| `getImpactTree` | GET `/v1/events/{id}/impact` | `events.py` (`impact`) |
-| `timeTravel` | GET `/v1/events/at` | `events.py:274` |
+| `getEvents` | GET `/v1/events` | `events.py:56` |
+| `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:129` |
+| `getImpactTree` | GET `/v1/events/{id}/impact` | `events.py:222` |
+| `timeTravel` | GET `/v1/events/at` | `events.py:373` |
 | `searchEvents` | POST `/v1/search` | `search.py:18` |
 | `getMemoryDiff` | GET `/v1/memory/diff/{sessionId}` | `memory.py:190` |
 
@@ -670,7 +670,7 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 ### 17.4 Data producers vs the dashboard (consumer)
 
 The dashboard **reads and visualizes** data that the **rest of the ecosystem writes** using API keys created in the dashboard:
-- **SDKs** (`sdk/python`, `sdk/typescript`), **integrations** (`integrations/langchain`, `integrations/crewai`), and **MCP** (`mcp/`) call **POST `/v1/events`** (`events.py:43`), `POST /v1/memory/context` (`memory.py:46`), `POST /v1/telemetry` (`telemetry.py:27`).
+- **SDKs** (`sdk/python`, `sdk/typescript`), **integrations** (`integrations/langchain`, `integrations/crewai`), and **MCP** (`mcp/`) call **POST `/v1/events`** (`events.py:35`), `POST /v1/memory/context` (`memory.py:46`), `POST /v1/telemetry` (`telemetry.py:27`).
 - The dashboard's Agents / Sessions / Search / Memory-diff / Baseline views read those rows back through the GET endpoints above.
 - **Audit verification (SDK / auditor only, not called by the dashboard):** GET `/v1/events/verify?agent=&limit=&before=&after=&before_seq=` (pages by `sequence_no`, returns `next_before_seq`) and GET `/v1/events/{id}/verify` (404 for an unbound API key) (`events.py`, `get_tenant` + `assert_agent_allowed`) recompute event checksums (`core/services/checksum.py`) and report `valid` (v2: tenant, agent, type, data, parent, session, timestamp, sequence_no, metadata) / `valid_legacy` (v1: type + data only, only for rows at or below `checksum_v2_cutoff.legacy_until_seq`) / `mismatch` / `missing`. Status and version only; no hashes in the response.
 
@@ -737,7 +737,7 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 ### 18.4 Events & memory
 
 - **`write_event`** (`core/services/event_write.py:16-109`): upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
-- **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /{id}/impact` walks downstream through children (`0≤depth≤50`, at most 500 nodes, `truncated` when capped) with the same agent scoping as `/why`; `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
+- **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /{id}/impact` walks downstream through children (`0≤depth≤50`, at most 500 nodes; `truncated` when the node cap was hit, `depth_truncated` when events lie below the depth limit) with the same agent scoping as `/why`; `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
 - **Memory** (`core/api/memory.py`): `POST /context` (recent + semantic search merged into a char-budgeted prompt block), `GET /diff/{session_id}` (session summary + new event types vs prior), `DELETE /forget` (deletes events by exact JSONB match; Qdrant vectors are deleted **first** — if that fails with embeddings on it returns 503 and deletes nothing; response has `vector_cleanup`; logs only a hash of the value; scoped key → own agent only, unbound key → 400, JWT → tenant-wide).
 
 ### 18.5 Agents & baseline (`core/api/agents.py`)
