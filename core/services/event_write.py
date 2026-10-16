@@ -38,13 +38,13 @@ async def write_event(
         try:
             uuid.UUID(str(parent_id))
         except (ValueError, AttributeError, TypeError):
-            raise bad_request(f"parent_id '{parent_id}' is not a valid UUID")
+            raise bad_request("parent_id is not a valid UUID")
 
     pool = get_pool()
 
     if parent_id:
         parent_tenant_id = await pool.fetchval(
-            "SELECT tenant_id FROM events WHERE event_id = $1::uuid",
+            "SELECT tenant_id FROM events WHERE event_id = $1",
             parent_id,
         )
         if parent_tenant_id is None or str(parent_tenant_id) != str(tenant_id):
