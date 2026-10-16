@@ -213,6 +213,23 @@ async def init_db():
         WHERE index_status IN ('pending', 'failed');
     """)
 
+    # Event checksum v2 (services/checksum.py). The first start on v2 code
+    # records the newest event that may still carry a v1 checksum; v1 is never
+    # accepted above it, so a v2 row cannot be downgraded. Later starts keep
+    # the original value (ON CONFLICT DO NOTHING).
+    await _pg_pool.execute("""
+        CREATE TABLE IF NOT EXISTS checksum_v2_cutoff (
+            singleton        BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            legacy_until_seq BIGINT NOT NULL,
+            recorded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        INSERT INTO checksum_v2_cutoff (legacy_until_seq)
+        SELECT COALESCE(MAX(sequence_no), 0) FROM events
+        ON CONFLICT (singleton) DO NOTHING;
+        CREATE INDEX IF NOT EXISTS idx_events_agent_seq
+        ON events (tenant_id, agent_id, sequence_no DESC);
+    """)
+
     # Time travel reads only an agent's state writes; without this index, finding them can
     # mean scanning every event in the table.
     await _pg_pool.execute("""

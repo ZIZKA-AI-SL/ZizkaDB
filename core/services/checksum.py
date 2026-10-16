@@ -6,9 +6,17 @@ of the checksum covers all immutable audit fields — tenant, agent, causal link
 session, timestamp and sequence number — not just the event payload. Rows
 written before this change carry version-1 checksums (payload only); the
 verifier recognises both so historical data keeps validating, and reports
-which version matched so auditors know the coverage of each result.
+which version matched so auditors know the coverage of each result. v1 is
+only accepted for rows written before v2 (``checksum_v2_cutoff``), so a v2 row
+cannot be downgraded to the weaker payload-only hash.
 
-The write path hashes the row returned by ``INSERT ... RETURNING`` through
+Threat model: the checksum is an unkeyed SHA-256 stored in the same row. It
+catches edits made without recomputing it (manual fixes, buggy migrations,
+partial tampering), not a writer who recomputes it, and it cannot reveal a
+deleted row.
+
+The write path has Postgres canonicalise the values first (``$n::jsonb``,
+``$n::uuid``, ``nextval``, ``now()``) and hashes those through
 :func:`compute_row_checksum_v2`, the same function the verifier uses, so both
 sides hash the database's canonical form (JSONB-normalised numbers, canonical
 UUIDs, NULL for empty metadata) rather than the raw request values.
@@ -120,23 +128,39 @@ def compute_legacy_checksum(event: str, data: dict) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def verify_stored_checksum(row: Mapping[str, Any]) -> dict:
+async def fetch_legacy_cutoff(conn) -> int | None:
+    """Highest ``sequence_no`` that may still carry a v1 checksum.
+
+    Recorded once, by ``init_db()``, when the database first runs v2 code.
+    ``None`` (no row) means no event may verify as legacy.
+    """
+    return await conn.fetchval("SELECT legacy_until_seq FROM checksum_v2_cutoff")
+
+
+def verify_stored_checksum(row: Mapping[str, Any], legacy_until_seq: int | None) -> dict:
     """Recompute a row's checksum and compare against the stored value.
 
-    Returns ``{status, version, stored, recomputed}`` where status is one of
-    ``valid`` (v2 match), ``valid_legacy`` (v1 match), ``mismatch`` or
-    ``missing`` (no checksum stored).
+    Returns ``{status, version}`` where status is one of ``valid`` (v2 match),
+    ``valid_legacy`` (v1 match), ``mismatch`` or ``missing`` (no checksum
+    stored). The hashes are not returned: the recomputed value is exactly what
+    someone would need to write back to hide an edit.
+
+    v1 is only accepted for rows at or below ``legacy_until_seq``. Without that
+    bound, anyone could edit a v2-only field (agent, session, parent, metadata,
+    ...) and replace the checksum with the payload-only v1 hash, which does not
+    change, to get ``valid_legacy``.
     """
     stored = row["checksum"]
     if not stored:
-        return {"status": "missing", "version": None, "stored": None, "recomputed": None}
+        return {"status": "missing", "version": None}
 
-    v2 = compute_row_checksum_v2(row)
-    if stored == v2:
-        return {"status": "valid", "version": CHECKSUM_V2, "stored": stored, "recomputed": v2}
+    if stored == compute_row_checksum_v2(row):
+        return {"status": "valid", "version": CHECKSUM_V2}
 
-    v1 = compute_legacy_checksum(row["event_type"], _json_value(row["data"]))
-    if stored == v1:
-        return {"status": "valid_legacy", "version": CHECKSUM_V1, "stored": stored, "recomputed": v1}
+    legacy_allowed = legacy_until_seq is not None and int(row["sequence_no"]) <= legacy_until_seq
+    if legacy_allowed and stored == compute_legacy_checksum(
+        row["event_type"], _json_value(row["data"])
+    ):
+        return {"status": "valid_legacy", "version": CHECKSUM_V1}
 
-    return {"status": "mismatch", "version": None, "stored": stored, "recomputed": v2}
+    return {"status": "mismatch", "version": None}

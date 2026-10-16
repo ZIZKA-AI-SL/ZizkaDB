@@ -51,7 +51,9 @@ async def test_round_trip_edge_cases_verify_valid(pg_db, tenant):
         )
         assert stored == written["checksum"]
 
-    report = await verify_events(AGENT, limit=100, before=None, after=None, tenant=tenant)
+    report = await verify_events(
+        AGENT, limit=100, before=None, after=None, before_seq=None, tenant=tenant
+    )
     assert report["summary"] == {"checked": 3, "valid": 3, "valid_legacy": 0, "mismatch": 0, "missing": 0}
 
 
@@ -94,5 +96,45 @@ async def test_legacy_and_missing_rows(pg_db, tenant):
     )
     await pg_db.execute("UPDATE events SET checksum = NULL WHERE event_id = $1", missing["event_id"])
 
+    # A fresh install records no legacy rows, so a v1 checksum is a downgrade.
+    assert await pg_db.fetchval("SELECT legacy_until_seq FROM checksum_v2_cutoff") == 0
+    assert await _verify(tenant, legacy["event_id"]) == "mismatch"
+
+    # Once the row is below the cutoff (written before v2), v1 is accepted.
+    await pg_db.execute(
+        "UPDATE checksum_v2_cutoff SET legacy_until_seq = $1", legacy["sequence_no"]
+    )
     assert await _verify(tenant, legacy["event_id"]) == "valid_legacy"
     assert await _verify(tenant, missing["event_id"]) == "missing"
+
+
+async def test_v1_downgrade_of_v2_row_is_detected(pg_db, tenant):
+    """Edit a field only v2 covers, then store the payload-only v1 hash."""
+    written = await write_event(
+        tenant_id=tenant["tenant_id"], agent=AGENT, event="e", data={"x": 1}, session_id="s",
+    )
+    await pg_db.execute(
+        "UPDATE events SET session_id = 'forged', checksum = $1 WHERE event_id = $2",
+        compute_legacy_checksum("e", {"x": 1}), written["event_id"],
+    )
+    assert await _verify(tenant, written["event_id"]) == "mismatch"
+
+
+async def test_verify_pages_cover_rows_sharing_a_timestamp(pg_db, tenant):
+    ids = [
+        (await write_event(tenant_id=tenant["tenant_id"], agent=AGENT, event="e", data={"n": n}))["event_id"]
+        for n in range(5)
+    ]
+    await pg_db.execute(
+        "UPDATE events SET timestamp = '2026-01-01T00:00:00Z' WHERE event_id = ANY($1::uuid[])", ids,
+    )
+    seen, before_seq = 0, None
+    while True:
+        page = await verify_events(
+            AGENT, limit=2, before=None, after=None, before_seq=before_seq, tenant=tenant
+        )
+        seen += page["summary"]["checked"]
+        before_seq = page["next_before_seq"]
+        if before_seq is None:
+            break
+    assert seen == 5

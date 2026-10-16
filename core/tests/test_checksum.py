@@ -23,6 +23,8 @@ BASE_KW = dict(
     sequence_no=7,
     metadata=None,
 )
+# Rows up to this sequence_no were written before v2 (BASE_KW is sequence 7).
+LEGACY_UNTIL = 100
 
 
 def test_v2_deterministic_regardless_of_key_order():
@@ -84,10 +86,8 @@ def test_verify_reports_valid_for_v2_row():
         "metadata": None,
         "checksum": compute_event_checksum_v2(**BASE_KW),
     }
-    result = verify_stored_checksum(row)
-    assert result["status"] == "valid"
-    assert result["version"] == "v2"
-    assert result["stored"] == result["recomputed"]
+    result = verify_stored_checksum(row, LEGACY_UNTIL)
+    assert result == {"status": "valid", "version": "v2"}
 
 
 def test_verify_accepts_jsonb_string_data_and_metadata():
@@ -97,7 +97,7 @@ def test_verify_accepts_jsonb_string_data_and_metadata():
         "metadata": json.dumps({"k": "v"}),
         "checksum": compute_event_checksum_v2(**{**BASE_KW, "metadata": {"k": "v"}}),
     }
-    assert verify_stored_checksum(row)["status"] == "valid"
+    assert verify_stored_checksum(row, LEGACY_UNTIL)["status"] == "valid"
 
 
 def test_verify_reports_valid_legacy_for_v1_row():
@@ -105,9 +105,20 @@ def test_verify_reports_valid_legacy_for_v1_row():
         **BASE_KW,
         "checksum": compute_legacy_checksum("message", {"text": "hello"}),
     }
-    result = verify_stored_checksum(row)
-    assert result["status"] == "valid_legacy"
-    assert result["version"] == "v1"
+    result = verify_stored_checksum(row, LEGACY_UNTIL)
+    assert result == {"status": "valid_legacy", "version": "v1"}
+
+
+def test_verify_rejects_v1_checksum_on_rows_written_after_v2():
+    """Downgrade attack: edit a v2-only field, then store the payload-only v1
+    hash (which that edit does not change). Past the cutoff this must fail."""
+    row = {
+        **BASE_KW,
+        "session_id": "forged",
+        "checksum": compute_legacy_checksum("message", {"text": "hello"}),
+    }
+    assert verify_stored_checksum(row, BASE_KW["sequence_no"] - 1)["status"] == "mismatch"
+    assert verify_stored_checksum(row, None)["status"] == "mismatch"
 
 
 def test_verify_reports_mismatch_for_tampered_row():
@@ -115,17 +126,14 @@ def test_verify_reports_mismatch_for_tampered_row():
         **BASE_KW,
         "checksum": compute_legacy_checksum("message", {"text": "tampered"}),
     }
-    result = verify_stored_checksum(row)
-    assert result["status"] == "mismatch"
-    assert result["version"] is None
-    assert result["recomputed"] != result["stored"]
+    result = verify_stored_checksum(row, LEGACY_UNTIL)
+    assert result == {"status": "mismatch", "version": None}
 
 
 def test_verify_reports_missing_when_no_checksum_stored():
     row = {**BASE_KW, "checksum": None}
-    result = verify_stored_checksum(row)
-    assert result["status"] == "missing"
-    assert result["recomputed"] is None
+    result = verify_stored_checksum(row, LEGACY_UNTIL)
+    assert result == {"status": "missing", "version": None}
 
 
 def test_v2_canonicalises_uuids():

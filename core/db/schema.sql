@@ -129,6 +129,20 @@ CREATE INDEX IF NOT EXISTS idx_events_state_writes
 CREATE INDEX idx_events_data
     ON events USING gin (data);
 
+-- Checksum verification pages an agent's events by sequence_no.
+CREATE INDEX idx_events_agent_seq
+    ON events (tenant_id, agent_id, sequence_no DESC);
+
+-- Newest event that may carry a v1 (payload-only) checksum; init_db() records
+-- it once. A fresh install has no legacy events.
+CREATE TABLE IF NOT EXISTS checksum_v2_cutoff (
+    singleton        BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    legacy_until_seq BIGINT NOT NULL,
+    recorded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO checksum_v2_cutoff (legacy_until_seq) VALUES (0)
+ON CONFLICT (singleton) DO NOTHING;
+
 -- Vector index (HNSW — better recall than IVFFlat)
 CREATE INDEX idx_events_embedding
     ON events USING hnsw (embedding vector_cosine_ops)
