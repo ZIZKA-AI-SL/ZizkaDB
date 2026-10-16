@@ -200,6 +200,17 @@ export interface WhyChain {
   chain: AgentEvent[]
 }
 
+export interface ImpactNode extends AgentEvent {
+  depth: number
+}
+
+export interface ImpactTree {
+  event_id: string
+  node_count: number
+  truncated: boolean
+  nodes: ImpactNode[]
+}
+
 export interface AgentSession {
   session_id: string
   event_count: number
@@ -242,6 +253,16 @@ export async function getEvents(
 
 export async function getWhyChain(token: string, eventId: string): Promise<WhyChain> {
   return apiFetch(`/v1/events/${eventId}/why`, token)
+}
+
+// Downstream mirror of getWhyChain: everything an event caused.
+export async function getImpactTree(
+  token: string,
+  eventId: string,
+  depth?: number,
+): Promise<ImpactTree> {
+  const qs = depth !== undefined ? `?depth=${depth}` : ''
+  return apiFetch(`/v1/events/${eventId}/impact${qs}`, token)
 }
 
 export async function getTenantSessions(
