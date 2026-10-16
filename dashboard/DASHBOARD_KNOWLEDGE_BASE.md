@@ -671,6 +671,7 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 The dashboard **reads and visualizes** data that the **rest of the ecosystem writes** using API keys created in the dashboard:
 - **SDKs** (`sdk/python`, `sdk/typescript`), **integrations** (`integrations/langchain`, `integrations/crewai`), and **MCP** (`mcp/`) call **POST `/v1/events`** (`events.py:43`), `POST /v1/memory/context` (`memory.py:46`), `POST /v1/telemetry` (`telemetry.py:27`).
 - The dashboard's Agents / Sessions / Search / Memory-diff / Baseline views read those rows back through the GET endpoints above.
+- **Audit verification (SDK / auditor only, not called by the dashboard):** GET `/v1/events/verify?agent=&limit=&before=&after=&before_seq=` (pages by `sequence_no`, returns `next_before_seq`) and GET `/v1/events/{id}/verify` (404 for an unbound API key) (`events.py`, `get_tenant` + `assert_agent_allowed`) recompute event checksums (`core/services/checksum.py`) and report `valid` (v2: tenant, agent, type, data, parent, session, timestamp, sequence_no, metadata) / `valid_legacy` (v1: type + data only, only for rows at or below `checksum_v2_cutoff.legacy_until_seq`) / `mismatch` / `missing`. Status and version only; no hashes in the response.
 
 **Implication:** an event-schema or agent-scoping change in `core/api/events.py` or `deps.py` affects **both** the write path (SDKs) and the dashboard read views — keep field names in sync across `lib/api.ts` types and SDK payloads.
 

@@ -13,7 +13,7 @@ The thirteen routers mounted in `main.py` (`app.include_router`):
 | File | Prefix | Auth type |
 |---|---|---|
 | `api/auth.py` | `/v1/auth` | mixed (public OTP + JWT-only key mgmt) |
-| `api/events.py` | `/v1/events` | `get_tenant` (+ `assert_agent_allowed` on `/why`, `/at`) |
+| `api/events.py` | `/v1/events` | `get_tenant` (+ `assert_agent_allowed` on `/why`, `/at`, `/verify`, `/{id}/verify`) |
 | `api/agents.py` | `/v1/agents` | mixed (see below) |
 | `api/a2a.py` | `/v1/a2a` | `get_tenant` |
 | `api/search.py` | `/v1/search` | `get_tenant` + `assert_agent_allowed` |
@@ -62,9 +62,10 @@ Is this route dashboard-only (manages keys, billing, user settings, destructive 
 
 Is this route per-agent analytics OR an SDK read scoped to one agent
 (stats, sessions, baseline, behavior-change, time-travel, report, token-usage,
-token-optimization, suggestions, memory/context, memory/diff, events/why)?
+token-optimization, suggestions, memory/context, memory/diff, events/why,
+events/verify, events/{id}/verify)?
   → Depends(get_tenant)  AND  assert_agent_allowed(tenant, agent_id)  at the top of the handler
-    (for memory/diff & events/why the agent is resolved from the row, then asserted;
+    (for memory/diff, events/why & events/{id}/verify the agent is resolved from the row, then asserted;
      memory/forget constrains its delete to the scoped agent when the key is scoped)
 
 Could an API key with no agent yet (is_unbound_api_key) reach tenant-wide data here?
@@ -117,6 +118,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 | `services/embeddings.py` | OpenAI embedding generation + Redis cache (24 h TTL) |
 | `services/embedding_config.py` | Per-tenant embedding model config (`QDRANT_COLLECTION`, `VECTOR_SIZE`) |
 | `services/event_write.py` | Core event ingestion: Postgres insert + Qdrant upsert (non-fatal if Qdrant fails) |
+| `services/checksum.py` | Event checksum v2 (all audit fields) + legacy v1, and `verify_stored_checksum()`; the write path hashes Postgres-canonicalised values so writer and verifier hash identical inputs; v1 only accepted up to `checksum_v2_cutoff` |
 | `services/account.py` | Trial activation, GDPR consent, account deletion |
 | `services/pricing.py` | Hardcoded per-model $/1K token pricing (`MODEL_PRICING`) + `cost_for()` — see ADR-006 |
 | `services/token_usage.py` | Per-agent token/cost aggregation from `events.data.token_usage` — see ADR-006 |

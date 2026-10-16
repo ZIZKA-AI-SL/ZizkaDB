@@ -6,8 +6,9 @@ from uuid import UUID
 from datetime import datetime
 import json
 
-from api.deps import get_tenant, assert_agent_allowed
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from db.connection import get_pool
+from services.checksum import CHECKSUM_COLUMNS, fetch_legacy_cutoff, verify_stored_checksum
 from services.event_write import write_event
 from services.why_analysis import analyze_why_chain
 
@@ -312,6 +313,122 @@ async def time_travel(
         "truncated": False,
         "state": state,
     }
+
+
+# ─────────────────────────────────────────
+# VERIFY CHECKSUMS — GET /v1/events/verify
+# Recompute checksums for an agent's events (audit helper)
+# ─────────────────────────────────────────
+
+@router.get("/verify")
+async def verify_events(
+    agent: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+    before: datetime | None = None,
+    after: datetime | None = None,
+    before_seq: int | None = Query(default=None, ge=1),
+    tenant: dict = Depends(get_tenant),
+):
+    """Recompute each event's checksum and compare with the stored value.
+
+    Statuses: ``valid`` (v2, all audit fields), ``valid_legacy`` (v1, payload
+    only, rows written before v2), ``mismatch`` (tampering or corruption),
+    ``missing``. Results are newest first (by ``sequence_no``); fetch the next
+    page by passing ``next_before_seq`` as ``before_seq`` until it is null.
+    ``before`` / ``after`` optionally bound the window by timestamp.
+    """
+    await assert_agent_allowed(tenant, agent)
+    if before and after and after >= before:
+        raise bad_request("'after' must be earlier than 'before'")
+
+    pool = get_pool()
+    conditions = ["tenant_id = $1", "agent_id = $2"]
+    params: list[Any] = [tenant["tenant_id"], agent]
+
+    if before:
+        params.append(before)
+        conditions.append(f"timestamp < ${len(params)}")
+    if after:
+        params.append(after)
+        conditions.append(f"timestamp > ${len(params)}")
+    # sequence_no is unique, so paging on it never skips rows that share a
+    # timestamp with the last row of the previous page.
+    if before_seq:
+        params.append(before_seq)
+        conditions.append(f"sequence_no < ${len(params)}")
+    params.append(limit)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT {CHECKSUM_COLUMNS}
+        FROM events
+        WHERE {" AND ".join(conditions)}
+        ORDER BY sequence_no DESC
+        LIMIT ${len(params)}
+        """,
+        *params,
+    )
+    legacy_until_seq = await fetch_legacy_cutoff(pool)
+
+    summary = {"checked": len(rows), "valid": 0, "valid_legacy": 0, "mismatch": 0, "missing": 0}
+    mismatches = []
+    for r in rows:
+        result = verify_stored_checksum(r, legacy_until_seq)
+        summary[result["status"]] += 1
+        if result["status"] == "mismatch":
+            mismatches.append({
+                "event_id": str(r["event_id"]),
+                "sequence_no": r["sequence_no"],
+                "timestamp": r["timestamp"].isoformat(),
+                **result,
+            })
+
+    return {
+        "agent": agent,
+        "summary": summary,
+        "mismatches": mismatches,
+        "next_before_seq": rows[-1]["sequence_no"] if len(rows) == limit else None,
+    }
+
+
+# ─────────────────────────────────────────
+# VERIFY EVENT — GET /v1/events/{event_id}/verify
+# ─────────────────────────────────────────
+
+@router.get("/{event_id}/verify")
+async def verify_event(
+    event_id: str,
+    tenant: dict = Depends(get_tenant),
+):
+    try:
+        event_uuid = UUID(event_id)
+    except ValueError:
+        raise not_found("Event not found")
+    # A key not yet bound to an agent must not read tenant-wide rows, and
+    # asserting on the row's agent would bind the key to whichever agent owns
+    # the event it guessed. It can verify per agent via /verify?agent=.
+    if is_unbound_api_key(tenant):
+        raise not_found("Event not found")
+
+    pool = get_pool()
+    # A scoped agent key cannot see other agents' events.
+    scoped_agent = tenant.get("agent_id")
+    row = await pool.fetchrow(
+        f"""
+        SELECT {CHECKSUM_COLUMNS}
+        FROM events
+        WHERE event_id = $1 AND tenant_id = $2
+          AND ($3::text IS NULL OR agent_id = $3)
+        """,
+        event_uuid, tenant["tenant_id"], scoped_agent,
+    )
+    if row is None:
+        raise not_found("Event not found")
+
+    await assert_agent_allowed(tenant, row["agent_id"])
+
+    result = verify_stored_checksum(row, await fetch_legacy_cutoff(pool))
+    return {"event_id": str(row["event_id"]), "agent": row["agent_id"], **result}
 
 
 # ─────────────────────────────────────────

@@ -68,6 +68,14 @@ async def test_write_event_allows_same_tenant_parent(mock_pool):
         "event_id": "44444444-4444-4444-4444-444444444444",
         "timestamp": datetime.datetime.now(datetime.timezone.utc),
         "sequence_no": 2,
+        "tenant_id": TENANT_A,
+        "agent_id": "agent-a",
+        "event_type": "child_event",
+        "data": "{}",
+        "parent_event_id": PARENT_EVENT_ID,
+        "session_id": None,
+        "metadata": None,
+        "checksum": None,
     }
 
     result = await write_event(
