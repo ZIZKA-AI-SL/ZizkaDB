@@ -21,7 +21,6 @@ README = ROOT / "README.md"
 EXTRA = ROOT / ".github" / "contributors-extra.txt"
 START, END = "<!-- CONTRIBUTORS:START -->", "<!-- CONTRIBUTORS:END -->"
 COLS = 4
-LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
 
 
@@ -61,11 +60,8 @@ def collect(repo: str) -> list[str]:
     if EXTRA.exists():
         for line in EXTRA.read_text().splitlines():
             login = line.split("#", 1)[0].strip()
-            if not login:
-                continue
-            if not LOGIN_RE.match(login):
-                sys.exit(f"{EXTRA.name}: invalid GitHub login {login!r}")
-            add(login, 0)
+            if login:
+                add(login, 0)
     return [names[k] for k, _ in sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
