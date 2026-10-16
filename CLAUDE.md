@@ -102,7 +102,7 @@ cd dashboard && npm run lint && npm test && npm run build
 **Auth split** — Two FastAPI dependency functions:
 - `get_tenant` (`core/api/deps.py`): accepts API keys + JWTs. Use for SDK-callable routes (`/v1/events`, `/v1/search`, `/v1/memory`, etc.)
 - `require_dashboard_session` (`core/api/deps.py`): JWT only, rejects API keys. Use for any route that accesses `user_id`, manages API keys, or performs destructive ops. (There is no admin router / `require_admin` in this codebase.)
-- `assert_agent_allowed(tenant, agent_id)` (`core/api/deps.py`): call at the top of any per-agent analytics route AND any SDK read scoped to one agent (`memory/context`, `memory/diff`, `events/why`) to enforce scoped-key isolation.
+- `assert_agent_allowed(tenant, agent_id)` (`core/api/deps.py`): call at the top of any per-agent analytics route AND any SDK read scoped to one agent (`memory/context`, `memory/diff`, `events/why`, `events/impact`) to enforce scoped-key isolation.
 
 **Billing stub** — `billing_status_payload()` always returns `has_access: True`. No Stripe or payment provider is wired. The architecture is ready for Stripe to be added; billing routes exist but are stubs.
 
@@ -143,7 +143,7 @@ cd dashboard && npm run lint && npm test && npm run build
 
 1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data.
 2. **Route paths**: never rename `/v1/...` paths without updating `dashboard/lib/api.ts` — there is no runtime contract enforcement between backend and dashboard.
-3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`) must call this.
+3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`) must call this.
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.
 5. **Idempotent DDL**: all schema changes must use `IF NOT EXISTS` / `IF EXISTS` — the same migration runs on fresh installs and live databases.
 6. **`docker-compose.yml` is production**: never add `--reload` or `../core:/app` volume mounts to the base compose file. Those belong in `docker-compose.dev.yml`.
