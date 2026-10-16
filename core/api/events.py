@@ -210,6 +210,103 @@ async def why(
 
 
 # ─────────────────────────────────────────
+# IMPACT — GET /v1/events/{event_id}/impact
+# Walk the causal graph downstream: what did this event cause?
+# ─────────────────────────────────────────
+
+# Depth bounds how far the walk goes, not how wide: one event can have any
+# number of children. Cap the nodes returned and say when the cap was hit.
+IMPACT_MAX_NODES = 500
+
+
+def _prune_impact_to_agent(rows: list, agent_id: str) -> list:
+    """Keep the nodes reachable from the anchor through ``agent_id``'s events.
+
+    Mirrors the scoped CTE, which does not descend through another agent's
+    event. ``rows`` must be ordered by depth so parents come before children.
+    """
+    kept: set[str] = set()
+    pruned = []
+    for r in rows:
+        if r["agent_id"] != agent_id:
+            continue
+        if r["depth"] == 0 or str(r["parent_event_id"]) in kept:
+            kept.add(str(r["event_id"]))
+            pruned.append(r)
+    return pruned
+
+
+@router.get("/{event_id}/impact")
+async def impact(
+    event_id: str,
+    depth: int = Query(default=10, ge=0, le=50),
+    tenant: dict = Depends(get_tenant),
+):
+    pool = get_pool()
+    tenant_id = tenant["tenant_id"]
+    # Same scoping as /why: a scoped key anchors on and descends through its
+    # own agent's events only; a mismatched anchor yields no rows → 404.
+    scoped_agent = tenant.get("agent_id")
+
+    try:
+        UUID(event_id)
+    except ValueError:
+        raise not_found("Event not found")
+
+    rows = await pool.fetch(
+        """
+        WITH RECURSIVE impact_tree AS (
+            SELECT
+                event_id, agent_id, timestamp, event_type,
+                data, parent_event_id, session_id, sequence_no, metadata,
+                0 AS depth
+            FROM events
+            WHERE event_id = $1 AND tenant_id = $2
+              AND ($4::text IS NULL OR agent_id = $4)
+
+            UNION ALL
+
+            SELECT
+                e.event_id, e.agent_id, e.timestamp, e.event_type,
+                e.data, e.parent_event_id, e.session_id, e.sequence_no, e.metadata,
+                it.depth + 1
+            FROM events e
+            INNER JOIN impact_tree it ON e.parent_event_id = it.event_id
+            WHERE e.tenant_id = $2 AND it.depth < $3
+              AND ($4::text IS NULL OR e.agent_id = $4)
+        )
+        SELECT * FROM impact_tree
+        ORDER BY depth ASC, sequence_no ASC
+        LIMIT $5
+        """,
+        event_id, tenant_id, depth, scoped_agent, IMPACT_MAX_NODES + 1,
+    )
+
+    if not rows:
+        raise not_found("Event not found")
+
+    anchor = rows[0]
+    if anchor["depth"] != 0:
+        raise not_found("Event not found")
+
+    await assert_agent_allowed(tenant, anchor["agent_id"])
+
+    truncated = len(rows) > IMPACT_MAX_NODES
+    rows = rows[:IMPACT_MAX_NODES]
+    if scoped_agent is None and tenant.get("agent_id"):
+        # The key was unassigned and just got bound by this request; the CTE
+        # ran unfiltered, so drop other agents' events and what they caused.
+        rows = _prune_impact_to_agent(rows, tenant["agent_id"])
+
+    return {
+        "event_id": event_id,
+        "node_count": len(rows),
+        "truncated": truncated,
+        "nodes": [{**_format_event(r), "depth": r["depth"]} for r in rows],
+    }
+
+
+# ─────────────────────────────────────────
 # TIME TRAVEL — GET /v1/events/at
 # Reconstruct agent state at a given time
 # ─────────────────────────────────────────
