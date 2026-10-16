@@ -720,7 +720,8 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 - **JWT** (`auth.py:17-43`): access token 7 days, refresh 30 days; `JWT_SECRET`/`JWT_REFRESH_SECRET` **required** in production (else `dev-secret`). Payload `{sub: user_id, email, tenant_id, exp, iat}`.
 - **API keys** (`auth.py:50-89`): format `zizkadb_live_{32 url-safe}`; stored as SHA-256 hash + 16-char prefix; legacy `agdb_live_*` still resolve by hash; valid use bumps `last_used`.
-- **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config.
+- **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config. Each wrong guess atomically increments `auth_otps.attempts` (`UPDATE … SET attempts = attempts + 1 … RETURNING`); the 5th (`OTP_MAX_ATTEMPTS`) burns the code and verify returns "Too many failed attempts. Please request a new code." — the user must request a new OTP.
+- **Client IP** (`core/api/utils.py::client_ip`): used for per-IP rate limits (verify-otp, selfhost-login, community, demo requests). `X-Forwarded-For` is honoured only when the peer is in `TRUSTED_PROXIES` (default `127.0.0.1,::1,172.16.0.0/12`), walked right-to-left to the first untrusted hop.
 - **request-otp** (`core/api/auth.py:58-77`): rate-limited 10/15min; `intent="signup"` + existing email → **409** "already registered".
 - **verify-otp** (`core/api/auth.py:80-121`): new users **must** pass `gdpr_consent=true` (else 401 ValueError); sets a **HttpOnly, Secure, SameSite=Lax refresh-token cookie** (30-day, `auth.py:104-112`); returns access token + billing routing flags. Consent fields persisted.
 - **dev-token** (`core/api/auth.py:151-164`): development only (403 in prod).
@@ -999,7 +1000,7 @@ Schema sources: `core/db/schema.sql` (base DDL, Docker init) + named migrations 
 | `agents` | `(agent_id, tenant_id)` (PK), `first_seen`, `last_seen`, `event_count`, `metadata` | Registered agent identities; upserted on every event write |
 | `api_keys` | `key_id` (PK), `tenant_id`, `agent_id` (NULL = unassigned until first use, set = bound to one agent), `key_hash` (SHA-256, unique), `key_prefix`, `revoked`, `last_used` | API-key auth; hashed only, prefix for display |
 | `users` | `user_id` (PK), `email` (unique), `tenant_id`, **billing cols** (see §21.2), `gdpr_consent_at`, `marketing_consent`, `last_login` | Dashboard users (passwordless OTP). **All billing state lives here.** |
-| `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used` | Passwordless login OTPs (15-min expiry) |
+| `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used`, `attempts` | Passwordless login OTPs (15-min expiry); `attempts` counts wrong guesses, code burned at 5 (`OTP_MAX_ATTEMPTS`) |
 | `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256) | Append-only event log — source of truth. HNSW index on `embedding` (cosine) |
 | `usage_daily` | `(tenant_id, date)` (PK), `events_written`, `queries_run`, `searches_run` | Daily metering (only `events_written` is incremented today) |
 | `community_posts` | `post_id` (PK), `author_name`, `category`, `title`, `body`, `image_urls` (JSONB), `reply_count` | Public community board |
