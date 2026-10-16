@@ -26,10 +26,24 @@ import pytest
 # turn imports asyncpg + redis. These tests only exercise pure secret-
 # resolution logic and never touch the database, so we stub db.connection
 # out rather than requiring the full infra dependency chain to be installed.
-_fake_db_connection = types.ModuleType("db.connection")
-_fake_db_connection.get_pool = MagicMock()
-sys.modules.setdefault("db", types.ModuleType("db"))
-sys.modules["db.connection"] = _fake_db_connection
+# Install the stub per test and restore it afterwards: replacing it for the
+# whole session would hand a MagicMock pool to any later code that imports
+# db.connection lazily (e.g. API-key binding in the real-Postgres tests).
+@pytest.fixture(autouse=True)
+def _stub_db_connection(monkeypatch):
+    fake = types.ModuleType("db.connection")
+    fake.get_pool = MagicMock()
+    if "db" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "db", types.ModuleType("db"))
+    monkeypatch.setitem(sys.modules, "db.connection", fake)
+    # Modules imported under the stub must not outlive it either.
+    name = "services.embedding_config"
+    loaded = name in sys.modules
+    if loaded:
+        monkeypatch.setitem(sys.modules, name, sys.modules[name])
+    yield
+    if not loaded:
+        sys.modules.pop(name, None)
 
 
 def _reload_with_env(module_name: str, env: dict) -> None:
