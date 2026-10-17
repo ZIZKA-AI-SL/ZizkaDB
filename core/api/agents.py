@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -234,29 +235,50 @@ async def create_agent(
     }
 
 
-async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> None:
-    try:
-        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+_PURGE_ATTEMPTS = 3
 
-        qdrant = get_qdrant()
-        await qdrant.delete(
-            collection_name=QDRANT_COLLECTION,
-            points_selector=FilterSelector(
-                filter=Filter(
-                    must=[
-                        FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-                        FieldCondition(key="agent_id", match=MatchValue(value=agent_id)),
-                    ]
-                )
-            ),
+
+async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> bool:
+    """Purge an agent's vectors from Qdrant using the tenant_id + agent_id
+    payload filter, retrying up to ``_PURGE_ATTEMPTS`` times.
+
+    Returns True if any attempt succeeded, False if every attempt failed.
+    Each failed attempt is logged.
+    """
+    from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+    qdrant = get_qdrant()
+    points_selector = FilterSelector(
+        filter=Filter(
+            must=[
+                FieldCondition(
+                    key="tenant_id", match=MatchValue(value=tenant_id)
+                ),
+                FieldCondition(
+                    key="agent_id", match=MatchValue(value=agent_id)
+                ),
+            ]
         )
-    except Exception as e:
-        log.warning(
-            "Qdrant purge for agent %s (tenant %s) failed: %s",
-            agent_id,
-            tenant_id,
-            e,
-        )
+    )
+    for attempt in range(1, _PURGE_ATTEMPTS + 1):
+        try:
+            await qdrant.delete(
+                collection_name=QDRANT_COLLECTION,
+                points_selector=points_selector,
+            )
+            return True
+        except Exception as e:
+            log.warning(
+                "Qdrant purge attempt %d/%d failed for agent %s (tenant %s): %s",
+                attempt,
+                _PURGE_ATTEMPTS,
+                agent_id,
+                tenant_id,
+                e,
+            )
+            if attempt < _PURGE_ATTEMPTS:
+                await asyncio.sleep(0.5 * attempt)
+    return False
 
 
 @router.delete("/{agent_id}")
@@ -276,6 +298,11 @@ async def delete_agent(
     if not row:
         raise not_found("Agent not found")
 
+    # Purge Qdrant vectors by tenant_id + agent_id payload filter (retried
+    # inside _purge_agent_vectors). Best-effort: report success/failure in the
+    # response without blocking or rolling back the Postgres deletion.
+    vector_cleanup = await _purge_agent_vectors(tenant_id, agent_id)
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
@@ -291,12 +318,11 @@ async def delete_agent(
                 tenant_id, agent_id,
             )
 
-    await _purge_agent_vectors(tenant_id, agent_id)
-
     return {
         "deleted": True,
         "agent": agent_id,
         "events_deleted": int(row["event_count"] or 0),
+        "vector_cleanup": vector_cleanup,
     }
 
 
