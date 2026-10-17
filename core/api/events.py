@@ -210,6 +210,105 @@ async def why(
 
 
 # ─────────────────────────────────────────
+# IMPACT — GET /v1/events/{event_id}/impact
+# Walk the causal graph downstream: what did this event cause?
+# ─────────────────────────────────────────
+
+# Depth bounds how far the walk goes, not how wide: one event can have any
+# number of children. Cap the nodes returned and say when the cap was hit.
+IMPACT_MAX_NODES = 500
+
+
+@router.get("/{event_id}/impact")
+async def impact(
+    event_id: str,
+    depth: int = Query(default=10, ge=0, le=50),
+    tenant: dict = Depends(get_tenant),
+):
+    pool = get_pool()
+    tenant_id = tenant["tenant_id"]
+
+    try:
+        UUID(event_id)
+    except ValueError:
+        raise not_found("Event not found")
+
+    # Authorize on the anchor before walking, so the walk itself is always
+    # scoped: a scoped key only anchors on its own agent's events (else 404),
+    # and an unbound key is bound to the anchor's agent here.
+    anchor_agent = await pool.fetchval(
+        """
+        SELECT agent_id FROM events
+        WHERE event_id = $1 AND tenant_id = $2
+          AND ($3::text IS NULL OR agent_id = $3)
+        """,
+        event_id, tenant_id, tenant.get("agent_id"),
+    )
+    if anchor_agent is None:
+        raise not_found("Event not found")
+    await assert_agent_allowed(tenant, anchor_agent)
+    scoped_agent = tenant.get("agent_id")
+
+    # No ORDER BY around the CTE: Postgres then evaluates the recursion only
+    # as far as the LIMIT fetches, and it emits rows level by level, so the
+    # cap keeps the shallowest nodes. Within the cut level the choice is
+    # arbitrary; the response is sorted below.
+    rows = await pool.fetch(
+        """
+        WITH RECURSIVE impact_tree AS (
+            SELECT
+                event_id, agent_id, timestamp, event_type,
+                data, parent_event_id, session_id, sequence_no, metadata,
+                0 AS depth
+            FROM events
+            WHERE event_id = $1 AND tenant_id = $2
+
+            UNION ALL
+
+            SELECT
+                e.event_id, e.agent_id, e.timestamp, e.event_type,
+                e.data, e.parent_event_id, e.session_id, e.sequence_no, e.metadata,
+                it.depth + 1
+            FROM events e
+            INNER JOIN impact_tree it ON e.parent_event_id = it.event_id
+            WHERE e.tenant_id = $2 AND it.depth < $3
+              AND ($4::text IS NULL OR e.agent_id = $4)
+        )
+        SELECT * FROM impact_tree
+        LIMIT $5
+        """,
+        event_id, tenant_id, depth, scoped_agent, IMPACT_MAX_NODES + 1,
+    )
+
+    truncated = len(rows) > IMPACT_MAX_NODES
+    rows = sorted(rows[:IMPACT_MAX_NODES], key=lambda r: (r["depth"], r["sequence_no"]))
+
+    # Does the walk stop at the depth limit while events lie beyond it?
+    depth_truncated = False
+    if not truncated:
+        frontier = [r["event_id"] for r in rows if r["depth"] == depth]
+        if frontier:
+            depth_truncated = await pool.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM events
+                    WHERE tenant_id = $1 AND parent_event_id = ANY($2::uuid[])
+                      AND ($3::text IS NULL OR agent_id = $3)
+                )
+                """,
+                tenant_id, frontier, scoped_agent,
+            )
+
+    return {
+        "event_id": event_id,
+        "node_count": len(rows),
+        "truncated": truncated,
+        "depth_truncated": depth_truncated,
+        "nodes": [{**_format_event(r), "depth": r["depth"]} for r in rows],
+    }
+
+
+# ─────────────────────────────────────────
 # TIME TRAVEL — GET /v1/events/at
 # Reconstruct agent state at a given time
 # ─────────────────────────────────────────

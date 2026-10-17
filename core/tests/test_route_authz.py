@@ -16,7 +16,7 @@ from api import memory as memory_api
 from api import events as events_api
 from api.deps import require_dashboard_session
 from api.memory import ContextRequest, ForgetRequest, get_context, session_diff, forget
-from api.events import why
+from api.events import impact, why
 
 
 FULL_TENANT = {"tenant_id": "t-1"}                       # unscoped key / dashboard
@@ -174,6 +174,42 @@ async def test_why_asserts_on_anchor_not_deepest_parent(monkeypatch):
     result = await why(anchor_id, depth=10, tenant=SCOPED_TENANT)
     assert result["event_id"] == anchor_id
     assert result["chain_length"] == 2
+
+
+# ── /v1/events/{id}/impact ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_impact_scoped_key_cannot_anchor_on_another_agent(monkeypatch):
+    """The anchor lookup carries the scoped agent; no match is a 404, no walk."""
+    pool = AsyncMock()
+    pool.fetchval.return_value = None
+    monkeypatch.setattr("api.events.get_pool", lambda: pool)
+    with pytest.raises(HTTPException) as exc:
+        await impact("00000000-0000-0000-0000-000000000001", depth=10, tenant=SCOPED_TENANT)
+    assert exc.value.status_code == 404
+
+    assert pool.fetchval.await_args.args[-1] == "mine"
+    pool.fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_impact_unbound_key_is_bound_before_the_walk(monkeypatch):
+    """A key bound by this request walks with its new agent, not unscoped."""
+    pool = AsyncMock()
+    pool.fetchval.return_value = "mine"  # the anchor's agent
+    pool.fetch.return_value = []
+    monkeypatch.setattr("api.events.get_pool", lambda: pool)
+    monkeypatch.setattr(
+        "services.api_keys.claim_unassigned_api_key", AsyncMock(return_value="mine")
+    )
+    tenant = {"tenant_id": "t-1", "key_id": "k-1"}  # unbound key
+
+    await impact("00000000-0000-0000-0000-000000000001", depth=10, tenant=tenant)
+
+    assert pool.fetchval.await_args_list[0].args[-1] is None  # anchor lookup unscoped
+    sql, *params = pool.fetch.await_args.args
+    assert "e.agent_id = $4" in sql
+    assert params[3] == "mine"
 
 
 # ── /v1/agents (list) ─────────────────────────────────────────────────────────
