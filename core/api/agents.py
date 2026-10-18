@@ -278,10 +278,8 @@ async def delete_agent(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "UPDATE events SET parent_event_id = NULL WHERE tenant_id = $1 AND agent_id = $2",
-                tenant_id, agent_id,
-            )
+            # Other agents' events that point here keep their parent_event_id
+            # (no FK), so their rows and checksums are not modified.
             await conn.execute(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
