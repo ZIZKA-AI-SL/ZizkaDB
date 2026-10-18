@@ -252,3 +252,28 @@ async def test_remaining_count_waits_for_an_in_progress_drop(pg_db):
 
     assert await count == 0
 
+
+async def test_chain_depth_evidence_counts_a_chain_whose_first_event_was_erased(
+    pg_db, managed, no_vectors
+):
+    from datetime import datetime, timedelta, timezone
+
+    from services.event_write import write_event
+    from services.suggestions.evidence import _fetch_chain_depth
+
+    tenant = str(await pg_db.fetchval("INSERT INTO tenants (name) VALUES ('t') RETURNING tenant_id"))
+    previous = None
+    for step in range(4):
+        data = {"user_id": "u_123"} if step == 0 else {"step": step}
+        event = await write_event(
+            tenant_id=tenant, agent="bot", event="tool_call", data=data, parent_id=previous
+        )
+        previous = event["event_id"]
+
+    now = datetime.now(timezone.utc)
+    window = (now - timedelta(hours=1), now + timedelta(hours=1))
+    assert (await _fetch_chain_depth(pg_db, tenant, "bot", *window))["max_depth"] == 4
+
+    await _forget_u123(tenant)  # erases the first event of the chain
+
+    assert (await _fetch_chain_depth(pg_db, tenant, "bot", *window))["max_depth"] == 3
