@@ -287,3 +287,25 @@ async def test_startup_helper_drops_the_fk_and_is_a_single_query_afterwards(pg_d
     assert await drop_parent_fks(pg_db) == 0  # legacy install: dropped
     assert await _parent_fk_names(pg_db) == []
 
+
+async def test_chain_depth_evidence_counts_a_chain_started_by_another_agent(
+    pg_db, managed, no_vectors
+):
+    from datetime import datetime, timedelta, timezone
+
+    from services.event_write import write_event
+    from services.suggestions.evidence import _fetch_chain_depth
+
+    tenant = str(await pg_db.fetchval("INSERT INTO tenants (name) VALUES ('t') RETURNING tenant_id"))
+    planner = await write_event(tenant_id=tenant, agent="planner", event="decision", data={"n": 0})
+    previous = planner["event_id"]
+    for step in range(3):
+        event = await write_event(
+            tenant_id=tenant, agent="executor", event="tool_call", data={"step": step}, parent_id=previous
+        )
+        previous = event["event_id"]
+
+    now = datetime.now(timezone.utc)
+    window = (now - timedelta(hours=1), now + timedelta(hours=1))
+    # Same result whether or not the planner agent still exists.
+    assert (await _fetch_chain_depth(pg_db, tenant, "executor", *window))["max_depth"] == 3
