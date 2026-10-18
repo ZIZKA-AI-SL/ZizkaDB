@@ -236,14 +236,14 @@ async def test_composite_fk_including_the_column_is_left_alone(pg_db):
 
 async def test_remaining_count_waits_for_an_in_progress_drop(pg_db):
     """A worker that skipped the drop must not report an FK another worker is dropping."""
-    from db.event_constraints import _LOCK_KEY, remaining_parent_fks
+    from db.event_constraints import _LOCK_CLASS, _LOCK_OBJ, remaining_parent_fks
 
     await pg_db.execute(LEGACY_EVENTS_FK)
 
     async with pg_db.acquire() as winner:
         tx = winner.transaction()
         await tx.start()
-        await winner.execute("SELECT pg_advisory_xact_lock(hashtext($1))", _LOCK_KEY)
+        await winner.execute("SELECT pg_advisory_xact_lock($1, $2)", _LOCK_CLASS, _LOCK_OBJ)
         count = asyncio.create_task(remaining_parent_fks(pg_db))
         await asyncio.sleep(0.3)
         assert not count.done()  # waits for the winner instead of counting now
@@ -277,3 +277,13 @@ async def test_chain_depth_evidence_counts_a_chain_whose_first_event_was_erased(
     await _forget_u123(tenant)  # erases the first event of the chain
 
     assert (await _fetch_chain_depth(pg_db, tenant, "bot", *window))["max_depth"] == 3
+
+
+async def test_startup_helper_drops_the_fk_and_is_a_single_query_afterwards(pg_db):
+    from db.event_constraints import drop_parent_fks
+
+    assert await drop_parent_fks(pg_db) == 0  # fresh install: nothing to do
+    await pg_db.execute(LEGACY_EVENTS_FK)
+    assert await drop_parent_fks(pg_db) == 0  # legacy install: dropped
+    assert await _parent_fk_names(pg_db) == []
+

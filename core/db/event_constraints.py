@@ -11,7 +11,9 @@
 # ends where the parent was erased. New links are still checked by the write
 # path (services/event_write.py rejects a parent that does not exist or
 # belongs to another tenant). Idempotent.
-_LOCK_KEY = "zizkadb:events_parent_fk_drop"
+# Two-int advisory lock: a key space separate from the single-key hashtext()
+# locks used per tenant and per event elsewhere, so they cannot collide.
+_LOCK_CLASS, _LOCK_OBJ = 727001, 1
 
 # Single-column foreign keys from events.parent_event_id to events. Composite
 # keys that merely include the column are left alone.
@@ -31,9 +33,9 @@ EVENTS_PARENT_FK_DROP_SQL = """
     DECLARE
         fk record;
     BEGIN
-        -- Every API worker runs this at startup. Only one attempts it; the
-        -- others skip it instead of queueing behind it.
-        IF NOT pg_try_advisory_xact_lock(hashtext('""" + _LOCK_KEY + """')) THEN
+        -- Only one worker attempts the drop; the others skip it here and wait
+        -- for it in remaining_parent_fks().
+        IF NOT pg_try_advisory_xact_lock(""" + f"{_LOCK_CLASS}, {_LOCK_OBJ}" + """) THEN
             RETURN;
         END IF;
         -- Dropping a constraint needs a brief exclusive lock on events, and
@@ -63,5 +65,16 @@ async def remaining_parent_fks(pool) -> int:
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", _LOCK_KEY)
+            await conn.execute("SELECT pg_advisory_xact_lock($1, $2)", _LOCK_CLASS, _LOCK_OBJ)
             return await conn.fetchval(EVENTS_PARENT_FK_COUNT_SQL)
+
+
+async def drop_parent_fks(pool) -> int:
+    """Drop any parent FK on events; return how many remain (0 when done).
+
+    Called on every startup. Once the FK is gone this is one catalog query.
+    """
+    if not await pool.fetchval(EVENTS_PARENT_FK_COUNT_SQL):
+        return 0
+    await pool.execute(EVENTS_PARENT_FK_DROP_SQL)
+    return await remaining_parent_fks(pool)
