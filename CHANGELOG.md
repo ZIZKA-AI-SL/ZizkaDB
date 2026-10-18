@@ -9,7 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed: GDPR forget and agent delete failed on events with causal children
 
 - `DELETE /v1/memory/forget` and `DELETE /v1/agents/{agent_id}` returned 500 (`events_parent_event_id_fkey` violation) whenever a deleted event was the parent of another event — e.g. a planner decision that an executor's action points to. Forget had already removed the vectors from Qdrant before the Postgres delete failed.
-- `events.parent_event_id` is now `ON DELETE SET NULL`: the child event keeps its own record and only loses the link to the erased parent. Existing databases are migrated on API startup (idempotent).
+- `events.parent_event_id` is no longer a foreign key. Erasing a parent leaves its children exactly as they were, so their event checksums still verify, and `why()` ends where the parent was erased. New links are still validated on write (the parent must exist in the same tenant). Existing databases drop the constraint on API startup (idempotent; one worker does it, and a busy table is retried on the next start).
 
 ### Event checksums cover the audit fields
 
