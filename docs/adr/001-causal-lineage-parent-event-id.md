@@ -21,7 +21,7 @@ The primary query pattern is: given event E, walk backward through the chain of 
 
 ## Decision
 
-Store causal relationships as a self-referential foreign key `parent_event_id UUID REFERENCES events(event_id)` directly on the `events` table.
+Store causal relationships as a `parent_event_id UUID` column directly on the `events` table. (Originally a self-referential foreign key; see the amendment below: it is no longer a foreign key, and must not become one again.)
 
 The `db.why()` query uses a PostgreSQL **recursive CTE** starting from any event and following `parent_event_id` links backward:
 
@@ -59,7 +59,7 @@ The vast majority of agent workflows produce linear or tree-shaped causal chains
 
 **Separate `causality` table**: adds a join on every `db.why()` call; more flexible for DAGs but unnecessary complexity for the common case.
 
-**`causes` JSONB array**: makes the recursive CTE much harder to write; no foreign key constraint; harder to index.
+**`causes` JSONB array**: makes the recursive CTE much harder to write and harder to index.
 
 
 ## Amendment (October 2026): no foreign key
