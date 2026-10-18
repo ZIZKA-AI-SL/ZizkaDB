@@ -60,3 +60,12 @@ The vast majority of agent workflows produce linear or tree-shaped causal chains
 **Separate `causality` table**: adds a join on every `db.why()` call; more flexible for DAGs but unnecessary complexity for the common case.
 
 **`causes` JSONB array**: makes the recursive CTE much harder to write; no foreign key constraint; harder to index.
+
+
+## Amendment (October 2026): no foreign key
+
+`parent_event_id` is no longer a foreign key (`core/db/event_constraints.py` drops it on startup; `core/db/schema.sql` no longer creates it).
+
+- **Why:** with the foreign key, GDPR forget and agent delete failed whenever a deleted event had a causal child. `ON DELETE SET NULL` would have fixed that by rewriting the children, but the v2 event checksum covers `parent_event_id`, so every child of a forgotten event would then fail verification.
+- **Now:** erasing a parent leaves its children exactly as they were. Their checksums still verify, and `why()` ends where the parent was erased. New links are still checked when an event is written (`services/event_write.py`: the parent must exist in the same tenant).
+- **Do not re-add the foreign key**, with or without `ON DELETE SET NULL`.
