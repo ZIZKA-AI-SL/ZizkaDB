@@ -78,6 +78,12 @@ async def _apply_migration(pool):
     await pool.execute(EVENTS_PARENT_FK_DROP_SQL)
 
 
+async def _remaining_parent_fks(pool):
+    from db.event_constraints import EVENTS_PARENT_FK_COUNT_SQL
+
+    return await pool.fetchval(EVENTS_PARENT_FK_COUNT_SQL)
+
+
 async def _parent_fk_names(pool):
     rows = await pool.fetch(
         """SELECT conname FROM pg_constraint
@@ -207,8 +213,10 @@ async def test_busy_table_skips_the_migration_instead_of_stalling(pg_db):
             await tx.rollback()
 
     assert await _parent_fk_names(pg_db) == ["events_parent_event_id_fkey"]
+    assert await _remaining_parent_fks(pg_db) == 1  # init_db logs a warning on this
     await _apply_migration(pg_db)  # next start drops it
     assert await _parent_fk_names(pg_db) == []
+    assert await _remaining_parent_fks(pg_db) == 0
 
 
 async def test_composite_fk_including_the_column_is_left_alone(pg_db):
@@ -223,3 +231,4 @@ async def test_composite_fk_including_the_column_is_left_alone(pg_db):
     await _apply_migration(pg_db)
 
     assert await _parent_fk_names(pg_db) == ["composite_parent_fk"]
+    assert await _remaining_parent_fks(pg_db) == 0  # composite keys do not count

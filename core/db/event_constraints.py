@@ -44,3 +44,16 @@ EVENTS_PARENT_FK_DROP_SQL = """
             RAISE WARNING 'events.parent_event_id foreign key not dropped (events table busy); retrying on next start';
     END $$;
 """
+
+# Single-column foreign keys still on events.parent_event_id (0 once dropped).
+EVENTS_PARENT_FK_COUNT_SQL = """
+    SELECT count(*)
+    FROM pg_constraint c
+    JOIN pg_attribute a
+      ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+    WHERE c.contype = 'f'
+      AND c.conrelid = 'events'::regclass
+      AND c.confrelid = 'events'::regclass
+      AND a.attname = 'parent_event_id'
+      AND array_length(c.conkey, 1) = 1
+"""
