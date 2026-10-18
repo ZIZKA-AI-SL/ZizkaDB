@@ -11,6 +11,7 @@
 # ends where the parent was erased. New links are still checked by the write
 # path (services/event_write.py rejects a parent that does not exist or
 # belongs to another tenant). Idempotent.
+
 # Two-int advisory lock: a key space separate from the single-key hashtext()
 # locks used per tenant and per event elsewhere, so they cannot collide.
 _LOCK_CLASS, _LOCK_OBJ = 727001, 1
