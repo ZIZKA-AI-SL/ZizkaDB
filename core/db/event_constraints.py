@@ -11,43 +11,11 @@
 # ends where the parent was erased. New links are still checked by the write
 # path (services/event_write.py rejects a parent that does not exist or
 # belongs to another tenant). Idempotent.
-EVENTS_PARENT_FK_DROP_SQL = """
-    DO $$
-    DECLARE
-        fk record;
-    BEGIN
-        -- Every API worker runs this at startup. Only one attempts it; the
-        -- others skip it instead of queueing behind it.
-        IF NOT pg_try_advisory_xact_lock(hashtext('zizkadb:events_parent_fk_drop')) THEN
-            RETURN;
-        END IF;
-        -- Dropping a constraint needs a brief exclusive lock on events, and
-        -- queries on events queue behind that request. Give up after 2s on a
-        -- busy table and retry on the next start.
-        PERFORM set_config('lock_timeout', '2s', true);
+_LOCK_KEY = "zizkadb:events_parent_fk_drop"
 
-        FOR fk IN
-            SELECT c.conname
-            FROM pg_constraint c
-            JOIN pg_attribute a
-              ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
-            WHERE c.contype = 'f'
-              AND c.conrelid = 'events'::regclass
-              AND c.confrelid = 'events'::regclass
-              AND a.attname = 'parent_event_id'
-              AND array_length(c.conkey, 1) = 1  -- leave composite keys alone
-        LOOP
-            EXECUTE format('ALTER TABLE events DROP CONSTRAINT IF EXISTS %I', fk.conname);
-        END LOOP;
-    EXCEPTION
-        WHEN lock_not_available THEN
-            RAISE WARNING 'events.parent_event_id foreign key not dropped (events table busy); retrying on next start';
-    END $$;
-"""
-
-# Single-column foreign keys still on events.parent_event_id (0 once dropped).
-EVENTS_PARENT_FK_COUNT_SQL = """
-    SELECT count(*)
+# Single-column foreign keys from events.parent_event_id to events. Composite
+# keys that merely include the column are left alone.
+_PARENT_FK_FILTER = """
     FROM pg_constraint c
     JOIN pg_attribute a
       ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
@@ -57,3 +25,43 @@ EVENTS_PARENT_FK_COUNT_SQL = """
       AND a.attname = 'parent_event_id'
       AND array_length(c.conkey, 1) = 1
 """
+
+EVENTS_PARENT_FK_DROP_SQL = """
+    DO $$
+    DECLARE
+        fk record;
+    BEGIN
+        -- Every API worker runs this at startup. Only one attempts it; the
+        -- others skip it instead of queueing behind it.
+        IF NOT pg_try_advisory_xact_lock(hashtext('""" + _LOCK_KEY + """')) THEN
+            RETURN;
+        END IF;
+        -- Dropping a constraint needs a brief exclusive lock on events, and
+        -- queries on events queue behind that request. Give up after 2s on a
+        -- busy table and retry on the next start.
+        PERFORM set_config('lock_timeout', '2s', true);
+
+        FOR fk IN SELECT c.conname """ + _PARENT_FK_FILTER + """
+        LOOP
+            EXECUTE format('ALTER TABLE events DROP CONSTRAINT IF EXISTS %I', fk.conname);
+        END LOOP;
+    EXCEPTION
+        WHEN lock_not_available THEN
+            RAISE WARNING 'events.parent_event_id foreign key not dropped (events table busy); retrying on next start';
+    END $$;
+"""
+
+EVENTS_PARENT_FK_COUNT_SQL = "SELECT count(*) " + _PARENT_FK_FILTER
+
+
+async def remaining_parent_fks(pool) -> int:
+    """Parent FKs still present, after any worker's in-progress drop finishes.
+
+    A worker that skipped the drop because another one holds the lock waits
+    for that worker's transaction here, so it does not report an FK that is
+    about to be dropped.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", _LOCK_KEY)
+            return await conn.fetchval(EVENTS_PARENT_FK_COUNT_SQL)

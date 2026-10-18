@@ -232,3 +232,23 @@ async def test_composite_fk_including_the_column_is_left_alone(pg_db):
 
     assert await _parent_fk_names(pg_db) == ["composite_parent_fk"]
     assert await _remaining_parent_fks(pg_db) == 0  # composite keys do not count
+
+
+async def test_remaining_count_waits_for_an_in_progress_drop(pg_db):
+    """A worker that skipped the drop must not report an FK another worker is dropping."""
+    from db.event_constraints import _LOCK_KEY, remaining_parent_fks
+
+    await pg_db.execute(LEGACY_EVENTS_FK)
+
+    async with pg_db.acquire() as winner:
+        tx = winner.transaction()
+        await tx.start()
+        await winner.execute("SELECT pg_advisory_xact_lock(hashtext($1))", _LOCK_KEY)
+        count = asyncio.create_task(remaining_parent_fks(pg_db))
+        await asyncio.sleep(0.3)
+        assert not count.done()  # waits for the winner instead of counting now
+        await winner.execute("ALTER TABLE events DROP CONSTRAINT events_parent_event_id_fkey")
+        await tx.commit()
+
+    assert await count == 0
+
