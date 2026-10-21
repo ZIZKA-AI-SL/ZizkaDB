@@ -92,3 +92,27 @@ class TestRedisAndQdrantCredentials:
         assert qdrant_api_key() is None
         monkeypatch.setenv("QDRANT_API_KEY", "k")
         assert qdrant_api_key() == "k"
+
+
+class TestServeMedia:
+    @pytest.fixture
+    def media_client(self, tmp_path, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        import api.community as community
+        from main import app
+
+        monkeypatch.setattr(community, "UPLOAD_DIR", tmp_path / "uploads")
+        (tmp_path / "uploads").mkdir()
+        (tmp_path / "uploads" / "abc.png").write_bytes(b"\x89PNG")
+        (tmp_path / "secret.png").write_bytes(b"secret")
+        return TestClient(app)
+
+    def test_serves_upload_with_nosniff(self, media_client):
+        r = media_client.get("/v1/community/media/abc.png")
+        assert r.status_code == 200
+        assert r.headers["x-content-type-options"] == "nosniff"
+
+    @pytest.mark.parametrize("name", ["..", "missing.png", "..%2Fsecret.png", "...png"])
+    def test_outside_or_missing_is_404(self, media_client, name):
+        assert media_client.get(f"/v1/community/media/{name}").status_code == 404
