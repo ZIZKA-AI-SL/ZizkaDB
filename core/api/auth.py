@@ -307,6 +307,19 @@ selfhost_login_limiter = RateLimiter(
     detail="Too many sign-in attempts. Wait a minute and try again.",
 )
 
+# Admin-token attempts across all clients, checked before the token is
+# compared, so rotating IPs does not multiply the per-IP budget. High enough
+# that the owner is never the one who trips it.
+SELFHOST_GLOBAL_LOGIN_MAX = 60
+
+selfhost_global_login_limiter = RateLimiter(
+    limit=SELFHOST_GLOBAL_LOGIN_MAX,
+    window_sec=60,
+    storage=_otp_storage(),
+    strategy=SlidingWindowStrategy(),
+    detail="Too many sign-in attempts. Wait a minute and try again.",
+)
+
 
 def _selfhost_login_allowed() -> bool:
     """
@@ -350,6 +363,13 @@ async def selfhost_login_route(request: Request, body: SelfHostLoginBody | None 
     if mode == "admin_token":
         expected = (os.getenv("SELFHOST_ADMIN_TOKEN") or "").strip()
         supplied = ((body.token if body else None) or "").strip()
+        try:
+            await selfhost_global_login_limiter.check("selfhost:all")
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception("selfhost-login rate limit backend unavailable")
+            raise service_unavailable("Login temporarily unavailable. Please try again shortly.")
         if not hmac.compare_digest(supplied.encode(), expected.encode()):
             raise unauthorized("Invalid admin token")
 

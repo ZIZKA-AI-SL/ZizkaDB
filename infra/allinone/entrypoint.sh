@@ -11,6 +11,12 @@ SCHEMA_MARKER="$PGDATA/.zizkadb_schema_applied"
 DEMO_MARKER="$DATA/.demo_seeded"
 
 log() { echo "[zizkadb] $*"; }
+# Same rule as the API: only ENV=development (any case) is development.
+if [ "$(printf '%s' "${ENV:-}" | tr '[:upper:]' '[:lower:]')" = "development" ]; then
+  DEV_MODE=1
+else
+  DEV_MODE=0
+fi
 # setpriv keeps the environment, so give each user a HOME it can read
 # (asyncpg and psql look in ~/.postgresql).
 PG_USER=(env HOME=/var/lib/postgresql setpriv --reuid=postgres --regid=postgres --init-groups)
@@ -35,15 +41,27 @@ print(f"GEN_DEV_API_KEY=zizkadb_local_{secrets.token_hex(24)}")
 PY
   )
 fi
+# Installs from before the admin token was generated here get one added.
+if ! grep -q '^GEN_SELFHOST_ADMIN_TOKEN=' "$SECRETS"; then
+  (
+    umask 077
+    python -c 'import secrets; print(f"GEN_SELFHOST_ADMIN_TOKEN={secrets.token_urlsafe(32)}")' >> "$SECRETS"
+  )
+fi
 # shellcheck disable=SC1090
 . "$SECRETS"
 export JWT_SECRET="${JWT_SECRET:-$GEN_JWT_SECRET}"
 export JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET:-$GEN_JWT_REFRESH_SECRET}"
-# The API refuses ENV=production with the well-known dev key.
-if [ "${ENV:-development}" = "production" ] && [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ]; then
-  export DEV_API_KEY="$GEN_DEV_API_KEY"
+# The API refuses production with the well-known dev key. Production also
+# needs an admin token for dashboard sign-in; use the generated one unless
+# SELFHOST_ADMIN_TOKEN is passed in.
+if [ "$DEV_MODE" -eq 0 ]; then
+  if [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ]; then
+    export DEV_API_KEY="$GEN_DEV_API_KEY"
+  fi
+  export SELFHOST_ADMIN_TOKEN="${SELFHOST_ADMIN_TOKEN:-$GEN_SELFHOST_ADMIN_TOKEN}"
 fi
-unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY
+unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -123,7 +141,7 @@ PIDS+=($!)
     exit 0
   fi
 
-  if [ "${ENV:-development}" = "development" ] \
+  if [ "$DEV_MODE" -eq 1 ] \
      && [ "${ZIZKADB_SEED_DEMO:-true}" != "false" ] && [ ! -f "$DEMO_MARKER" ]; then
     if as_app python /opt/zizkadb/seed_demo.py > "$DATA/demo-chain.txt" 2>"$DATA/demo-seed.err"; then
       touch "$DEMO_MARKER"
@@ -143,12 +161,16 @@ PIDS+=($!)
     sed 's/^/    /' "$DATA/demo-chain.txt"
   fi
   echo ""
-  if [ "${ENV:-development}" = "development" ]; then
+  if [ "$DEV_MODE" -eq 1 ]; then
     echo "  Dashboard:  http://localhost:3001/dashboard/activity?agent=support-bot"
     echo "  API:        http://localhost:8000   (key: ${DEV_API_KEY})"
   else
-    echo "  Dashboard:  http://localhost:3001   (sign in with SELFHOST_ADMIN_TOKEN)"
-    echo "  API:        http://localhost:8000"
+    echo "  Dashboard:  http://localhost:3001"
+    echo "  Admin token (dashboard sign-in): ${SELFHOST_ADMIN_TOKEN}"
+    echo "  API:        http://localhost:8000   (create an API key in the dashboard)"
+    echo ""
+    echo "  For the one-click local setup instead, run with -e ENV=development"
+    echo "  and publish the ports on 127.0.0.1 only."
   fi
   echo "  Swagger:    http://localhost:8000/swagger"
   echo ""

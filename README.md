@@ -88,8 +88,10 @@ The script is a wrapper around this:
 
 ```bash
 docker run -d --name zizkadb -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
-  -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
+  -e ENV=development -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
 ```
+
+`ENV=development` is what gives the one-click dashboard and the `zizkadb_dev_local` key, so keep the ports on `127.0.0.1`. Without it the image runs in production mode: the dashboard asks for an admin token, printed in `docker logs zizkadb`.
 
 | Do this | Command |
 |---------|---------|
@@ -132,7 +134,12 @@ DEV_API_KEY=<random>                # must not be the default, or the API refuse
 JWT_SECRET=<random>                 # openssl rand -hex 32 (also JWT_REFRESH_SECRET)
 DEPLOYMENT_MODE=self_hosted
 SELFHOST_ADMIN_TOKEN=<long-random>  # python -c "import secrets; print(secrets.token_urlsafe(32))"
+POSTGRES_PASSWORD=<random>          # new installs only: Postgres keeps the password it was created with
+REDIS_PASSWORD=<random>             # openssl rand -hex 24
+QDRANT_API_KEY=<random>             # openssl rand -hex 24
 ```
+
+Postgres, Redis and Qdrant only listen on `127.0.0.1` on the server; the API reaches them over the Docker network. To open the database from your laptop, use an SSH tunnel: `ssh -L 5432:127.0.0.1:5432 you@server`.
 
 The dashboard then asks for the admin token instead of showing the one-click button. Without `SELFHOST_ADMIN_TOKEN`, dashboard login stays disabled. Everyone who has the token signs in to the same single owner workspace. Check your config with `bash scripts/validate-selfhost-config.sh --production`. Full steps: [wiki/Self-Hosting](https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting).
 
