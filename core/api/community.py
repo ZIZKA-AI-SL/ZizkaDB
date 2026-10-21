@@ -288,11 +288,14 @@ async def serve_media(filename: str):
     safe = re.sub(r"[^a-zA-Z0-9._-]", "", filename)
     if not safe or safe != filename:
         raise not_found("Not found")
-    # Resolve and require the file to sit directly in the upload dir, so no
-    # name (e.g. "..") can reach outside it.
-    root = UPLOAD_DIR.resolve()
-    path = (root / safe).resolve()
-    if path.parent != root or not path.is_file():
+    # Normalise and require the file to sit inside the upload dir, so no name
+    # (e.g. "..") can reach outside it.
+    root = os.path.realpath(UPLOAD_DIR)
+    full = os.path.normpath(os.path.join(root, safe))
+    if not full.startswith(root + os.sep):
+        raise not_found("Not found")
+    path = Path(full)
+    if not path.is_file():
         raise not_found("Not found")
     media = {
         ".png": "image/png",
