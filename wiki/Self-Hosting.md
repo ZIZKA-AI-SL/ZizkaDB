@@ -141,6 +141,10 @@ Configure in `infra/.env`:
 - `REDIS_URL`
 - `QDRANT_URL`
 - `JWT_SECRET` / `JWT_REFRESH_SECRET`
+- `POSTGRES_PASSWORD` — set a random value **before the first start** of a new install. Postgres keeps the password it was created with, so on an existing install leave it as is (or change it inside Postgres with `ALTER USER` first).
+- `REDIS_PASSWORD` / `QDRANT_API_KEY` — optional, recommended (`openssl rand -hex 24`). Empty keeps the old no-password behaviour.
+- `TRUSTED_PROXIES` — only if a proxy on **another machine** (load balancer, Cloudflare) sits in front of the API: its IPs/CIDRs, comma-separated, so rate limits see the real client IP. nginx on the same host or the Docker network needs nothing.
+- Postgres, Redis and Qdrant ports listen on `127.0.0.1` only. From another machine use an SSH tunnel: `ssh -L 5432:127.0.0.1:5432 you@server`.
 - `SELFHOST_ADMIN_TOKEN` — required to sign in to the dashboard when `ENV=production` (no email/SMTP needed)
 - `ENV=production` (disables dev key bypass). `infra/docker-compose.yml` requires `ENV` and stops with an error if it is missing; never use `ENV=development` on a server
 - `DEV_API_KEY` — set a unique random value (`openssl rand -hex 24`) — the API refuses to start in production if it is empty or the default, and never accepts it as auth there

@@ -94,6 +94,7 @@ run_single_container() {
     -p "127.0.0.1:${API_PORT}:8000" \
     -p "127.0.0.1:${DASHBOARD_PORT}:3001" \
     -v "${VOLUME}:/data" \
+    -e ENV=development \
     ${OPENAI_API_KEY:+-e OPENAI_API_KEY} \
     ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY} \
     "${IMAGE}" >/dev/null || { echo "ERROR: could not start the ZizkaDB container." >&2; exit 1; }

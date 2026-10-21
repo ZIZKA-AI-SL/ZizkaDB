@@ -84,12 +84,21 @@ class CreateReplyBody(BaseModel):
 
 
 
+_SAFE_HOST = re.compile(r"[A-Za-z0-9.-]+(:[0-9]{1,5})?|\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?")
+
+
 def _public_base_url(request: Request) -> str:
     env = os.getenv("PUBLIC_API_URL", "").rstrip("/")
     if env:
         return env
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("host", "db.zizka.ai")
+    if scheme not in ("http", "https"):
+        scheme = "https"
+    # Host is client-controlled: keep it to hostname[:port] characters so it
+    # cannot inject a path or another URL into the image links.
+    host = request.headers.get("host", "")
+    if not _SAFE_HOST.fullmatch(host):
+        host = "db.zizka.ai"
     return f"{scheme}://{host}"
 
 
@@ -279,7 +288,13 @@ async def serve_media(filename: str):
     safe = re.sub(r"[^a-zA-Z0-9._-]", "", filename)
     if not safe or safe != filename:
         raise not_found("Not found")
-    path = UPLOAD_DIR / safe
+    # Normalise and require the file to sit inside the upload dir, so no name
+    # (e.g. "..") can reach outside it.
+    root = os.path.realpath(UPLOAD_DIR)
+    full = os.path.normpath(os.path.join(root, safe))
+    if not full.startswith(root + os.sep):
+        raise not_found("Not found")
+    path = Path(full)
     if not path.is_file():
         raise not_found("Not found")
     media = {
@@ -289,7 +304,11 @@ async def serve_media(filename: str):
         ".webp": "image/webp",
         ".gif": "image/gif",
     }
-    return FileResponse(path, media_type=media.get(path.suffix.lower(), "application/octet-stream"))
+    return FileResponse(
+        path,
+        media_type=media.get(path.suffix.lower(), "application/octet-stream"),
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 def _normalize_image_urls(raw, base: str) -> list[str]:

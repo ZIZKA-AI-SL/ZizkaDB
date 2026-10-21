@@ -56,10 +56,13 @@ COPY --from=dashboard --chown=zizkadb:zizkadb /app/.next/static /app/dashboard/.
 COPY core/db/schema.sql infra/allinone/entrypoint.sh infra/allinone/seed_demo.py /opt/zizkadb/
 RUN chmod +x /opt/zizkadb/entrypoint.sh
 
-# ENV=development: one-click dashboard and the zizkadb_dev_local API key, so
-# publish the ports on 127.0.0.1 only. QDRANT_URL="" runs without Qdrant
-# (embeddings are off by default on self-host).
-ENV ENV=development \
+# Production by default, so a plain `docker run -p ...` on a server is never
+# open: the dashboard asks for an admin token (generated on first start and
+# printed in `docker logs`) and dev keys are refused. The quickstart script
+# passes ENV=development for the one-click local experience, with the ports on
+# 127.0.0.1 only. QDRANT_URL="" runs without Qdrant (embeddings are off by
+# default on self-host).
+ENV ENV=production \
     DEPLOYMENT_MODE=self_hosted \
     DEV_API_KEY=zizkadb_dev_local \
     EMBEDDINGS_ENABLED=false \

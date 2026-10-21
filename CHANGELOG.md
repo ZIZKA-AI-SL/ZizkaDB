@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security hardening
+
+The quickstart is unchanged: one command, one-click dashboard, demo agent.
+
+- **Server compose no longer exposes the databases.** `infra/docker-compose.yml` publishes Postgres, Redis and Qdrant on `127.0.0.1` only. The API reaches them over the compose network, so nothing changes for it. Only direct access from another machine (BI tools, `psql` from a laptop) is affected: use `ssh -L 5432:127.0.0.1:5432 you@server`.
+- **Optional Redis password and Qdrant API key.** Set `REDIS_PASSWORD` / `QDRANT_API_KEY` in `infra/.env` to turn them on for the containers and the API. Empty keeps the old behaviour. `scripts/validate-selfhost-config.sh --production` warns when they are unset or when `POSTGRES_PASSWORD` is the default. Set a random `POSTGRES_PASSWORD` before the first start of a new install; existing databases keep the password they were created with.
+- **The one-container image runs in production mode by default.** A plain `docker run -p 8000:8000 -p 3001:3001 ghcr.io/zizka-ai-sl/zizkadb` on a server is no longer open: the dashboard asks for an admin token, generated on first start, kept in the volume and printed in `docker logs`, and dev keys are refused. The quickstart script passes `ENV=development`, so its one-click experience is unchanged. Pass `-e ENV=development` yourself for the old behaviour, with the ports on `127.0.0.1`.
+- **Rate limits use the real client IP.** `X-Forwarded-For` is now only read when the request comes from a trusted proxy (loopback or private networks: nginx on the host, the Docker bridge), and from the right, so a client can no longer pick the IP its limits are counted against. A proxy on another machine (load balancer, Cloudflare) needs its addresses in `TRUSTED_PROXIES`; without it, rate limits count all its traffic as one client.
+- **Self-host admin login has a global attempt limit** (60 per minute across all IPs, checked before the token is compared), on top of the per-IP limit, so rotating IPs does not help guessing `SELFHOST_ADMIN_TOKEN`. One-click mode is not limited this way.
+- **Anonymous telemetry pings are rate-limited** (120 per IP per hour). Pings over the limit are dropped, still with a 200, so SDKs never see an error.
+- **Dashboard security headers:** `X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`, `nosniff`, a referrer policy and a permissions policy. The dashboard can no longer be framed by other sites. Community images are served with `nosniff`.
+- Community image links only use the request's `Host` header when it is a plain hostname; otherwise they fall back to the default. Set `PUBLIC_API_URL` to pin them.
+- `infra/docker-compose.dashboard.yml` builds the dashboard with `NEXT_PUBLIC_DEV_MODE=false` by default, like the published images. Local one-click sign-in still works through `ENV=development`.
+
 ## [0.3.0] - 2026-10-19
 
 Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-livekit` 0.2.1, `zizkadb-crewai` 0.1.3, `zizkadb-langgraph` 0.1.0 (first release). `zizkadb-langchain` is unchanged at 0.1.3. API display version 0.3.0.
@@ -35,7 +49,7 @@ Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-liveki
 - `infra/lib/production-guard.sh` (used by `scripts/reset-local-db.sh`) now refuses unless `infra/.env` sets `ENV=development`; an unset `ENV` counts as production, matching the API.
 - `infra/backup-postgres.sh` and `infra/backup-qdrant.sh` keep working on a server whose `infra/.env` has no `ENV` line (they only read from the running containers).
 - `scripts/validate-selfhost-config.sh` follows the API: an unset `ENV` is production, and an empty `DEV_API_KEY` is accepted in production (only the published dev keys are rejected).
-- Unchanged for now: data ports in `infra/docker-compose.yml` (Postgres, Redis, Qdrant) are still published on all interfaces, and `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers.
+- Unchanged for now: `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers. (The data ports were moved to `127.0.0.1` later; see Security hardening above.)
 
 ### Development mode is opt-in (unset `ENV` means production)
 
