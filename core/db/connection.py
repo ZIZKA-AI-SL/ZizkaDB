@@ -125,6 +125,8 @@ async def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS gdpr_consent_at TIMESTAMPTZ;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent_at TIMESTAMPTZ;
+
+        ALTER TABLE auth_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
     """)
 
     await _pg_pool.execute("""

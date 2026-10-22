@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Display/API release line — keep in sync with zizkadb-sdk (see scripts/check-doc-drift.sh).
-API_VERSION = "0.2.8"
+API_VERSION = "0.3.0"
 
 
 def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:

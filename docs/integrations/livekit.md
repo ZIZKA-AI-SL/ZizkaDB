@@ -19,7 +19,7 @@ Event types match text agents: `session_started`, `user_message`, `assistant_res
 pip install zizkadb-livekit
 ```
 
-Pulls `zizkadb-sdk>=0.2.8` and `livekit-agents>=1.3.0` automatically. No separate core SDK install.
+Pulls `zizkadb-sdk>=0.3.0` and `livekit-agents>=1.3.0` automatically. No separate core SDK install.
 
 Start ZizkaDB (Docker):
 

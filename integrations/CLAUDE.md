@@ -19,7 +19,7 @@ Install for users:
 pip install zizkadb-langchain    # or zizkadb-crewai / zizkadb-livekit
 ```
 
-Each package depends on `zizkadb-sdk>=0.2.8` — users install the framework package only.
+Each package depends on `zizkadb-sdk>=0.3.0` — users install the framework package only.
 
 ---
 

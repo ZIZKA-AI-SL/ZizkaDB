@@ -11,6 +11,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `DELETE /v1/memory/forget` and `DELETE /v1/agents/{agent_id}` returned 500 (`events_parent_event_id_fkey` violation) whenever a deleted event was the parent of another event — e.g. a planner decision that an executor's action points to. Forget had already removed the vectors from Qdrant before the Postgres delete failed.
 - `events.parent_event_id` is no longer a foreign key. Erasing a parent leaves its children exactly as they were, so their event checksums still verify, and `why()` ends where the parent was erased. A new event's parent is still checked when the event is written (it must exist in the same tenant). Existing databases drop the constraint on API startup (idempotent; one worker does it, a busy table is retried on the next start, and the API logs a warning until it is dropped). Suggestions' chain-depth evidence now counts a chain from its first event of that agent, so chains whose first event was erased, or which were started by another agent's event, are counted.
 
+## [0.3.0] - 2026-10-19
+
+Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-livekit` 0.2.1, `zizkadb-crewai` 0.1.3, `zizkadb-langgraph` 0.1.0 (first release). `zizkadb-langchain` is unchanged at 0.1.3. API display version 0.3.0.
+
 ### Impact trace: what did this event cause?
 
 - New `GET /v1/events/{event_id}/impact?depth=` walks the causal graph downstream, the mirror of `/why`: every event that descends from the given one through `parent_event_id`, with its `depth` (anchor first, then by depth). `depth` is 0–50 (default 10). At most 500 nodes are returned (the shallowest first); `truncated: true` says the cap was hit, and `depth_truncated: true` says more events lie below the depth limit.
@@ -103,6 +107,15 @@ Fifteen-day self-host / OSS hardening pass. User-visible highlights:
 - `GET /v1/sessions/{id}/events` no longer binds the key to the first returned event's agent; it accepts an optional `?agent=` filter.
 - `GET /v1/sessions/{id}/why/{event_id}` and `GET /v1/events/{id}/why` no longer return other agents' ancestor events to an agent-scoped key.
 - `GET /v1/sessions?agent=X` with a key scoped to another agent now returns 403 (previously silently returned the key's own sessions).
+- Client IPs for rate limiting are taken from `X-Forwarded-For` only when the peer is a trusted proxy (new `TRUSTED_PROXIES` env var, default `127.0.0.1,::1,172.16.0.0/12` to cover nginx → Docker bridge). The header is walked from the right and the first untrusted hop is used, so a client-supplied left-most value can no longer spoof its rate-limit bucket.
+- OTP codes are burned after 5 wrong guesses. The attempt counter (`auth_otps.attempts`) is incremented atomically, so concurrent guesses cannot bypass the lockout.
+- Rate limits are checked and recorded atomically (Redis Lua script via EVALSHA; locked in memory), closing the check-then-record race under concurrent requests.
+- `GET /v1/memory/diff/{session_id}` with an agent-scoped key filters events by agent in SQL: other agents' events are never returned, a key whose agent was not first in the session can still diff it, and a session with none of the key's events returns 404 (was 403).
+- `POST /v1/auth/test-event` requires a dashboard session (API keys are rejected).
+- Community image uploads are checked against PNG/JPEG/GIF/WebP magic bytes; served uploads send `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'`. The community list `LIMIT` is now a bound parameter.
+- Malformed `parent_id` on event writes returns 400 instead of a 500.
+- Incoming `X-Request-ID` values must match `[A-Za-z0-9_.-]{1,64}`; anything else is replaced with a fresh UUID (prevents log injection).
+- `infra/docker-compose.yml` binds Postgres, Qdrant and Redis to `127.0.0.1` only.
 
 ### Fixed
 

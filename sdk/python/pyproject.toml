@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zizkadb-sdk"
-version = "0.2.8"
+version = "0.3.0"
 description = "Audit trail database for AI agents: tamper-evident, checksum-backed decision logs, session replay and time-travel debugging to support EU AI Act Article 12 record-keeping."
 readme = "README.md"
 license = "AGPL-3.0-or-later"

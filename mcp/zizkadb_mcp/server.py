@@ -43,7 +43,7 @@ try:
 
     __version__ = _pkg_version("zizkadb-mcp")
 except Exception:
-    __version__ = "0.1.7"
+    __version__ = "0.1.8"
 
 DEFAULT_DEV_API_KEY = "zizkadb_dev_local"
 _HOST = (
