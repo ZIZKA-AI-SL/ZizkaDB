@@ -193,3 +193,48 @@ async def test_worker_marks_failed_when_embedding_fails(monkeypatch):
     assert processed == 0
     assert qdrant.upserted == []
     assert pool.table[row["event_id"]]["index_status"] == "failed"
+
+
+
+async def test_worker_loop_survives_a_failing_batch(monkeypatch):
+    """A batch that raises (e.g. Postgres briefly down) must not end the worker."""
+    import asyncio
+    import importlib
+
+    calls = {"n": 0}
+
+    async def flaky_batch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("postgres unreachable")
+        if calls["n"] == 3:
+            raise asyncio.CancelledError  # stop the loop after it recovered
+        return 0
+
+    db_connection = importlib.import_module("db.connection")
+    monkeypatch.setattr(db_connection, "init_db", AsyncMock(), raising=False)
+    monkeypatch.setattr(db_connection, "close_db", AsyncMock(), raising=False)
+    monkeypatch.setattr(embed_worker, "process_pending_batch", flaky_batch)
+    monkeypatch.setattr(embed_worker, "POLL_INTERVAL", 0.0)
+
+    with pytest.raises(asyncio.CancelledError):
+        await embed_worker.main()
+
+    assert calls["n"] == 3  # kept polling after the failure
+
+
+async def test_batch_query_skips_events_not_yet_due(monkeypatch):
+    """The unit suite has no real Postgres: at least pin the retry-time filter."""
+    seen = {}
+    row = _row()
+    pool, _ = _setup(monkeypatch, [row], embedding_result=RuntimeError("provider down"))
+    original_fetch = pool.fetch
+
+    async def fetch(query, *args):
+        seen["query"] = query
+        return await original_fetch(query, *args)
+
+    pool.fetch = fetch
+    await embed_worker.process_pending_batch()
+
+    assert "index_retry_at IS NULL OR index_retry_at <= NOW()" in seen["query"]

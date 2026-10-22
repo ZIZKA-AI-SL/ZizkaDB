@@ -636,7 +636,7 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 **Events / Search / Memory (dashboard read side):**
 | Dashboard fn | Method · Path | Backend |
 |---|---|---|
-| `getEvents` | GET `/v1/events` | `events.py:56` |
+| `getEvents` | GET `/v1/events` | `events.py:56` (each event has `index_status`: `skipped`/`pending`/`indexed`/`failed`/`dead`) |
 | `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:129` |
 | `getImpactTree` | GET `/v1/events/{id}/impact` | `events.py:222` |
 | `timeTravel` | GET `/v1/events/at` | `events.py:373` |

@@ -1,8 +1,6 @@
 """Embed worker retry policy against a real Postgres: backoff, the 'dead' cap,
 and failing events no longer starving newer ones (#275)."""
 
-from datetime import timedelta
-
 import pytest
 
 import db.connection as connection
@@ -23,6 +21,11 @@ class _Qdrant:
 @pytest.fixture
 async def worker_env(pg_db, monkeypatch):
     """A managed tenant (events start 'pending') and a stub vector store."""
+    # Pin the retry policy so the timings below do not depend on the
+    # environment the suite runs in.
+    monkeypatch.setattr(embed_worker, "MAX_ATTEMPTS", 10)
+    monkeypatch.setattr(embed_worker, "RETRY_BASE_SEC", 30.0)
+    monkeypatch.setattr(embed_worker, "RETRY_MAX_SEC", 3600.0)
     monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
     monkeypatch.delenv("EMBED_SYNC", raising=False)
     qdrant = _Qdrant()
@@ -172,3 +175,32 @@ async def test_large_attempt_counts_do_not_overflow_the_backoff(pg_db, worker_en
     state = await _state(pg_db, event_id)
     assert (state["index_status"], state["index_attempts"]) == ("failed", 1501)
     assert 3595 < state["retry_in"] <= 3600  # RETRY_MAX_SEC
+
+
+async def test_reindex_script_requeues_failed_and_dead_events_with_a_fresh_budget(pg_db, worker_env):
+    import importlib.util
+    from pathlib import Path
+
+    tenant, _ = worker_env
+    failed, dead, skipped = await _log(tenant, n=3)
+    await pg_db.execute(
+        "UPDATE events SET index_status = 'failed', index_attempts = 9, index_retry_at = NOW() + interval '1 hour' WHERE event_id = $1::uuid",
+        failed,
+    )
+    await pg_db.execute(
+        "UPDATE events SET index_status = 'dead', index_attempts = 10, index_retry_at = NULL WHERE event_id = $1::uuid",
+        dead,
+    )
+    await pg_db.execute("UPDATE events SET index_status = 'skipped' WHERE event_id = $1::uuid", skipped)
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "reindex-events.py"
+    spec = importlib.util.spec_from_file_location("reindex_events", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.REQUEUE_SQL is embed_worker.REQUEUE_SQL  # one definition
+    await pg_db.execute(embed_worker.REQUEUE_SQL)
+
+    for event_id in (failed, dead):
+        state = await _state(pg_db, event_id)
+        assert (state["index_status"], state["index_attempts"], state["retry_in"]) == ("pending", 0, None)
+    assert (await _state(pg_db, skipped))["index_status"] == "skipped"

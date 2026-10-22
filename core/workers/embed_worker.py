@@ -15,9 +15,8 @@ logger = logging.getLogger("embed_worker")
 POLL_INTERVAL = float(os.getenv("EMBED_WORKER_POLL_SEC", "2"))
 # A failed event is retried after RETRY_BASE_SEC, doubling each time up to
 # RETRY_MAX_SEC, and marked 'dead' after MAX_ATTEMPTS (defaults: about 3 hours
-# of retries, so a provider outage recovers on its own). Re-queue dead events
-# with: UPDATE events SET index_status = 'pending', index_attempts = 0,
-# index_retry_at = NULL WHERE index_status = 'dead';
+# of retries, so a provider outage recovers on its own). Re-queue failed and
+# dead events with --requeue (see REQUEUE_SQL).
 MAX_ATTEMPTS = max(1, int(os.getenv("EMBED_MAX_ATTEMPTS", "10")))
 RETRY_BASE_SEC = max(1.0, float(os.getenv("EMBED_RETRY_BASE_SEC", "30")))
 RETRY_MAX_SEC = max(RETRY_BASE_SEC, float(os.getenv("EMBED_RETRY_MAX_SEC", "3600")))
@@ -74,6 +73,20 @@ async def _index_event(pool, row, embedding) -> bool:
     return True
 
 
+# Re-queue failed and dead events with a fresh retry budget ('skipped' events
+# were written with embeddings off and are left alone). Run in the container:
+#   docker exec zizkadb_embed_worker python workers/embed_worker.py --requeue
+REQUEUE_SQL = """
+    UPDATE events
+    SET index_status = 'pending', index_attempts = 0, index_retry_at = NULL
+    WHERE index_status IN ('failed', 'pending', 'dead')
+"""
+
+# Pause after a whole batch fails (e.g. Postgres down): doubles per consecutive
+# failure, capped, so an outage does not log a traceback every poll.
+LOOP_BACKOFF_MAX_SEC = 60.0
+
+
 async def _record_failure(pool, event_id) -> None:
     """Count the attempt and schedule the retry, or give up after MAX_ATTEMPTS."""
     status = await pool.fetchval(
@@ -106,7 +119,7 @@ async def _record_failure(pool, event_id) -> None:
 
 
 async def process_pending_batch(limit: int = 50) -> int:
-    from db.connection import init_db, close_db, get_pool
+    from db.connection import get_pool
     from services.embeddings import generate_embedding, event_to_text
 
     pool = get_pool()
@@ -149,16 +162,47 @@ async def main() -> None:
 
     await init_db()
     logger.info("embed worker started")
+    consecutive_failures = 0
     try:
         while True:
-            n = await process_pending_batch()
-            if n:
-                logger.info("indexed %d events", n)
-            await asyncio.sleep(POLL_INTERVAL)
+            try:
+                n = await process_pending_batch()
+                if n:
+                    logger.info("indexed %d events", n)
+                if consecutive_failures:
+                    logger.info("embed worker recovered after %d failed batches", consecutive_failures)
+                consecutive_failures = 0
+                delay = POLL_INTERVAL
+            except Exception as exc:
+                # e.g. Postgres briefly unreachable: keep the worker alive and
+                # retry, backing off so an outage does not flood the log.
+                consecutive_failures += 1
+                delay = min(LOOP_BACKOFF_MAX_SEC, POLL_INTERVAL * 2 ** consecutive_failures)
+                if consecutive_failures == 1:
+                    logger.exception("embed batch failed; retrying in %.0fs", delay)
+                else:
+                    logger.warning(
+                        "embed batch failed again (%d in a row): %s; retrying in %.0fs",
+                        consecutive_failures, exc, delay,
+                    )
+            await asyncio.sleep(delay)
+    finally:
+        await close_db()
+
+
+async def requeue() -> str:
+    from db.connection import close_db, init_db, get_pool
+
+    await init_db()
+    try:
+        return await get_pool().execute(REQUEUE_SQL)
     finally:
         await close_db()
 
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    asyncio.run(main())
+    if "--requeue" in sys.argv[1:]:
+        print(asyncio.run(requeue()))
+    else:
+        asyncio.run(main())
