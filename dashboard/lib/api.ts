@@ -166,7 +166,7 @@ export interface AgentEvent {
   parent_id: string | null
   session_id: string | null
   sequence_no: number
-  index_status?: 'pending' | 'indexed' | 'failed' | 'skipped'
+  index_status?: 'pending' | 'indexed' | 'failed' | 'dead' | 'skipped'
 }
 
 /** One tool or API an agent called, with its call count and error rate. */
