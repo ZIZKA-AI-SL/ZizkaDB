@@ -81,13 +81,19 @@ class _FakePool:
     def acquire(self):
         return _FakeAcquire(self.conn)
 
+    async def fetchval(self, query, *args):
+        if "index_attempts = index_attempts + 1" in query:
+            self.log.append(("mark_failed", str(args[0])))
+            row = self.table.get(args[0])
+            if row is None:
+                return None
+            row["index_attempts"] = row.get("index_attempts", 0) + 1
+            row["index_status"] = "dead" if row["index_attempts"] >= args[1] else "failed"
+            return row["index_status"]
+        return None
+
     async def execute(self, query, *args):
-        if "index_status = 'failed'" in query:
-            self.log.append(("mark_failed", str(args[-1])))
-            row = self.table.get(args[-1])
-            if row is not None:
-                row["index_status"] = "failed"
-        elif "index_status = 'indexed'" in query:
+        if "index_status = 'indexed'" in query:
             self.log.append(("update_indexed", str(args[-1])))
             row = self.table.get(args[-1])
             if row is not None:

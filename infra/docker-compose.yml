@@ -175,6 +175,10 @@ services:
       # Decrypts per-tenant BYOK embedding keys, which the API encrypts with it.
       JWT_SECRET: ${JWT_SECRET:-}
       EMBED_WORKER_POLL_SEC: ${EMBED_WORKER_POLL_SEC:-2}
+      # Retry policy for events whose embedding fails (workers/embed_worker.py).
+      EMBED_MAX_ATTEMPTS: ${EMBED_MAX_ATTEMPTS:-10}
+      EMBED_RETRY_BASE_SEC: ${EMBED_RETRY_BASE_SEC:-30}
+      EMBED_RETRY_MAX_SEC: ${EMBED_RETRY_MAX_SEC:-3600}
     depends_on:
       postgres:
         condition: service_healthy

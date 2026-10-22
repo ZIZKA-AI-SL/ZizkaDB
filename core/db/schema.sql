@@ -102,6 +102,10 @@ CREATE TABLE events (
     sequence_no     BIGSERIAL,                          -- monotonic, never gaps
     checksum        VARCHAR(64),                        -- SHA-256; v2 covers the audit fields (services/checksum.py)
     metadata        JSONB,
+    -- Embedding pipeline state (also added by init_db() on existing installs).
+    index_status    VARCHAR(16) NOT NULL DEFAULT 'skipped',
+    index_attempts  INTEGER NOT NULL DEFAULT 0,
+    index_retry_at  TIMESTAMPTZ,
 
     CONSTRAINT fk_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id)
