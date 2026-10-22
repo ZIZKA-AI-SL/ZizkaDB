@@ -213,7 +213,24 @@ async def init_db():
         WHERE index_status IN ('pending', 'failed');
     """)
 
-    # Event checksum v2 (services/checksum.py). The first start on v2 code
+    # Retry / DLQ columns for the embedding worker (poison-pill fix).
+    # retry_count tracks how many times embedding failed; next_retry_at
+    # implements exponential backoff so failed events don't starve new
+    # ones; last_error stores the most recent failure reason for
+    # debugging. Events that exceed MAX_RETRIES are marked 'dead_letter'.
+    await _pg_pool.execute("""
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS retry_count  SMALLINT NOT NULL DEFAULT 0;
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS last_error   TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_events_pending_failed
+        ON events (timestamp) 
+        WHERE index_status IN ('pending', 'failed');
+    """)
+     # Event checksum v2 (services/checksum.py). The first start on v2 code
     # records the newest event that may still carry a v1 checksum; v1 is never
     # accepted above it, so a v2 row cannot be downgraded. Later starts keep
     # the original value (ON CONFLICT DO NOTHING).
