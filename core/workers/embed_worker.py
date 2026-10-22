@@ -13,6 +13,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("embed_worker")
 
 POLL_INTERVAL = float(os.getenv("EMBED_WORKER_POLL_SEC", "2"))
+# A failed event is retried after RETRY_BASE_SEC, doubling each time up to
+# RETRY_MAX_SEC, and marked 'dead' after MAX_ATTEMPTS (defaults: about 3 hours
+# of retries, so a provider outage recovers on its own). Re-queue dead events
+# with: UPDATE events SET index_status = 'pending', index_attempts = 0,
+# index_retry_at = NULL WHERE index_status = 'dead';
+MAX_ATTEMPTS = max(1, int(os.getenv("EMBED_MAX_ATTEMPTS", "10")))
+RETRY_BASE_SEC = max(1.0, float(os.getenv("EMBED_RETRY_BASE_SEC", "30")))
+RETRY_MAX_SEC = max(RETRY_BASE_SEC, float(os.getenv("EMBED_RETRY_MAX_SEC", "3600")))
 
 
 async def _index_event(pool, row, embedding) -> bool:
@@ -43,7 +51,8 @@ async def _index_event(pool, row, embedding) -> bool:
             if still_exists is None:
                 return False
             await conn.execute(
-                "UPDATE events SET embedding = $1::vector, index_status = 'indexed' WHERE event_id = $2",
+                "UPDATE events SET embedding = $1::vector, index_status = 'indexed', "
+                "index_attempts = 0, index_retry_at = NULL WHERE event_id = $2",
                 _pgvector_literal(embedding),
                 row["event_id"],
             )
@@ -65,6 +74,37 @@ async def _index_event(pool, row, embedding) -> bool:
     return True
 
 
+async def _record_failure(pool, event_id) -> None:
+    """Count the attempt and schedule the retry, or give up after MAX_ATTEMPTS."""
+    status = await pool.fetchval(
+        """
+        UPDATE events
+        SET index_attempts = index_attempts + 1,
+            index_status = CASE
+                WHEN index_attempts + 1 >= $2 THEN 'dead' ELSE 'failed'
+            END,
+            index_retry_at = CASE
+                WHEN index_attempts + 1 >= $2 THEN NULL
+                ELSE NOW() + make_interval(
+                    secs => LEAST($4::float8, $3::float8 * power(2, LEAST(index_attempts, 30)))
+                )
+            END
+        WHERE event_id = $1
+        RETURNING index_status
+        """,
+        event_id,
+        MAX_ATTEMPTS,
+        RETRY_BASE_SEC,
+        RETRY_MAX_SEC,
+    )
+    if status == "dead":
+        logger.error(
+            "giving up on event %s after %d attempts (index_status='dead')",
+            event_id,
+            MAX_ATTEMPTS,
+        )
+
+
 async def process_pending_batch(limit: int = 50) -> int:
     from db.connection import init_db, close_db, get_pool
     from services.embeddings import generate_embedding, event_to_text
@@ -75,6 +115,7 @@ async def process_pending_batch(limit: int = 50) -> int:
         SELECT event_id, tenant_id, agent_id, event_type, data
         FROM events
         WHERE index_status IN ('pending', 'failed')
+          AND (index_retry_at IS NULL OR index_retry_at <= NOW())
         ORDER BY timestamp ASC
         LIMIT $1
         """,
@@ -83,10 +124,10 @@ async def process_pending_batch(limit: int = 50) -> int:
     processed = 0
     for row in rows:
         event_id = str(row["event_id"])
-        data = row["data"]
-        if isinstance(data, str):
-            data = json.loads(data)
         try:
+            data = row["data"]
+            if isinstance(data, str):
+                data = json.loads(data)
             text = event_to_text(row["event_type"], dict(data))
             embedding = await generate_embedding(text, str(row["tenant_id"]))
             if not embedding:
@@ -99,10 +140,7 @@ async def process_pending_batch(limit: int = 50) -> int:
             processed += 1
         except Exception as exc:
             logger.warning("index failed for %s: %s", event_id, exc)
-            await pool.execute(
-                "UPDATE events SET index_status = 'failed' WHERE event_id = $1",
-                row["event_id"],
-            )
+            await _record_failure(pool, row["event_id"])
     return processed
 
 

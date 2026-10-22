@@ -213,6 +213,13 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_events_index_status
         ON events (index_status)
         WHERE index_status IN ('pending', 'failed');
+        -- Embed worker retry state (workers/embed_worker.py): failed events back
+        -- off, and become 'dead' after EMBED_MAX_ATTEMPTS. Constant default, so
+        -- no table rewrite.
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_retry_at TIMESTAMPTZ;
     """)
 
     # Event checksum v2 (services/checksum.py). The first start on v2 code
