@@ -1,6 +1,6 @@
 # ZizkaDB + LiveKit Agents
 
-**PyPI:** [zizkadb-livekit 0.2.0](https://pypi.org/project/zizkadb-livekit/) · depends on `zizkadb-sdk>=0.2.8` + `livekit-agents>=1.3.0`
+**PyPI:** [zizkadb-livekit 0.2.1](https://pypi.org/project/zizkadb-livekit/) · depends on `zizkadb-sdk>=0.3.0` + `livekit-agents>=1.3.0`
 
 Log voice calls to ZizkaDB with the same **Activity → Sessions / Events** model as text agents.
 
@@ -13,7 +13,7 @@ Log voice calls to ZizkaDB with the same **Activity → Sessions / Events** mode
 ## Install
 
 ```bash
-pip install "zizkadb-livekit>=0.2.0"
+pip install "zizkadb-livekit>=0.2.1"
 ```
 
 Start ZizkaDB (Docker quickstart):

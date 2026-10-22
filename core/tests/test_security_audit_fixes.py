@@ -293,7 +293,7 @@ async def test_write_event_malformed_parent_id_returns_400():
             parent_id="not-a-valid-uuid-1234",
         )
     assert exc.value.status_code == 400
-    assert exc.value.detail == "parent_id is not a valid UUID"
+    assert exc.value.detail == "parent_id must be a valid event UUID"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

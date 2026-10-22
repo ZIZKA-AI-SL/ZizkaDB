@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-19
+
+Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-livekit` 0.2.1, `zizkadb-crewai` 0.1.3, `zizkadb-langgraph` 0.1.0 (first release). `zizkadb-langchain` is unchanged at 0.1.3. API display version 0.3.0.
+
+### Impact trace: what did this event cause?
+
+- New `GET /v1/events/{event_id}/impact?depth=` walks the causal graph downstream, the mirror of `/why`: every event that descends from the given one through `parent_event_id`, with its `depth` (anchor first, then by depth). `depth` is 0–50 (default 10). At most 500 nodes are returned (the shallowest first); `truncated: true` says the cap was hit, and `depth_truncated: true` says more events lie below the depth limit.
+- Same scoping as `/why`: an agent-scoped key anchors on and descends through its own agent's events only, and an unbound key is bound to the anchor's agent and sees only that agent's subtree.
+
+### Event checksums cover the audit fields
+
+- New events get a v2 checksum over tenant, agent, event type, data, `parent_event_id`, session, timestamp, sequence number and metadata — not just event type + data. Rewriting any of these in the database now shows up as a mismatch. `embedding` and `index_status` are excluded because the embedding pipeline updates them after insert.
+- The checksum is computed from the values Postgres canonicalises (JSONB, UUID, `nextval`, `now()`) and written by the INSERT itself, so JSONB number normalisation, uppercase `parent_id` UUIDs and empty metadata do not cause false mismatches, and each event is still a single row write.
+- New `GET /v1/events/verify?agent=&before_seq=` and `GET /v1/events/{event_id}/verify` recompute checksums and report `valid` / `valid_legacy` / `mismatch` / `missing` (status and version only; hashes are not returned). The list pages by `sequence_no`: pass `next_before_seq` as `before_seq` until it is null. The single-event route returns 404 for an API key not yet bound to an agent.
+- Events written before this release keep their old checksum and verify as `valid_legacy`; nothing is rewritten. The first start records the newest such event in `checksum_v2_cutoff`, and a v1 checksum on any later event is a `mismatch`, so a row cannot be downgraded to the weaker hash.
+- Scope: the checksum is unkeyed and stored in the row. It detects edits made without recomputing it, not a database writer who recomputes it, and it cannot show a deleted event.
+- **Breaking:** the `checksum` returned by `POST /v1/events` (and the SDKs' `LogResult.checksum`) is now the v2 hash. Code that recomputed `sha256({"event", "data"})` client-side to compare will no longer match.
+
 ### Compose: no development defaults on servers
 
 - **Breaking for `infra/docker-compose.yml` users whose `infra/.env` has no `ENV` line.** `ENV` is now required; `docker compose` stops with `Set ENV in infra/.env - production for a server, development for local use only`. It used to default to `development`, which turned on the dev API key and login-free dev-token on a public port. `.env.example` no longer sets `ENV` (a server copy would otherwise default to development); `scripts/setup-local.sh` adds `ENV=development` to a local `infra/.env`, new or existing, that does not set it.

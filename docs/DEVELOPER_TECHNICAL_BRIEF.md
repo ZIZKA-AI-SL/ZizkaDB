@@ -85,7 +85,7 @@ results = await db.search("customer angry about billing", agent="support-bot", l
 
 ### 4.4 Time travel
 
-Reconstruct agent state at any past timestamp from logged events. Each event has a **SHA-256 checksum** over payload content.
+Reconstruct agent state at any past timestamp from logged events. Each event has a **SHA-256 checksum** over its payload and audit fields (agent, session, parent, timestamp, sequence), checkable via `GET /v1/events/verify`.
 
 ```python
 state = await db.at("support-bot", datetime(2026, 5, 1, 15, 0))

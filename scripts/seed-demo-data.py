@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import random
@@ -37,6 +36,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
+
+# services.checksum lives in core/: on the path as /app inside the API container
+# (cwd), and next to scripts/ when run from a checkout.
+if "__file__" in globals():
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core"))
+sys.path.insert(0, os.getcwd())
+from services.checksum import CHECKSUM_COLUMNS, compute_row_checksum_v2  # noqa: E402
 
 # Inside the API container DATABASE_URL points at the stack's Postgres. Running
 # on the host is discouraged: a native Postgres on localhost:5432 (Homebrew,
@@ -81,11 +87,6 @@ SCENARIOS = {
 AGENT_WEIGHTS = {"support-bot": 0.5, "research-agent": 0.3, "billing-agent": 0.2}
 
 
-def checksum(event_type: str, data: dict) -> str:
-    content = json.dumps({"event": event_type, "data": data}, sort_keys=True)
-    return hashlib.sha256(content.encode()).hexdigest()
-
-
 def token_usage(model: str, drifted: bool) -> dict:
     scale = 1.8 if drifted else 1.0
     return {
@@ -117,7 +118,7 @@ class SessionBuilder:
                 json.dumps(data),
                 parent,
                 self.session_id,
-                checksum(event_type, data),
+                None,  # v2 checksum is set after COPY, once sequence_no exists
                 json.dumps(SEED_TAG),
             )
         )
@@ -261,6 +262,16 @@ async def main(args: argparse.Namespace) -> None:
                     "event_id", "tenant_id", "agent_id", "timestamp", "event_type",
                     "data", "parent_event_id", "session_id", "checksum", "metadata",
                 ],
+            )
+            # Same v2 checksum write_event stores, so verify reports the demo
+            # events as valid. It covers sequence_no, which COPY just assigned.
+            seeded = await conn.fetch(
+                f"SELECT {CHECKSUM_COLUMNS} FROM events WHERE event_id = ANY($1::uuid[])",
+                [r[0] for r in rows],
+            )
+            await conn.executemany(
+                "UPDATE events SET checksum = $1 WHERE event_id = $2",
+                [(compute_row_checksum_v2(r), r["event_id"]) for r in seeded],
             )
         sessions = len({r[7] for r in rows})
         print(f"OK {len(rows):,} events in {sessions:,} sessions across {len(AGENT_WEIGHTS)} agents")

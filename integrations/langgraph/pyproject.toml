@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-or-later" }
 dependencies = [
-    "zizkadb-sdk>=0.2.8",
+    "zizkadb-sdk>=0.3.0",
 ]
 
 [project.optional-dependencies]

@@ -208,8 +208,9 @@ class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a hr
 <p><strong>API:</strong> <code>POST /v1/search</code></p>
 <h3 id="time-travel">4.4 Time travel</h3>
 <p>Reconstruct agent state at any past timestamp from logged events.
-Each event has a <strong>SHA-256 checksum</strong> over payload
-content.</p>
+Each event has a <strong>SHA-256 checksum</strong> over its payload
+and audit fields (agent, session, parent, timestamp, sequence), checkable
+via <code>GET /v1/events/verify</code>.</p>
 <div class="sourceCode" id="cb4"><pre
 class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>state <span class="op">=</span> <span class="cf">await</span> db.at(<span class="st">&quot;support-bot&quot;</span>, datetime(<span class="dv">2026</span>, <span class="dv">5</span>, <span class="dv">1</span>, <span class="dv">15</span>, <span class="dv">0</span>))</span></code></pre></div>
 <p><strong>API:</strong> <code>GET /v1/events/at</code></p>

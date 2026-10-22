@@ -12,7 +12,7 @@ from zizkadb.telemetry import ping_on_install
 from .observer import ZizkaDBLiveKitObserver
 from .registry import get_observer, pop_observer, register_observer
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 ping_on_install(sdk="livekit")
 
