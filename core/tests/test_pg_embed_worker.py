@@ -197,7 +197,8 @@ async def test_reindex_script_requeues_failed_and_dead_events_with_a_fresh_budge
     spec = importlib.util.spec_from_file_location("reindex_events", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    await pg_db.execute(module.REQUEUE_SQL)
+    assert module.REQUEUE_SQL is embed_worker.REQUEUE_SQL  # one definition
+    await pg_db.execute(embed_worker.REQUEUE_SQL)
 
     for event_id in (failed, dead):
         state = await _state(pg_db, event_id)
