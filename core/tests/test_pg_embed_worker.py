@@ -1,8 +1,6 @@
 """Embed worker retry policy against a real Postgres: backoff, the 'dead' cap,
 and failing events no longer starving newer ones (#275)."""
 
-from datetime import timedelta
-
 import pytest
 
 import db.connection as connection
@@ -23,6 +21,11 @@ class _Qdrant:
 @pytest.fixture
 async def worker_env(pg_db, monkeypatch):
     """A managed tenant (events start 'pending') and a stub vector store."""
+    # Pin the retry policy so the timings below do not depend on the
+    # environment the suite runs in.
+    monkeypatch.setattr(embed_worker, "MAX_ATTEMPTS", 10)
+    monkeypatch.setattr(embed_worker, "RETRY_BASE_SEC", 30.0)
+    monkeypatch.setattr(embed_worker, "RETRY_MAX_SEC", 3600.0)
     monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
     monkeypatch.delenv("EMBED_SYNC", raising=False)
     qdrant = _Qdrant()

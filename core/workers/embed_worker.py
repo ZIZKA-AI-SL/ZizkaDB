@@ -106,7 +106,7 @@ async def _record_failure(pool, event_id) -> None:
 
 
 async def process_pending_batch(limit: int = 50) -> int:
-    from db.connection import init_db, close_db, get_pool
+    from db.connection import get_pool
     from services.embeddings import generate_embedding, event_to_text
 
     pool = get_pool()
