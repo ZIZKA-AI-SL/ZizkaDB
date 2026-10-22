@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Embed worker backs off and gives up on events that keep failing
+
+- A failed embedding is retried after 30 s, then 60 s, doubling up to 1 hour, instead of on every poll. After 10 attempts (about 3 hours) the event is marked `index_status = 'dead'` and no longer retried. Tunable with `EMBED_MAX_ATTEMPTS`, `EMBED_RETRY_BASE_SEC` and `EMBED_RETRY_MAX_SEC` on the worker.
+- Events waiting for a retry no longer fill the batch, so they cannot stop newer events from being indexed.
+- New columns `events.index_attempts` and `events.index_retry_at`, added on startup without rewriting the table. Existing `failed` events start again at attempt 0.
+- Re-queue dead events with `UPDATE events SET index_status = 'pending', index_attempts = 0, index_retry_at = NULL WHERE index_status = 'dead';`
+
 ## [0.3.0] - 2026-10-19
 
 Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-livekit` 0.2.1, `zizkadb-crewai` 0.1.3, `zizkadb-langgraph` 0.1.0 (first release). `zizkadb-langchain` is unchanged at 0.1.3. API display version 0.3.0.
