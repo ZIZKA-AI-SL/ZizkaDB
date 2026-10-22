@@ -11,7 +11,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A failed embedding is retried after 30 s, then 60 s, doubling up to 1 hour, instead of on every poll. After 10 attempts (about 3 hours) the event is marked `index_status = 'dead'` and no longer retried. Tunable with `EMBED_MAX_ATTEMPTS`, `EMBED_RETRY_BASE_SEC` and `EMBED_RETRY_MAX_SEC` on the worker.
 - Events waiting for a retry no longer fill the batch, so they cannot stop newer events from being indexed.
 - New columns `events.index_attempts` and `events.index_retry_at`, added on startup without rewriting the table. Existing `failed` events start again at attempt 0.
-- Re-queue dead events with `UPDATE events SET index_status = 'pending', index_attempts = 0, index_retry_at = NULL WHERE index_status = 'dead';`
+- `scripts/reindex-events.py` now re-queues `failed` and `dead` events and resets their retry state, so they are retried at once with the full retry budget.
+- The worker keeps running when a batch fails (for example, Postgres briefly unreachable) and retries on the next poll.
 
 ## [0.3.0] - 2026-10-19
 
