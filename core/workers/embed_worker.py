@@ -15,9 +15,8 @@ logger = logging.getLogger("embed_worker")
 POLL_INTERVAL = float(os.getenv("EMBED_WORKER_POLL_SEC", "2"))
 # A failed event is retried after RETRY_BASE_SEC, doubling each time up to
 # RETRY_MAX_SEC, and marked 'dead' after MAX_ATTEMPTS (defaults: about 3 hours
-# of retries, so a provider outage recovers on its own). Re-queue dead events
-# with: UPDATE events SET index_status = 'pending', index_attempts = 0,
-# index_retry_at = NULL WHERE index_status = 'dead';
+# of retries, so a provider outage recovers on its own). Re-queue failed and
+# dead events with scripts/reindex-events.py.
 MAX_ATTEMPTS = max(1, int(os.getenv("EMBED_MAX_ATTEMPTS", "10")))
 RETRY_BASE_SEC = max(1.0, float(os.getenv("EMBED_RETRY_BASE_SEC", "30")))
 RETRY_MAX_SEC = max(RETRY_BASE_SEC, float(os.getenv("EMBED_RETRY_MAX_SEC", "3600")))
@@ -151,9 +150,14 @@ async def main() -> None:
     logger.info("embed worker started")
     try:
         while True:
-            n = await process_pending_batch()
-            if n:
-                logger.info("indexed %d events", n)
+            try:
+                n = await process_pending_batch()
+                if n:
+                    logger.info("indexed %d events", n)
+            except Exception:
+                # e.g. Postgres briefly unreachable: keep the worker alive and
+                # try again on the next poll instead of exiting.
+                logger.exception("embed batch failed; retrying after %.0fs", POLL_INTERVAL)
             await asyncio.sleep(POLL_INTERVAL)
     finally:
         await close_db()

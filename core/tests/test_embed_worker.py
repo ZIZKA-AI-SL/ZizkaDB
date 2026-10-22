@@ -193,3 +193,36 @@ async def test_worker_marks_failed_when_embedding_fails(monkeypatch):
     assert processed == 0
     assert qdrant.upserted == []
     assert pool.table[row["event_id"]]["index_status"] == "failed"
+
+
+async def test_worker_loop_survives_a_failing_batch(monkeypatch):
+    """A batch that raises (e.g. Postgres briefly down) must not end the worker."""
+    import asyncio
+
+    batches = {"n": 0}
+
+    async def flaky_batch():
+        batches["n"] += 1
+        if batches["n"] == 1:
+            raise ConnectionError("postgres unreachable")
+        return 0
+
+    sleeps = {"n": 0}
+
+    async def fake_sleep(_seconds):
+        sleeps["n"] += 1
+        if sleeps["n"] >= 2:
+            raise asyncio.CancelledError  # stop the loop after the second batch
+
+    import importlib
+
+    db_connection = importlib.import_module("db.connection")
+    monkeypatch.setattr(db_connection, "init_db", AsyncMock(), raising=False)
+    monkeypatch.setattr(db_connection, "close_db", AsyncMock(), raising=False)
+    monkeypatch.setattr(embed_worker, "process_pending_batch", flaky_batch)
+    monkeypatch.setattr(embed_worker.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await embed_worker.main()
+
+    assert batches["n"] == 2  # kept polling after the failure

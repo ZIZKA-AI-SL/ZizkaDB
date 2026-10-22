@@ -175,3 +175,31 @@ async def test_large_attempt_counts_do_not_overflow_the_backoff(pg_db, worker_en
     state = await _state(pg_db, event_id)
     assert (state["index_status"], state["index_attempts"]) == ("failed", 1501)
     assert 3595 < state["retry_in"] <= 3600  # RETRY_MAX_SEC
+
+
+async def test_reindex_script_requeues_failed_and_dead_events_with_a_fresh_budget(pg_db, worker_env):
+    import importlib.util
+    from pathlib import Path
+
+    tenant, _ = worker_env
+    failed, dead, skipped = await _log(tenant, n=3)
+    await pg_db.execute(
+        "UPDATE events SET index_status = 'failed', index_attempts = 9, index_retry_at = NOW() + interval '1 hour' WHERE event_id = $1::uuid",
+        failed,
+    )
+    await pg_db.execute(
+        "UPDATE events SET index_status = 'dead', index_attempts = 10, index_retry_at = NULL WHERE event_id = $1::uuid",
+        dead,
+    )
+    await pg_db.execute("UPDATE events SET index_status = 'skipped' WHERE event_id = $1::uuid", skipped)
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "reindex-events.py"
+    spec = importlib.util.spec_from_file_location("reindex_events", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    await pg_db.execute(module.REQUEUE_SQL)
+
+    for event_id in (failed, dead):
+        state = await _state(pg_db, event_id)
+        assert (state["index_status"], state["index_attempts"], state["retry_in"]) == ("pending", 0, None)
+    assert (await _state(pg_db, skipped))["index_status"] == "skipped"
