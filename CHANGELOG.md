@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed: GDPR forget and agent delete failed on events with causal children
+
+- `DELETE /v1/memory/forget` and `DELETE /v1/agents/{agent_id}` returned 500 (`events_parent_event_id_fkey` violation) whenever a deleted event was the parent of another event — e.g. a planner decision that an executor's action points to. Forget had already removed the vectors from Qdrant before the Postgres delete failed.
+- `events.parent_event_id` is no longer a foreign key. Erasing a parent leaves its children exactly as they were, so their event checksums still verify, and `why()` ends where the parent was erased. A new event's parent is still checked when the event is written (it must exist in the same tenant). Existing databases drop the constraint on API startup (idempotent; one worker does it, a busy table is retried on the next start, and the API logs a warning until it is dropped). Suggestions' chain-depth evidence now counts a chain from its first event of that agent, so chains whose first event was erased, or which were started by another agent's event, are counted.
+
 ## [0.3.0] - 2026-10-19
 
 Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-livekit` 0.2.1, `zizkadb-crewai` 0.1.3, `zizkadb-langgraph` 0.1.0 (first release). `zizkadb-langchain` is unchanged at 0.1.3. API display version 0.3.0.

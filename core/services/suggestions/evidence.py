@@ -327,10 +327,18 @@ async def _fetch_chain_depth(pool, tenant_id, agent_id, from_dt, to_dt):
     row = await pool.fetchrow(
         """
         WITH RECURSIVE chain AS (
-            SELECT event_id, 1 AS depth
-            FROM events
-            WHERE tenant_id = $1 AND agent_id = $2 AND parent_event_id IS NULL
-              AND timestamp >= $3 AND timestamp < $4
+            SELECT s.event_id, 1 AS depth
+            FROM events s
+            WHERE s.tenant_id = $1 AND s.agent_id = $2
+              AND s.timestamp >= $3 AND s.timestamp < $4
+              -- Chain starts: the parent is not one of this agent's events. It
+              -- is NULL, another agent's event, or was erased (forget and
+              -- agent delete keep the child's parent_event_id).
+              AND NOT EXISTS (
+                  SELECT 1 FROM events p
+                  WHERE p.event_id = s.parent_event_id
+                    AND p.tenant_id = s.tenant_id AND p.agent_id = s.agent_id
+              )
             UNION ALL
             SELECT e.event_id, c.depth + 1
             FROM events e

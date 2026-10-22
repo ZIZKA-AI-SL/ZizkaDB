@@ -21,7 +21,7 @@ The primary query pattern is: given event E, walk backward through the chain of 
 
 ## Decision
 
-Store causal relationships as a self-referential foreign key `parent_event_id UUID REFERENCES events(event_id)` directly on the `events` table.
+Store causal relationships as a `parent_event_id UUID` column directly on the `events` table. (Originally a self-referential foreign key; see the amendment below: it is no longer a foreign key, and must not become one again.)
 
 The `db.why()` query uses a PostgreSQL **recursive CTE** starting from any event and following `parent_event_id` links backward:
 
@@ -59,4 +59,13 @@ The vast majority of agent workflows produce linear or tree-shaped causal chains
 
 **Separate `causality` table**: adds a join on every `db.why()` call; more flexible for DAGs but unnecessary complexity for the common case.
 
-**`causes` JSONB array**: makes the recursive CTE much harder to write; no foreign key constraint; harder to index.
+**`causes` JSONB array**: makes the recursive CTE much harder to write and harder to index.
+
+
+## Amendment (October 2026): no foreign key
+
+`parent_event_id` is no longer a foreign key (`core/db/event_constraints.py` drops it on startup; `core/db/schema.sql` no longer creates it).
+
+- **Why:** with the foreign key, GDPR forget and agent delete failed whenever a deleted event had a causal child. `ON DELETE SET NULL` would have fixed that by rewriting the children, but the v2 event checksum covers `parent_event_id`, so every child of a forgotten event would then fail verification.
+- **Now:** erasing a parent leaves its children exactly as they were. Their checksums still verify, and `why()` ends where the parent was erased. New links are still checked when an event is written (`services/event_write.py`: the parent must exist in the same tenant).
+- **Do not re-add the foreign key**, with or without `ON DELETE SET NULL`.

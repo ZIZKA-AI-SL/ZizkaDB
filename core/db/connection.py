@@ -7,6 +7,8 @@ import redis.asyncio as redis
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, VectorParams
 
+from db.event_constraints import drop_parent_fks
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------
@@ -278,6 +280,15 @@ async def init_db():
             END IF;
         END $$;
     """)
+
+    if await drop_parent_fks(_pg_pool):
+        # Skipped because the events table was busy: say so in the API log,
+        # not only in Postgres's. Retried on the next start.
+        logger.warning(
+            "events.parent_event_id still has a foreign key: GDPR forget and agent "
+            "delete fail for events that have causal children until it is dropped "
+            "on a later start."
+        )
 
     await _pg_pool.execute("""
         CREATE INDEX IF NOT EXISTS idx_api_keys_agent
