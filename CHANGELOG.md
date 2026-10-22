@@ -11,8 +11,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A failed embedding is retried after 30 s, then 60 s, doubling up to 1 hour, instead of on every poll. After 10 attempts (about 3 hours) the event is marked `index_status = 'dead'` and no longer retried. Tunable with `EMBED_MAX_ATTEMPTS`, `EMBED_RETRY_BASE_SEC` and `EMBED_RETRY_MAX_SEC` on the worker.
 - Events waiting for a retry no longer fill the batch, so they cannot stop newer events from being indexed.
 - New columns `events.index_attempts` and `events.index_retry_at`, added on startup without rewriting the table. Existing `failed` events start again at attempt 0.
-- `scripts/reindex-events.py` now re-queues `failed` and `dead` events and resets their retry state, so they are retried at once with the full retry budget.
-- The worker keeps running when a batch fails (for example, Postgres briefly unreachable) and retries on the next poll.
+- Re-queue `failed` and `dead` events, with a fresh retry budget, from inside the worker container: `docker exec zizkadb_embed_worker python workers/embed_worker.py --requeue` (or `scripts/reindex-events.py` from a checkout).
+- The worker keeps running when a whole batch fails (for example, Postgres briefly unreachable), backing off up to 60 s and logging the traceback once per outage.
+- With `EMBED_SYNC=true` the inline attempt at write time is not counted, so such an event gets one extra try.
 
 ## [0.3.0] - 2026-10-19
 
