@@ -66,20 +66,6 @@ describe('middleware — self-hosted', () => {
     )
   })
 
-  it.each(['/v1/events', '/v1/auth/selfhost', '/health', '/health/deep', '/swagger'])(
-    'passes API path %s through to the rewrite, signed out',
-    async (path) => {
-      const mw = await loadMiddleware('self_hosted')
-      expect(location(mw(request(path)))).toBeNull()
-    },
-  )
-
-  it('does not treat look-alike paths as API paths', async () => {
-    const mw = await loadMiddleware('self_hosted')
-    expect(location(mw(request('/v1x')))).toBe('/login')
-    expect(location(mw(request('/healthy')))).toBe('/login')
-  })
-
   it('marks every response noindex', async () => {
     const mw = await loadMiddleware('self_hosted')
     expect(mw(request('/login')).headers.get('x-robots-tag')).toBe('noindex, nofollow')

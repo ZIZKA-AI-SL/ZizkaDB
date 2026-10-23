@@ -3,7 +3,7 @@
 # One `docker run`, no compose file, no .env. All state lives in the /data volume.
 #
 # Production by default: sign-in needs the admin token generated on first start
-# (docker exec <container> grep SELFHOST_ADMIN_TOKEN /data/secrets.env).
+# (docker exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env).
 # Port 3001 serves the dashboard and the API (/v1) together; 8000 is the API alone.
 # Local one-click mode, with the well-known zizkadb_dev_local API key:
 #   docker run -e ENV=development -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 ...
@@ -17,9 +17,8 @@ WORKDIR /app
 COPY dashboard/package.json dashboard/package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 COPY dashboard/ .
-# Empty API URL: the browser calls the dashboard's own origin and Next.js
-# forwards /v1 to the API inside the container (dashboard/next.config.mjs),
-# so one public port serves the whole product.
+# Empty API URL: the browser calls its own origin, and the image's front proxy
+# (front-proxy.js) sends /v1 to the API, so one public port serves everything.
 ENV NEXT_PUBLIC_API_URL="" \
     NEXT_PUBLIC_DEV_MODE=false \
     NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted \
@@ -62,16 +61,19 @@ COPY --chown=zizkadb:zizkadb core/ /app/api/
 COPY --from=dashboard --chown=zizkadb:zizkadb /app/public /app/dashboard/public
 COPY --from=dashboard --chown=zizkadb:zizkadb /app/.next/standalone /app/dashboard/
 COPY --from=dashboard --chown=zizkadb:zizkadb /app/.next/static /app/dashboard/.next/static
-COPY core/db/schema.sql infra/allinone/entrypoint.sh infra/allinone/seed_demo.py /opt/zizkadb/
+COPY core/db/schema.sql infra/allinone/entrypoint.sh infra/allinone/seed_demo.py \
+     infra/allinone/front-proxy.js /opt/zizkadb/
 RUN chmod +x /opt/zizkadb/entrypoint.sh
 
 # ENV=production unless the operator passes ENV=development. The entrypoint
 # generates the database password, JWT secrets and SELFHOST_ADMIN_TOKEN once and
 # keeps them in /data/secrets.env. QDRANT_URL="" runs without Qdrant (embeddings
-# are off by default on self-host).
+# are off by default on self-host). Only the in-container front proxy is
+# trusted for X-Forwarded-For; behind another proxy, add its address range.
 ENV ENV=production \
     DEPLOYMENT_MODE=self_hosted \
     EMBEDDINGS_ENABLED=false \
+    TRUSTED_PROXIES=127.0.0.1,::1 \
     REDIS_URL=redis://127.0.0.1:6379 \
     QDRANT_URL="" \
     COMMUNITY_UPLOAD_DIR=/data/community_uploads \
