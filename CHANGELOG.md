@@ -9,7 +9,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed: agent baseline with a time window returned 500
 
 - `GET /v1/agents/{id}/baseline?window=24h|7d|30d` failed for every window (a naive cutoff was compared with timezone-aware session times). It now splits sessions at the cutoff, using the database clock. The count-based split (`recent_window`) was not affected.
-- With a window and no session inside it, the response is `insufficient_data` instead of a drift report against an empty window (which would have shown `significant_drift` for an agent that simply did not run). Every baseline response now includes `window`, and the warming-up message and dashboard text explain that a session older than the window is needed.
+- With a window and no session inside it, the response is `no_current_data` (the status `/behavior-change` already uses) instead of a drift report against an empty window, which would have shown `significant_drift` for an agent that simply did not run. Every baseline response now includes `window`, and the warming-up message explains that a session which ended before the window is needed. A session counts as recent when its last event falls in the window.
+- Dashboard: the behaviour panel names the time window in its labels, taken from the window the data was computed for.
 
 ### Embed worker backs off and gives up on events that keep failing
 
