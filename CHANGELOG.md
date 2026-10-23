@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Dashboard fonts ship with the app
+
+- Inter and JetBrains Mono are bundled with the dashboard (`@fontsource`) instead of loaded from Google Fonts, so a visitor's browser no longer contacts Google for fonts. With that, a self-hosted dashboard makes no third-party requests. `docs/telemetry.md` is updated.
+
 ### Fixed: single image redirected browsers to localhost:3002
 
 - On the single image (`infra/allinone/`), opening `/` or a protected page redirected to `http://localhost:3002/login`, the dashboard's internal address, so sign-in was unreachable from a browser on any public URL. The front proxy now turns redirects that point at an internal address into relative paths, so the browser stays on the address it used.

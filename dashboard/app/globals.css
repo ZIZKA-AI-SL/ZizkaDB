@@ -1,7 +1,6 @@
-/* @import must precede all other rules per the CSS spec, so the font import
-   comes before the Tailwind layers — otherwise Inter/JetBrains Mono fail to
-   load and the app falls back to system fonts. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Inter and JetBrains Mono are bundled with the app: the @font-face rules come
+   from the @fontsource imports in app/layout.tsx. A new font-weight used here
+   needs its import there, or the browser synthesizes it. */
 
 @tailwind base;
 @tailwind components;
