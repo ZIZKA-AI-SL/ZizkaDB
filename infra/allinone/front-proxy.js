@@ -60,20 +60,18 @@ function peerAddress(socket) {
 // browser can reach. Such a Location becomes a relative path, so the browser
 // stays on whatever public address it used.
 const INTERNAL_PORTS = new Set([String(API.port), String(WEB.port)])
-const INTERNAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0'])
+const INTERNAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0', '[::]'])
+const BASE = 'http://front-proxy.invalid'
 
-function publicLocation(location) {
+function publicLocation(location, ports = INTERNAL_PORTS) {
   if (!location) return location
-  let url
-  try {
-    url = new URL(location)
-  } catch {
-    return location // already relative
-  }
-  if (INTERNAL_HOSTS.has(url.hostname) && INTERNAL_PORTS.has(url.port)) {
-    return `${url.pathname}${url.search}${url.hash}`
-  }
-  return location
+  // A base resolves protocol-relative values (//host:port/path) too.
+  const url = new URL(location, BASE)
+  if (url.origin === BASE) return location // path-relative already
+  const port = url.port || (url.protocol === 'https:' ? '443' : '80')
+  if (!INTERNAL_HOSTS.has(url.hostname) || !ports.has(port)) return location
+  // Collapse leading slashes: '//evil.example' would leave this site.
+  return `/${url.pathname.replace(/^\/+/, '')}${url.search}${url.hash}`
 }
 
 function withoutHopByHop(headers, extra = []) {
@@ -123,4 +121,8 @@ const server = http.createServer((req, res) => {
   req.pipe(upstream)
 })
 
-server.listen(LISTEN_PORT, '0.0.0.0')
+if (require.main === module) {
+  server.listen(LISTEN_PORT, '0.0.0.0')
+}
+
+module.exports = { publicLocation }

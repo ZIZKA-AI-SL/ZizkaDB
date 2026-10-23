@@ -83,7 +83,7 @@ VOLUME /data
 EXPOSE 8000 3001
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
-    CMD curl -fsS http://127.0.0.1:8000/health >/dev/null \
+    CMD curl -fsS "http://127.0.0.1:${API_INTERNAL_PORT:-8000}/health" >/dev/null \
         && curl -fsS -o /dev/null http://127.0.0.1:3001/login || exit 1
 
 ENTRYPOINT ["tini", "--", "/opt/zizkadb/entrypoint.sh"]
