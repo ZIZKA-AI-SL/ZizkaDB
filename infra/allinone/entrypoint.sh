@@ -192,12 +192,13 @@ done
 
 log "Starting API and dashboard..."
 ( cd /app/api && exec "${APP_USER[@]}" \
-    uvicorn main:app --host 0.0.0.0 --port 8000 --log-level warning ) &
+    uvicorn main:app --host 0.0.0.0 --port "${API_INTERNAL_PORT:-8000}" --log-level warning ) &
 PIDS+=($!)
 
 # The dashboard listens inside the container only; the front proxy owns the
 # public port 3001 and routes /v1, /health and /swagger to the API.
-( cd /app/dashboard && PORT=3002 HOSTNAME=127.0.0.1 NODE_ENV=production \
+# front-proxy.js reads the same API_INTERNAL_PORT / DASHBOARD_INTERNAL_PORT.
+( cd /app/dashboard && PORT="${DASHBOARD_INTERNAL_PORT:-3002}" HOSTNAME=127.0.0.1 NODE_ENV=production \
     exec "${APP_USER[@]}" node server.js >/dev/null ) &
 PIDS+=($!)
 
@@ -208,7 +209,7 @@ PIDS+=($!)
 (
   ready=0
   for _ in $(seq 1 240); do
-    if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1 \
+    if curl -fsS "http://127.0.0.1:${API_INTERNAL_PORT:-8000}/health" >/dev/null 2>&1 \
        && curl -fsS -o /dev/null http://127.0.0.1:3001/login 2>/dev/null; then
       ready=1
       break
@@ -222,7 +223,7 @@ PIDS+=($!)
 
   if is_dev \
      && [ "${ZIZKADB_SEED_DEMO:-true}" != "false" ] && [ ! -f "$DEMO_MARKER" ]; then
-    if as_app python /opt/zizkadb/seed_demo.py > "$DATA/demo-chain.txt" 2>"$DATA/demo-seed.err"; then
+    if ZIZKADB_SEED_API="http://127.0.0.1:${API_INTERNAL_PORT:-8000}" as_app python /opt/zizkadb/seed_demo.py > "$DATA/demo-chain.txt" 2>"$DATA/demo-seed.err"; then
       touch "$DEMO_MARKER"
     else
       log "Demo seed skipped: $(tail -n 1 "$DATA/demo-seed.err" 2>/dev/null || true)"
