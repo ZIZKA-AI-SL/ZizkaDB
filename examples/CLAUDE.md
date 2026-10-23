@@ -12,6 +12,7 @@ These are **end-user integration demos**, not core product code. Keep them minim
 |-----------|-------------------|
 | `minimal-python/` | `zizkadb-sdk` — `log` → `parent_id` → `why()` |
 | `openai-agent/` | AsyncOpenAI + causal `parent_id` |
+| `anthropic-agent/` | AsyncAnthropic + causal `parent_id` |
 | `langchain-agent/` | `zizkadb-langchain` → `ZizkaDBCallbackHandler` |
 | `crewai-agent/` | `zizkadb-crewai` → `ZizkaDBCrewLogger` |
 | `livekit-agent/` | `zizkadb-livekit` → `ZizkaDBLiveKitObserver` |

@@ -7,7 +7,7 @@
  * Uses the package's existing Vitest test runner.
  */
 
-import { afterAll, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, expect, it } from 'vitest'
 
 // Save the original fetch so we can restore it after all tests finish.
 const _originalFetch = globalThis.fetch
@@ -16,6 +16,21 @@ const _originalFetch = globalThis.fetch
 process.env.ZIZKADB_TELEMETRY = 'false'
 
 import { AgentScopeError, AuthError, ZizkaDB, ZizkaDBError } from '../src/index.ts'
+
+// The client reads ZIZKADB_HOST / AGENTDB_HOST when no host is passed; a
+// developer's exported values must not change which server a test talks to.
+const HOST_VARS = ['ZIZKADB_HOST', 'AGENTDB_HOST']
+let savedHostVars = {}
+beforeEach(() => {
+  savedHostVars = Object.fromEntries(HOST_VARS.map((k) => [k, process.env[k]]))
+  for (const k of HOST_VARS) delete process.env[k]
+})
+afterEach(() => {
+  for (const k of HOST_VARS) {
+    if (savedHostVars[k] === undefined) delete process.env[k]
+    else process.env[k] = savedHostVars[k]
+  }
+})
 
 
 function jsonResponse(body, status = 200) {
@@ -182,4 +197,83 @@ it('logApi names the call and drops secrets from the url', async () => {
   })
   expect(JSON.stringify(bodies[0])).not.toMatch(/secret|pw@/)
   expect(bodies[1].data).toEqual({ api: 'orders.list', method: 'GET', url: '/internal/orders' })
+})
+
+
+async function firstRequestUrl(config) {
+  const urls = []
+  globalThis.fetch = async (url) => {
+    urls.push(String(url))
+    return jsonResponse({ event_id: 'e', timestamp: 't', sequence_no: 1, checksum: 'c' })
+  }
+  const db = new ZizkaDB(config)
+  await db.log({ agent: 'a', event: 'user_message', data: {} })
+  return urls[0]
+}
+
+function withHostEnv(value, fn) {
+  const saved = process.env.ZIZKADB_HOST
+  if (value === undefined) delete process.env.ZIZKADB_HOST
+  else process.env.ZIZKADB_HOST = value
+  return fn().finally(() => {
+    if (saved === undefined) delete process.env.ZIZKADB_HOST
+    else process.env.ZIZKADB_HOST = saved
+  })
+}
+
+it('an apiKey with ZIZKADB_HOST set goes to that host, not Cloud', () =>
+  withHostEnv('https://zizka.example.com/', async () => {
+    const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x' })
+    expect(url.startsWith('https://zizka.example.com/v1/')).toBe(true)
+  }))
+
+it('an explicit host wins over ZIZKADB_HOST', () =>
+  withHostEnv('https://env.example.com', async () => {
+    const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x', host: 'https://arg.example.com' })
+    expect(url.startsWith('https://arg.example.com/v1/')).toBe(true)
+  }))
+
+it('an apiKey alone still means Cloud', () =>
+  withHostEnv(undefined, async () => {
+    const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x' })
+    expect(url).toMatch(/^https:\/\/db\.zizka\.ai\//)
+  }))
+
+it('the legacy AGENTDB_HOST is honoured when ZIZKADB_HOST is unset', async () => {
+  const saved = process.env.AGENTDB_HOST
+  process.env.AGENTDB_HOST = 'https://legacy.example.com'
+  try {
+    await withHostEnv(undefined, async () => {
+      const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x' })
+      expect(url.startsWith('https://legacy.example.com/v1/')).toBe(true)
+    })
+  } finally {
+    if (saved === undefined) delete process.env.AGENTDB_HOST
+    else process.env.AGENTDB_HOST = saved
+  }
+})
+
+it('a blank host means unset, not a relative URL', () =>
+  withHostEnv(undefined, async () => {
+    const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x', host: '  ' })
+    expect(url).toMatch(/^https:\/\/db\.zizka\.ai\//)
+  }))
+
+it('constructs without a process global (browsers, edge runtimes)', () => {
+  const realProcess = globalThis.process
+  try {
+    globalThis.process = undefined
+    // Key only (host lookup) and local host only (key and dev-key lookup).
+    expect(() => new ZizkaDB({ apiKey: 'zizkadb_live_x' })).not.toThrow()
+    expect(() => new ZizkaDB({ host: 'http://localhost:8000' })).not.toThrow()
+  } finally {
+    globalThis.process = realProcess
+  }
+})
+
+it('a blank ZIZKADB_HOST falls through to AGENTDB_HOST', async () => {
+  process.env.ZIZKADB_HOST = '  '
+  process.env.AGENTDB_HOST = 'https://legacy.example.com'
+  const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x' })
+  expect(url.startsWith('https://legacy.example.com/v1/')).toBe(true)
 })

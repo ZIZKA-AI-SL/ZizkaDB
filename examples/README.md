@@ -19,6 +19,7 @@ Voice agents: **`pip install zizkadb-livekit`** — see [livekit-agent/](livekit
 |---------|-------------|
 | [minimal-python](minimal-python/) | `log` → `parent_id` → `why()` |
 | [openai-agent](openai-agent/) | AsyncOpenAI causal logging |
+| [anthropic-agent](anthropic-agent/) | Claude (Anthropic API) causal logging |
 | [langchain-agent](langchain-agent/) | LangChain callbacks |
 | [crewai-agent](crewai-agent/) | CrewAI kickoff + output |
 | [livekit-agent](livekit-agent/) | LiveKit voice call → Sessions + Events; includes local browser UI (`web_server.py`) |

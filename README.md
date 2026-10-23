@@ -87,7 +87,8 @@ Now log your own agent: `pip install zizkadb-sdk`, then see [CONNECT.md](CONNECT
 The script is a wrapper around this:
 
 ```bash
-docker run -d --name zizkadb -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
+docker run -d --name zizkadb -e ENV=development \
+  -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
   -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
 ```
 
@@ -101,7 +102,7 @@ docker run -d --name zizkadb -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
 
 </details>
 
-The single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
+With `ENV=development` the single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. Without it, the image runs in production mode: it generates its own secrets on first start and the dashboard asks for the admin token (`docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`). It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
