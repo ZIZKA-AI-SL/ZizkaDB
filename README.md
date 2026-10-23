@@ -102,7 +102,7 @@ docker run -d --name zizkadb -e ENV=development \
 
 </details>
 
-With `ENV=development` the single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. Without it, the image runs in production mode: it generates its own secrets on first start and the dashboard asks for the admin token (`docker exec zizkadb grep SELFHOST_ADMIN_TOKEN /data/secrets.env`). It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
+With `ENV=development` the single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. Without it, the image runs in production mode: it generates its own secrets on first start and the dashboard asks for the admin token (`docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`). It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
