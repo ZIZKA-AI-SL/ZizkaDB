@@ -236,7 +236,6 @@ it('an explicit host wins over ZIZKADB_HOST', () =>
 it('an apiKey alone still means Cloud', () =>
   withHostEnv(undefined, async () => {
     const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x' })
-    expect(url.startsWith('https://zizka.example.com')).toBe(false)
     expect(url).toMatch(/^https:\/\/db\.zizka\.ai\//)
   }))
 
