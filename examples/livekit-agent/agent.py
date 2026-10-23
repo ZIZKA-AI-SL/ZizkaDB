@@ -49,16 +49,15 @@ async def on_session_end(ctx: JobContext) -> None:
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
-    host = os.getenv("ZIZKADB_HOST", "http://localhost:8000")
+    # An explicit ZIZKADB_HOST wins (self-hosted with an API key); a key alone
+    # means ZizkaDB Cloud; neither means the local dev stack.
     api_key = os.getenv("ZIZKADB_API_KEY")
+    host = os.getenv("ZIZKADB_HOST") or (None if api_key else "http://localhost:8000")
     agent_name = AGENT_NAME
     # Room name is already unique (e.g. call_<uuid> from web_server token)
     session_id = ctx.room.name
 
-    if api_key:
-        db = ZizkaDB(api_key=api_key)
-    else:
-        db = ZizkaDB(host=host)
+    db = ZizkaDB(api_key=api_key, host=host)
 
     observer = ZizkaDBLiveKitObserver(db, agent=agent_name, session_id=session_id)
     register_observer(ctx, observer)
