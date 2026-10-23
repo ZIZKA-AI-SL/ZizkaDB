@@ -7,7 +7,7 @@ This page lists every network call ZizkaDB makes on its own, outside of the requ
 | Component | Sends by default | To | Turn off |
 |---|---|---|---|
 | Server: API, database, single-container image | Nothing | n/a | n/a |
-| Dashboard (in the visitor's browser) | Font requests | Google Fonts | Not configurable yet (see below) |
+| Dashboard (in the visitor's browser) | Nothing | n/a | n/a |
 | Python SDK, TypeScript SDK, MCP server, integrations | One anonymous install ping per process | `https://db.zizka.ai/v1/telemetry` | `ZIZKADB_TELEMETRY=false` |
 | `scripts/quickstart-remote.sh` and `scripts/setup-local.sh` | One anonymous install ping per run | `https://db.zizka.ai/v1/telemetry` | `ZIZKADB_TELEMETRY=false` |
 | Optional features you enable | Your data, to the provider you configure | OpenAI or Anthropic | Leave the feature off |
@@ -21,7 +21,7 @@ The API and the single-container image make no outbound calls of their own.
 
 ## Dashboard
 
-- **Google Fonts.** The dashboard's stylesheet loads the Inter and JetBrains Mono fonts from `fonts.googleapis.com`, so each visitor's browser requests them from Google. That request reveals the visitor's IP address to Google, as any third-party font does. Hosting the fonts in the image is planned.
+- **No third-party requests.** The fonts (Inter and JetBrains Mono) ship with the dashboard, so a visitor's browser only talks to your ZizkaDB server.
 - **No analytics.** The dashboard loads no analytics, tracking or advertising scripts.
 
 ## SDKs, MCP server and integrations
