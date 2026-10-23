@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Docs: deploy on Redu Cloud, and what ZizkaDB sends
+
+- New `redu.md`: the recipe redu uses to deploy the open-source single container from this repository. README and wiki have a "Deploy on Redu Cloud" section.
+- New `docs/telemetry.md`: every network call ZizkaDB makes on its own (SDK and install pings, dashboard fonts, optional features) and how to turn each off.
+
 ### Fixed: agent baseline with a time window returned 500
 
 - `GET /v1/agents/{id}/baseline?window=24h|7d|30d` failed for every window (a naive cutoff was compared with timezone-aware session times). It now splits sessions at the cutoff, using the database clock. The count-based split (`recent_window`) was not affected.
