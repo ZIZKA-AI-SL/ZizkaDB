@@ -11,6 +11,7 @@ plan:
   data_paths:
     - /data
   env:
+    ENV: production
     TRUSTED_PROXIES: "127.0.0.1,::1,10.0.0.0/8"
 quirks:
   - "Build infra/allinone/Dockerfile with context '.' (the repo root). It runs Postgres, Redis, the API and the dashboard in one container, so start no managed datastores: database 'none', one VM."
