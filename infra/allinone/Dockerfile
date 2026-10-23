@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 # ZizkaDB single-container image: Postgres 16 (pgvector) + Redis + API + dashboard.
-# For local use and evaluation — one `docker run`, no compose file, no .env.
-# Production / multi-node: use infra/docker-compose.yml.
+# One `docker run`, no compose file, no .env. All state lives in the /data volume.
+#
+# Production by default: sign-in needs the admin token generated on first start
+# (docker exec <container> grep SELFHOST_ADMIN_TOKEN /data/secrets.env).
+# Local one-click mode, with the well-known zizkadb_dev_local API key:
+#   docker run -e ENV=development -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 ...
+# Multi-container or semantic search (Qdrant): use infra/docker-compose.yml.
 #
 # Build from the repo root:
 #   docker build -f infra/allinone/Dockerfile -t zizkadb .
@@ -56,18 +61,18 @@ COPY --from=dashboard --chown=zizkadb:zizkadb /app/.next/static /app/dashboard/.
 COPY core/db/schema.sql infra/allinone/entrypoint.sh infra/allinone/seed_demo.py /opt/zizkadb/
 RUN chmod +x /opt/zizkadb/entrypoint.sh
 
-# ENV=development: one-click dashboard and the zizkadb_dev_local API key, so
-# publish the ports on 127.0.0.1 only. QDRANT_URL="" runs without Qdrant
-# (embeddings are off by default on self-host).
-ENV ENV=development \
+# ENV=production unless the operator passes ENV=development. The entrypoint
+# generates the database password, JWT secrets and SELFHOST_ADMIN_TOKEN once and
+# keeps them in /data/secrets.env. QDRANT_URL="" runs without Qdrant (embeddings
+# are off by default on self-host). TRUSTED_PROXIES covers the in-container
+# dashboard proxy and a platform proxy on a private network, so rate limits see
+# the real client address.
+ENV ENV=production \
     DEPLOYMENT_MODE=self_hosted \
-    DEV_API_KEY=zizkadb_dev_local \
     EMBEDDINGS_ENABLED=false \
-    DATABASE_URL=postgresql://zizkadb:zizkadb@127.0.0.1:5432/zizkadb \
+    TRUSTED_PROXIES=127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
     REDIS_URL=redis://127.0.0.1:6379 \
     QDRANT_URL="" \
-    PUBLIC_API_URL=http://localhost:8000 \
-    DASHBOARD_URL=http://localhost:3001 \
     COMMUNITY_UPLOAD_DIR=/data/community_uploads \
     NEXT_TELEMETRY_DISABLED=1
 
