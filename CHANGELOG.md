@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed: single image redirected browsers to localhost:3002
+
+- On the single image (`infra/allinone/`), opening `/` or a protected page redirected to `http://localhost:3002/login`, the dashboard's internal address, so sign-in was unreachable from a browser on any public URL. The front proxy now turns redirects that point at an internal address into relative paths, so the browser stays on the address it used.
+
 ### Docs: deploy on Redu Cloud, and what ZizkaDB sends
 
 - New `redu.md`: the recipe redu uses to deploy the open-source single container from this repository. README and wiki have a "Deploy on Redu Cloud" section.
