@@ -11,8 +11,14 @@ SCHEMA_MARKER="$PGDATA/.zizkadb_schema_applied"
 DEMO_MARKER="$DATA/.demo_seeded"
 
 log() { echo "[zizkadb] $*"; }
-# Same rule as the API (services/runtime_env.py): only "development" is dev mode.
-is_dev() { [ "$(printf '%s' "${ENV:-production}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" = "development" ]; }
+# Same rule as the API (services/runtime_env.py): trim the ends, ignore case.
+is_dev() {
+  local v
+  v="$(printf '%s' "${ENV:-production}" | tr '[:upper:]' '[:lower:]')"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  [ "$v" = "development" ]
+}
 # setpriv keeps the environment, so give each user a HOME it can read
 # (asyncpg and psql look in ~/.postgresql).
 PG_USER=(env HOME=/var/lib/postgresql setpriv --reuid=postgres --regid=postgres --init-groups)
@@ -26,8 +32,9 @@ chmod 700 "$PGDATA"
 chown zizkadb:zizkadb "$DATA/redis" "$DATA/community_uploads"
 
 # ── Secrets: generated once per install, kept in the volume ──────────────────
-# Each key is added only when missing, so a secrets.env from an older image is
-# upgraded in place and existing values are never replaced.
+# Keys that are missing or empty are added; existing values are never replaced,
+# so a secrets.env from an older image is upgraded in place. The file is
+# rewritten atomically, so an interrupted first start cannot leave a half line.
 (
   umask 077
   python - "$SECRETS" <<'PY'
@@ -36,22 +43,29 @@ import secrets
 import sys
 
 path = sys.argv[1]
-have = set()
+lines, have = [], set()
 if os.path.exists(path):
     with open(path) as f:
-        have = {line.split("=", 1)[0] for line in f if "=" in line}
+        for line in f:
+            key, sep, value = line.rstrip("\n").partition("=")
+            if sep and value:
+                lines.append(f"{key}={value}")
+                have.add(key)
 wanted = {
     "GEN_JWT_SECRET": lambda: secrets.token_hex(32),
     "GEN_JWT_REFRESH_SECRET": lambda: secrets.token_hex(32),
-    "GEN_DEV_API_KEY": lambda: f"zizkadb_local_{secrets.token_hex(24)}",
     "GEN_SELFHOST_ADMIN_TOKEN": lambda: secrets.token_urlsafe(32),
     "GEN_PG_PASSWORD": lambda: secrets.token_hex(24),
 }
 missing = [k for k in wanted if k not in have]
-if missing:
-    with open(path, "a") as f:
-        for key in missing:
-            f.write(f"{key}={wanted[key]()}\n")
+if missing or not os.path.exists(path):
+    lines += [f"{k}={wanted[k]()}" for k in missing]
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 PY
 )
 # shellcheck disable=SC1090
@@ -62,16 +76,10 @@ ADMIN_TOKEN_FROM_ENV=false
 [ -n "${SELFHOST_ADMIN_TOKEN:-}" ] && ADMIN_TOKEN_FROM_ENV=true
 export SELFHOST_ADMIN_TOKEN="${SELFHOST_ADMIN_TOKEN:-$GEN_SELFHOST_ADMIN_TOKEN}"
 PG_PASSWORD="$GEN_PG_PASSWORD"
-# An operator-supplied DATABASE_URL is left alone, and so is the role password.
-MANAGE_PG_PASSWORD=true
-[ -n "${DATABASE_URL:-}" ] && MANAGE_PG_PASSWORD=false
 export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0.1:5432/zizkadb}"
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
-elif [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ]; then
-  # The API refuses to start in production with the well-known dev key.
-  export DEV_API_KEY="$GEN_DEV_API_KEY"
 fi
 unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
 
@@ -93,16 +101,21 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     --auth-local=trust --auth-host=scram-sha-256 >/dev/null
 fi
 
-# The role password follows secrets.env. Installs from older images used a
-# fixed password; it is replaced once, here, the first time this image starts.
-PASSWORD_MARKER="$PGDATA/.zizkadb_password_from_secrets"
-[ "$MANAGE_PG_PASSWORD" = true ] || PASSWORD_MARKER="$SCHEMA_MARKER"
-if [ ! -f "$SCHEMA_MARKER" ] || [ ! -f "$PASSWORD_MARKER" ]; then
+# The local role's password follows secrets.env. The marker holds a hash of the
+# password last set, so a changed or regenerated secrets.env is applied on the
+# next start instead of locking the API out. Installs from older images used a
+# fixed password; it is replaced here the first time this image starts.
+PASSWORD_MARKER="$PGDATA/.zizkadb_password_sha256"
+PG_PASSWORD_HASH="$(printf '%s' "$PG_PASSWORD" | sha256sum | cut -d' ' -f1)"
+if [ ! -f "$SCHEMA_MARKER" ] || [ "$(cat "$PASSWORD_MARKER" 2>/dev/null)" != "$PG_PASSWORD_HASH" ]; then
   as_pg pg_ctl -D "$PGDATA" -o "-c listen_addresses=''" -w start >/dev/null
+  # Sent on stdin (never argv) and quoted by psql's :'var' syntax.
+  printf '\\set pw %s\nSELECT format(%s, :%s) WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %s) \\gexec\nALTER ROLE zizkadb PASSWORD :%s;\n' \
+      "$PG_PASSWORD" "'CREATE ROLE zizkadb LOGIN SUPERUSER PASSWORD %L'" "'pw'" "'zizkadb'" "'pw'" \
+    | as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null
+  printf '%s\n' "$PG_PASSWORD_HASH" | as_pg tee "$PASSWORD_MARKER" >/dev/null
   if [ ! -f "$SCHEMA_MARKER" ]; then
     as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
-SELECT 'CREATE ROLE zizkadb LOGIN SUPERUSER'
- WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'zizkadb') \gexec
 SELECT 'CREATE DATABASE zizkadb OWNER zizkadb'
  WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'zizkadb') \gexec
 SQL
@@ -110,15 +123,9 @@ SQL
     as_pg psql -q -1 -v ON_ERROR_STOP=1 -U zizkadb -d zizkadb -f /opt/zizkadb/schema.sql >/dev/null
     as_pg touch "$SCHEMA_MARKER"
   fi
-  if [ ! -f "$PASSWORD_MARKER" ]; then
-    # Sent on stdin (never argv) and quoted by psql's :'var' syntax.
-    printf '\\set pw %s\nALTER ROLE zizkadb PASSWORD :%s;\n' "$PG_PASSWORD" "'pw'" \
-      | as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null
-    as_pg touch "$PASSWORD_MARKER"
-  fi
   as_pg pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null
 fi
-unset PG_PASSWORD
+unset PG_PASSWORD PG_PASSWORD_HASH
 
 # ── Run everything ───────────────────────────────────────────────────────────
 PIDS=()
@@ -212,7 +219,7 @@ PIDS+=($!)
     fi
     echo "  Local one-click mode instead: start the container with -e ENV=development"
   fi
-  echo "  Swagger:    http://localhost:8000/swagger"
+  echo "  Swagger:    ${PUBLIC_API_URL}/swagger"
   echo ""
 ) &
 BANNER_PID=$!
