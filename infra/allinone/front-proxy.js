@@ -55,6 +55,27 @@ function peerAddress(socket) {
   return addr.startsWith('::ffff:') ? addr.slice(7) : addr
 }
 
+// The upstreams build absolute redirects from the address they listen on
+// (Next.js uses its own host and port, not the request's Host), which no
+// browser can reach. Such a Location becomes a relative path, so the browser
+// stays on whatever public address it used.
+const INTERNAL_PORTS = new Set([String(API.port), String(WEB.port)])
+const INTERNAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0'])
+
+function publicLocation(location) {
+  if (!location) return location
+  let url
+  try {
+    url = new URL(location)
+  } catch {
+    return location // already relative
+  }
+  if (INTERNAL_HOSTS.has(url.hostname) && INTERNAL_PORTS.has(url.port)) {
+    return `${url.pathname}${url.search}${url.hash}`
+  }
+  return location
+}
+
 function withoutHopByHop(headers, extra = []) {
   const out = { ...headers }
   for (const name of [...HOP_BY_HOP, ...extra]) delete out[name]
@@ -82,6 +103,7 @@ const server = http.createServer((req, res) => {
       // Self-hosted instances are private: keep API responses out of search
       // engines, as the dashboard middleware does for its pages.
       if (api) out['x-robots-tag'] = 'noindex, nofollow'
+      if (out.location) out.location = publicLocation(out.location)
       res.writeHead(upRes.statusCode || 502, out)
       upRes.on('error', () => res.destroy())
       upRes.on('aborted', () => res.destroy())
