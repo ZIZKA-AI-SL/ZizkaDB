@@ -11,8 +11,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking for plain `docker run` users:** `ghcr.io/zizka-ai-sl/zizkadb` now starts with `ENV=production`. Pass `-e ENV=development` to keep the one-click dashboard and the `zizkadb_dev_local` API key on your own machine. `scripts/quickstart-remote.sh` already does this, so the quickstart is unchanged.
 - In production mode the dashboard asks for an admin token, generated on first start and kept in the volume: `docker exec <container> grep SELFHOST_ADMIN_TOKEN /data/secrets.env`. Setting `SELFHOST_ADMIN_TOKEN` yourself still takes precedence.
 - The database password is generated per install and kept in `/data/secrets.env`. Existing volumes are moved to a generated password on first start of the new image; data is untouched.
+- The database password and the admin token are re-applied on start if `/data/secrets.env` changes, and an interrupted first start can no longer leave an empty secret behind.
+- Port 3001 now serves the whole product: the dashboard calls the API on its own origin and Next.js forwards `/v1` and `/health` to the API inside the container. One public port is enough behind a domain or a platform proxy; 8000 still serves the API alone.
 - New optional `ZIZKADB_PUBLIC_URL` sets the public address used for links and the browser origin the API accepts.
-- `TRUSTED_PROXIES` in the image now includes the private ranges, so rate limits see the visitor's address when the container sits behind a platform proxy.
+- Dashboard: after creating an API key, the usage snippet's `ZIZKADB_HOST` is the dashboard's own address when the API shares its origin, instead of `http://localhost:8000`.
 
 ### Fixed: agent baseline with a time window returned 500
 
