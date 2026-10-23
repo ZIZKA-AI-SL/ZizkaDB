@@ -58,7 +58,7 @@ wanted = {
     "GEN_PG_PASSWORD": lambda: secrets.token_hex(24),
 }
 missing = [k for k in wanted if k not in have]
-if missing or not os.path.exists(path):
+if missing:
     lines += [f"{k}={wanted[k]()}" for k in missing]
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
@@ -72,10 +72,30 @@ PY
 . "$SECRETS"
 export JWT_SECRET="${JWT_SECRET:-$GEN_JWT_SECRET}"
 export JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET:-$GEN_JWT_REFRESH_SECRET}"
+# An operator token wins unless it is blank (the API trims it the same way).
 ADMIN_TOKEN_FROM_ENV=false
-[ -n "${SELFHOST_ADMIN_TOKEN:-}" ] && ADMIN_TOKEN_FROM_ENV=true
-export SELFHOST_ADMIN_TOKEN="${SELFHOST_ADMIN_TOKEN:-$GEN_SELFHOST_ADMIN_TOKEN}"
+if [ -n "$(printf '%s' "${SELFHOST_ADMIN_TOKEN:-}" | tr -d '[:space:]')" ]; then
+  ADMIN_TOKEN_FROM_ENV=true
+else
+  SELFHOST_ADMIN_TOKEN="$GEN_SELFHOST_ADMIN_TOKEN"
+fi
+export SELFHOST_ADMIN_TOKEN
+# The local role's password: the generated one, or the one in an
+# operator-supplied DATABASE_URL that points at this container's database.
 PG_PASSWORD="$GEN_PG_PASSWORD"
+if [ -n "${DATABASE_URL:-}" ]; then
+  url_pw="$(python - <<'PY'
+import os
+from urllib.parse import unquote, urlsplit
+
+u = urlsplit(os.environ["DATABASE_URL"])
+if u.hostname in ("127.0.0.1", "localhost", "::1") and u.username == "zizkadb" and u.password:
+    print(unquote(u.password), end="")
+PY
+)"
+  [ -n "$url_pw" ] && PG_PASSWORD="$url_pw"
+  unset url_pw
+fi
 export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0.1:5432/zizkadb}"
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
@@ -83,16 +103,16 @@ if is_dev; then
 fi
 unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
 
-# Public address (optional): links the API generates, and the browser origin
-# the API accepts, when the instance sits behind a domain.
+# Public address (optional): the base for links the API generates, and the
+# only browser origin the API accepts. The dashboard calls the API on its own
+# origin through the front proxy, so it never needs cross-origin access.
+DASHBOARD_ADDRESS="http://localhost:3001"
 if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
-  ZIZKADB_PUBLIC_URL="${ZIZKADB_PUBLIC_URL%/}"
-  export PUBLIC_API_URL="${PUBLIC_API_URL:-$ZIZKADB_PUBLIC_URL}"
-  export DASHBOARD_URL="${DASHBOARD_URL:-$ZIZKADB_PUBLIC_URL}"
-  export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$ZIZKADB_PUBLIC_URL}"
+  DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
+  export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
 fi
 export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
-export DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:3001}"
+export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -107,12 +127,23 @@ fi
 # fixed password; it is replaced here the first time this image starts.
 PASSWORD_MARKER="$PGDATA/.zizkadb_password_sha256"
 PG_PASSWORD_HASH="$(printf '%s' "$PG_PASSWORD" | sha256sum | cut -d' ' -f1)"
+if [ -f "$SCHEMA_MARKER" ] && [ ! -f "$PASSWORD_MARKER" ] && ! is_dev; then
+  # First start of this image on a volume from an older one, which ran in
+  # development mode unless told otherwise.
+  log "Upgraded volume: this image runs in production mode by default."
+  log "  The well-known dev key and one-click sign-in are off; sign in with the admin token."
+  log "  For local one-click mode, start the container with -e ENV=development."
+fi
 if [ ! -f "$SCHEMA_MARKER" ] || [ "$(cat "$PASSWORD_MARKER" 2>/dev/null)" != "$PG_PASSWORD_HASH" ]; then
   as_pg pg_ctl -D "$PGDATA" -o "-c listen_addresses=''" -w start >/dev/null
-  # Sent on stdin (never argv) and quoted by psql's :'var' syntax.
-  printf '\\set pw %s\nSELECT format(%s, :%s) WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %s) \\gexec\nALTER ROLE zizkadb PASSWORD :%s;\n' \
-      "$PG_PASSWORD" "'CREATE ROLE zizkadb LOGIN SUPERUSER PASSWORD %L'" "'pw'" "'zizkadb'" "'pw'" \
-    | as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null
+  # psql reads the password verbatim from its environment (\getenv), never
+  # from argv, and :'pw' quotes it, so any character is safe.
+  PG_ROLE_PASSWORD="$PG_PASSWORD" as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<'SQL'
+\getenv pw PG_ROLE_PASSWORD
+SELECT format('CREATE ROLE zizkadb LOGIN SUPERUSER PASSWORD %L', :'pw')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'zizkadb') \gexec
+ALTER ROLE zizkadb PASSWORD :'pw';
+SQL
   printf '%s\n' "$PG_PASSWORD_HASH" | as_pg tee "$PASSWORD_MARKER" >/dev/null
   if [ ! -f "$SCHEMA_MARKER" ]; then
     as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
@@ -164,8 +195,13 @@ log "Starting API and dashboard..."
     uvicorn main:app --host 0.0.0.0 --port 8000 --log-level warning ) &
 PIDS+=($!)
 
-( cd /app/dashboard && PORT=3001 HOSTNAME=0.0.0.0 NODE_ENV=production \
+# The dashboard listens inside the container only; the front proxy owns the
+# public port 3001 and routes /v1, /health and /swagger to the API.
+( cd /app/dashboard && PORT=3002 HOSTNAME=127.0.0.1 NODE_ENV=production \
     exec "${APP_USER[@]}" node server.js >/dev/null ) &
+PIDS+=($!)
+
+( exec "${APP_USER[@]}" node /opt/zizkadb/front-proxy.js ) &
 PIDS+=($!)
 
 # Seed the demo and print the banner without blocking signal handling.
@@ -209,13 +245,13 @@ PIDS+=($!)
     echo "  API:        http://localhost:8000   (key: ${DEV_API_KEY})"
   else
     # Never print the token itself: platform log viewers show container output.
-    echo "  Dashboard:  ${DASHBOARD_URL}   (sign in with the admin token)"
+    echo "  Dashboard:  ${DASHBOARD_ADDRESS}   (sign in with the admin token)"
     echo "  API:        ${PUBLIC_API_URL}"
     echo ""
     if [ "$ADMIN_TOKEN_FROM_ENV" = true ]; then
       echo "  Admin token: the SELFHOST_ADMIN_TOKEN you set"
     else
-      echo "  Admin token: docker exec <container> grep SELFHOST_ADMIN_TOKEN /data/secrets.env"
+      echo "  Admin token: docker exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env"
     fi
     echo "  Local one-click mode instead: start the container with -e ENV=development"
   fi
