@@ -1,5 +1,6 @@
-/* Inter and JetBrains Mono are bundled with the app (@fontsource, imported in
-   app/layout.tsx), so visitors' browsers never contact a font CDN. */
+/* Inter and JetBrains Mono are bundled with the app: the @font-face rules come
+   from the @fontsource imports in app/layout.tsx. A new font-weight used here
+   needs its import there, or the browser synthesizes it. */
 
 @tailwind base;
 @tailwind components;

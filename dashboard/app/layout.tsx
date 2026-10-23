@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
-// Fonts ship with the app (no third-party font CDN): the weights globals.css used.
+// Fonts ship with the app (no third-party font CDN). Keep these weights in
+// step with the font-weight values the pages use (globals.css and inline styles).
 import '@fontsource/inter/400.css'
 import '@fontsource/inter/500.css'
 import '@fontsource/inter/600.css'
 import '@fontsource/inter/700.css'
+import '@fontsource/inter/800.css'
 import '@fontsource/jetbrains-mono/400.css'
 import '@fontsource/jetbrains-mono/500.css'
 import '@fontsource/jetbrains-mono/600.css'
