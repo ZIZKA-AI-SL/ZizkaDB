@@ -82,7 +82,7 @@ Self-hosted ZizkaDB is single-agent: log everything under one agent name and use
 | `ZIZKADB_API_KEY` | Your cloud API key (preferred) |
 | `AGENTDB_API_KEY` | Legacy alias for `ZIZKADB_API_KEY` |
 | `ZIZKADB_AGENT` | Default agent name (used in templates/examples) |
-| `ZIZKADB_HOST` | Self-hosted API URL |
+| `ZIZKADB_HOST` | Self-hosted API URL. Used when the client gets no `host` argument, so with an API key it sends requests here instead of ZizkaDB Cloud (legacy alias `AGENTDB_HOST`) |
 | `ZIZKADB_TELEMETRY` | Set `false` to opt out (anonymous ping on client construct) |
 
 ## Self-host dashboard
