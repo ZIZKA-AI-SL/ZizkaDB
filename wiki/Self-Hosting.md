@@ -115,7 +115,7 @@ The single-container image deploys to [Redu Cloud](https://redu.cloud) from this
 
 After it is live:
 
-1. Read the admin token over SSH: `sudo podman exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`.
+1. Read the admin token over SSH: `sudo podman exec redu-app sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`.
 2. Sign in with the token and create the API key in Settings.
 3. Point your agent at the deployment with `ZIZKADB_HOST` and `ZIZKADB_API_KEY`.
 
