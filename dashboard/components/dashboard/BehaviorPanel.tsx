@@ -350,13 +350,15 @@ function DriftHeadline({
 }
 
 /**
- * Renders one of the three baseline states the backend can return:
- * `insufficient_data`, `warming_up`, or a full `ok` drift report.
+ * Renders one of the baseline states the backend can return:
+ * `insufficient_data`, `no_current_data`, `warming_up`, or a full `ok` drift report.
+ * Labels follow the window the data was computed for (`baseline.window`), not
+ * the selector, so they never describe a different window than the numbers.
  */
 export function BehaviorPanel({
   baseline,
   agentId,
-  window: win,
+  window: _selected,
   onRecompute,
 }: {
   baseline: AgentBaseline
@@ -364,11 +366,23 @@ export function BehaviorPanel({
   window: '24h' | '7d' | '30d' | undefined
   onRecompute: () => void
 }) {
+  const win = baseline.window ?? undefined
+
+  if (baseline.status === 'no_current_data') {
+    return (
+      <EmptyState
+        icon={<Activity size={22} style={{ color: colors.textFaint }} />}
+        title={win ? `No sessions in the last ${win}` : 'No recent sessions'}
+        description={baseline.message ?? 'There are no sessions in the selected window to compare.'}
+      />
+    )
+  }
+
   if (baseline.status === 'insufficient_data') {
     return (
       <EmptyState
         icon={<Activity size={22} style={{ color: colors.textFaint }} />}
-        title={win && baseline.sessions > 0 ? `No sessions in the last ${win}` : 'No baseline yet'}
+        title="No baseline yet"
         description={
           baseline.message ??
           'Not enough sessions recorded to establish what normal looks like for this agent.'

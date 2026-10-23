@@ -39,7 +39,7 @@ describe('BehaviorPanel with a time window', () => {
 
   it('idle window: says no sessions in the window, not "No baseline yet"', () => {
     const baseline: AgentBaseline = {
-      agent: 'bot', status: 'insufficient_data', sessions: 300, recent_window: 50, window: '24h',
+      agent: 'bot', status: 'no_current_data', sessions: 300, recent_window: 50, window: '24h',
       message: 'No sessions in the last 24h, so there is nothing recent to compare.',
     }
     render(<BehaviorPanel baseline={baseline} agentId="bot" window="24h" onRecompute={noop} />)
@@ -59,5 +59,21 @@ describe('BehaviorPanel with a time window', () => {
     render(<BehaviorPanel baseline={baseline} agentId="bot" window="7d" onRecompute={noop} />)
     expect(screen.getByText('2 in the last 7d vs 3 earlier')).toBeTruthy()
     expect(screen.queryByText(/50 recent vs/)).toBeNull()
+  })
+
+  it('labels follow the window of the data, not the selector', () => {
+    // The selector already says 24h while the previous count-based result is
+    // still on screen (one render before loading starts).
+    const baseline: AgentBaseline = {
+      agent: 'bot', status: 'ok', sessions: 300, recent_window: 50, window: null,
+      baseline: win(250), recent: win(50),
+      drift: {
+        score: 0.1, behavior_change_pct: 10, verdict: 'minor_drift', biggest_changes: [],
+        error_rate_change_pp: 0, session_length_change_pct: 0,
+      },
+    }
+    render(<BehaviorPanel baseline={baseline} agentId="bot" window="24h" onRecompute={noop} />)
+    expect(screen.getByText('50 recent vs 250 prior')).toBeTruthy()
+    expect(screen.queryByText(/in the last 24h/)).toBeNull()
   })
 })

@@ -380,7 +380,8 @@ export interface BaselineChange {
 
 export interface AgentBaseline {
   agent: string
-  status: 'ok' | 'warming_up' | 'insufficient_data'
+  /** `no_current_data`: sessions exist, but none in the selected time window. */
+  status: 'ok' | 'warming_up' | 'insufficient_data' | 'no_current_data'
   message?: string
   sessions: number
   recent_window: number
