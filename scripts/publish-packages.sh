@@ -60,11 +60,14 @@ echo "→ Build MCP ${MCP_VER}"
 echo "→ Build TypeScript SDK"
 (cd sdk/typescript && npm ci -q && npm run build)
 
+# --skip-existing: MCP versions independently of the SDK, so an unchanged
+# MCP version is already on PyPI; it also makes a re-run after a failed npm
+# step safe.
 echo "→ Upload zizkadb-sdk ${SDK_VER} to PyPI"
-twine upload --verbose "sdk/python/dist/zizkadb_sdk-${SDK_VER}"*
+twine upload --skip-existing --verbose "sdk/python/dist/zizkadb_sdk-${SDK_VER}"*
 
-echo "→ Upload zizkadb-mcp ${MCP_VER} to PyPI"
-twine upload --verbose "mcp/dist/zizkadb_mcp-${MCP_VER}"*
+echo "→ Upload zizkadb-mcp ${MCP_VER} to PyPI (skipped if ${MCP_VER} is already published)"
+twine upload --skip-existing --verbose "mcp/dist/zizkadb_mcp-${MCP_VER}"*
 
 echo "→ Publish to npm (run: npm login --auth-type=web  if not logged in)"
 (cd sdk/typescript && npm publish --access public)
