@@ -136,7 +136,13 @@ SELFHOST_ADMIN_TOKEN=<long-random>  # python -c "import secrets; print(secrets.t
 
 The dashboard then asks for the admin token instead of showing the one-click button. Without `SELFHOST_ADMIN_TOKEN`, dashboard login stays disabled. Everyone who has the token signs in to the same single owner workspace. Check your config with `bash scripts/validate-selfhost-config.sh --production`. Full steps: [wiki/Self-Hosting](https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting).
 
-Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troubleshooting.md](wiki/Troubleshooting.md)
+### Deploy on Redu Cloud
+
+[![Deploy on Redu Cloud](https://img.shields.io/badge/Deploy%20on-Redu%20Cloud-2563eb)](redu.md)
+
+[Redu Cloud](https://redu.cloud) is ZizkaDB's recommended cloud for the open-source edition. With the redu MCP added to your coding agent, ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The agent follows [redu.md](redu.md): the single container on one VM, the dashboard and API on one HTTPS URL, and your data kept in a volume. Then sign in with the admin token, create your API key in Settings, and set `ZIZKADB_HOST` and `ZIZKADB_API_KEY` in your agent.
+
+Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troubleshooting.md](wiki/Troubleshooting.md) · What ZizkaDB sends: [docs/telemetry.md](docs/telemetry.md)
 
 ---
 
