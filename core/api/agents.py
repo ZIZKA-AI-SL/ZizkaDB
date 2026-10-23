@@ -43,6 +43,8 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 _AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$")
+# Time windows accepted by /baseline (the route's Query pattern lists the same keys).
+_BASELINE_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 
 # Per-tenant throttle for the AI suggestions endpoint. Cache + Redis lock already
 # coalesce repeat reads, but `refresh=true` bypasses both and triggers a live
@@ -817,15 +819,19 @@ async def agent_baseline(
     await assert_agent_allowed(tenant, agent_id)
     pool = get_pool()
 
+    delta = _BASELINE_WINDOWS[window] if window else None
+    # The window split is decided in SQL against the database clock, the same
+    # clock that stamped the events.
     sessions = await pool.fetch(
         """
-        SELECT session_id, MAX(timestamp) AS ended_at
+        SELECT session_id, MAX(timestamp) AS ended_at,
+               ($3::interval IS NOT NULL AND MAX(timestamp) >= NOW() - $3::interval) AS is_recent
         FROM events
         WHERE tenant_id = $1 AND agent_id = $2 AND session_id IS NOT NULL
         GROUP BY session_id
         ORDER BY MAX(timestamp) DESC
         """,
-        tenant["tenant_id"], agent_id,
+        tenant["tenant_id"], agent_id, delta,
     )
 
     if not sessions:
@@ -835,25 +841,42 @@ async def agent_baseline(
             "message":       "No sessions logged yet. Add session_id to your db.log() calls to start building a baseline.",
             "sessions":      0,
             "recent_window": recent_window,
+            "window":        window,
         }
 
     # Time-based split when a window param is supplied
     if window:
-        delta = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}[window]
-        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - delta
-        recent_ids   = [r["session_id"] for r in sessions if r["ended_at"] >= cutoff]
-        baseline_ids = [r["session_id"] for r in sessions if r["ended_at"] <  cutoff]
+        recent_ids   = [r["session_id"] for r in sessions if r["is_recent"]]
+        baseline_ids = [r["session_id"] for r in sessions if not r["is_recent"]]
+        if not recent_ids:
+            # Comparing an empty window with the past would report drift for an
+            # agent that simply did not run.
+            # Same status as /behavior-change for "nothing in the current window".
+            return {
+                "agent":         agent_id,
+                "status":        "no_current_data",
+                "message":       f"No sessions in the last {window}, so there is nothing recent to compare. Pick a wider window or check back after the agent runs.",
+                "sessions":      len(sessions),
+                "recent_window": recent_window,
+                "window":        window,
+            }
     else:
         recent_ids   = [r["session_id"] for r in sessions[:recent_window]]
         baseline_ids = [r["session_id"] for r in sessions[recent_window:]]
 
     if not baseline_ids:
+        message = (
+            f"All {len(sessions)} sessions ended within the last {window}. Drift needs at least one session that ended earlier to compare against."
+            if window else
+            f"Need at least {recent_window + 1} sessions to compute drift. You have {len(sessions)}. Keep logging."
+        )
         return {
             "agent":         agent_id,
             "status":        "warming_up",
-            "message":       f"Need at least {recent_window + 1} sessions to compute drift. You have {len(sessions)}. Keep logging.",
+            "message":       message,
             "sessions":      len(sessions),
             "recent_window": recent_window,
+            "window":        window,
             "recent":        await _baseline_for(pool, tenant["tenant_id"], agent_id, recent_ids),
         }
 

@@ -564,7 +564,7 @@ Router prefixes are mounted in `core/main.py:66-79`.
 | `revokeAgentApiKey` | DELETE `/v1/agents/{id}/api-keys/{keyId}` | `agents.py:224` |
 | `getAgentStats` | GET `/v1/agents/{id}/stats` (incl. `top_actions`: per-tool/API calls + error rate, `services/actions.py`) | `agents.py:239` |
 | `getAgentSessions` | GET `/v1/agents/{id}/sessions` | `agents.py:280` |
-| `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`) | `agents.py:453` |
+| `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`; `?window=24h\|7d\|30d` splits by time in SQL and every response echoes `window`; no session inside the window → `no_current_data` (as `/behavior-change`), no session that ended earlier → `warming_up`; labels in `BehaviorPanel` follow `baseline.window`) | `agents.py:804` |
 | `getAgentReport` | GET `/v1/agents/{id}/report?from=&to=&granularity=` (incl. `actions`, rendered by `components/dashboard/ActionsTable.tsx`) | `agents.py` → `services/reports.py` |
 | `getAgentTokenUsage` | GET `/v1/agents/{id}/token-usage?from=&to=&granularity=` | `agents.py` → `services/token_usage.py` + `services/pricing.py` |
 | `getAgentTokenOptimization` | GET `/v1/agents/{id}/token-optimization?from=&to=&granularity=` | `agents.py` → `services/token_optimization.py` |
