@@ -9,7 +9,7 @@ This page lists every network call ZizkaDB makes on its own, outside of the requ
 | Server: API, database, single-container image | Nothing | n/a | n/a |
 | Dashboard (in the visitor's browser) | Font requests | Google Fonts | Not configurable yet (see below) |
 | Python SDK, TypeScript SDK, MCP server, integrations | One anonymous install ping per process | `https://db.zizka.ai/v1/telemetry` | `ZIZKADB_TELEMETRY=false` |
-| `scripts/quickstart-remote.sh` and the other install scripts | One anonymous install ping per run | `https://db.zizka.ai/v1/telemetry` | `ZIZKADB_TELEMETRY=false` |
+| `scripts/quickstart-remote.sh` and `scripts/setup-local.sh` | One anonymous install ping per run | `https://db.zizka.ai/v1/telemetry` | `ZIZKADB_TELEMETRY=false` |
 | Optional features you enable | Your data, to the provider you configure | OpenAI or Anthropic | Leave the feature off |
 
 ## Server
@@ -17,7 +17,7 @@ This page lists every network call ZizkaDB makes on its own, outside of the requ
 The API and the single-container image make no outbound calls of their own.
 
 - **Next.js telemetry:** the dashboard's server runs with `NEXT_TELEMETRY_DISABLED=1`.
-- **Qdrant check:** at startup the API asks the configured Qdrant for its version. Qdrant runs on your own network, and the single-container image does not use it.
+- **Qdrant:** when Qdrant is configured, the API connects to it at startup, lists its collections and logs its version. Qdrant runs on your own network, and the single-container image does not use it.
 
 ## Dashboard
 
@@ -40,14 +40,14 @@ Each package sends one anonymous ping per process, the first time it is used, to
 
 ## Install scripts
 
-`scripts/quickstart-remote.sh` runs `scripts/telemetry-install-ping.sh` once, after the stack is up. That ping sends:
+`scripts/quickstart-remote.sh` and `scripts/setup-local.sh` run `scripts/telemetry-install-ping.sh` once, after the stack is up. That ping sends:
 
 - an install ID stored in `~/.zizkadb/install_id`
 - `sdk=docker`
 - the version label
 - the operating system
 
-To turn it off, run the script with `ZIZKADB_TELEMETRY=false`.
+To turn it off, run either script with `ZIZKADB_TELEMETRY=false`.
 
 ## Optional features
 

@@ -20,7 +20,7 @@ quirks:
   - "Set TRUSTED_PROXIES to include the range redu's HTTPS proxy connects from (10.0.0.0/8 on the private network), so login rate limits count each visitor, not the proxy."
   - "The image runs in production mode. Never pass ENV=development on a public URL: it turns on the well-known dev API key and one-click sign-in."
   - "First sign-in uses the admin token generated on first start; read it over SSH with: sudo podman exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env. Never write it into this file."
-  - "/health/deep reports qdrant not initialized: expected. The single container runs without Qdrant, so semantic search and embeddings are off; Postgres and Redis must be ok."
+  - "Expected health: /health/deep answers HTTP 200 with postgres and redis ok, and qdrant not initialized with required:false (the single container runs without Qdrant, so semantic search and embeddings are off). A 503 is a real failure."
 ---
 
 # ZizkaDB on Redu Cloud
