@@ -124,8 +124,9 @@ class ZizkaDB:
     Args:
         api_key: Your ZizkaDB API key (zizkadb_live_... or legacy agdb_live_...).
                  Get one at db.zizka.ai
-        host:    URL of your self-hosted instance.
-                 Defaults to ZizkaDB Cloud if api_key is provided.
+        host:    URL of your self-hosted instance. When omitted, ZIZKADB_HOST
+                 (or legacy AGENTDB_HOST) from the environment is used if
+                 set; otherwise an api_key means ZizkaDB Cloud.
         timeout: HTTP timeout in seconds. Default 10.
     """
 
@@ -135,6 +136,16 @@ class ZizkaDB:
         host: str | None = None,
         timeout: float = 10.0,
     ):
+        host = (host or "").strip() or None
+        if host is None:
+            # A self-hosted key with ZIZKADB_HOST set must not go to Cloud.
+            # AGENTDB_HOST is the legacy name (also read by telemetry and MCP).
+            # A blank value counts as unset, and each variable is tried in turn.
+            host = (
+                (os.getenv("ZIZKADB_HOST") or "").strip()
+                or (os.getenv("AGENTDB_HOST") or "").strip()
+                or None
+            )
         if not api_key and not host:
             raise ZizkaDBError(
                 "Provide an api_key (cloud) or host (self-hosted).\n"

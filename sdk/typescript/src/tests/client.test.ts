@@ -8,6 +8,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ZizkaDB, ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError } from '../index'
 
+// The client reads ZIZKADB_HOST / AGENTDB_HOST when no host is passed; a
+// developer's exported values must not change which server a test talks to.
+for (const name of ['ZIZKADB_HOST', 'AGENTDB_HOST']) vi.stubEnv(name, '')
+
 // ─────────────────────────────────────────
 // Fetch mock helpers
 // ─────────────────────────────────────────
