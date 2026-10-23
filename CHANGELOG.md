@@ -12,6 +12,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   If your `.env` came from an older crewai or livekit `.env.example` and you use ZizkaDB Cloud, remove its `ZIZKADB_HOST=http://localhost:8000` line.
 - `zizkadb init` templates (basic, openai, langchain, crewai, langgraph, rag) and the examples (minimal-python, openai-agent, langchain-agent, crewai-agent, livekit-agent) follow the same rule with the current SDK too: `ZIZKADB_HOST` wins, a key alone means Cloud, and neither means the local stack. The langgraph and rag templates and the crewai example no longer send a Cloud key to localhost.
 - New `examples/anthropic-agent/`: the same causal-logging example with the Anthropic API (Claude).
+### Single-container image runs in production mode by default
+
+- **Breaking for plain `docker run` users:** `ghcr.io/zizka-ai-sl/zizkadb` now starts with `ENV=production`. Pass `-e ENV=development` to keep the one-click dashboard and the `zizkadb_dev_local` API key on your own machine. `scripts/quickstart-remote.sh` already does this, so the quickstart is unchanged.
+- In production mode the dashboard asks for an admin token, generated on first start and kept in the volume: `docker exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Setting `SELFHOST_ADMIN_TOKEN` yourself still takes precedence.
+- The database password is generated per install and kept in `/data/secrets.env`. Existing volumes are moved to a generated password on first start of the new image; data is untouched.
+- If `/data/secrets.env` changes, the database password is re-applied on the next start, and an interrupted first start can no longer leave an empty secret behind.
+- Port 3001 now serves the whole product: a small front proxy in the image sends `/v1`, `/health` and `/swagger` to the API and everything else to the dashboard, which calls the API on its own origin. One public port is enough behind a domain or a platform proxy; 8000 still serves the API alone. The proxy appends the connecting address to `X-Forwarded-For`, and the image trusts only that proxy (`TRUSTED_PROXIES=127.0.0.1,::1`). Behind another reverse proxy, add its address range to `TRUSTED_PROXIES`; otherwise every visitor shares that proxy's address for rate limits.
+- If an operator-supplied `DATABASE_URL` points at the container's own database, the role password follows the password in that URL.
+- New optional `ZIZKADB_PUBLIC_URL` sets the public address used for links. `CORS_ALLOWED_ORIGINS` now defaults to the dashboard's address (that URL, or `http://localhost:3001`) instead of allowing every origin; the dashboard itself is same-origin and needs no CORS.
+- Dashboard: after creating an API key, the usage snippet's `ZIZKADB_HOST` is the dashboard's own address when the API shares its origin, instead of `http://localhost:8000`.
 
 ### Fixed: agent baseline with a time window returned 500
 

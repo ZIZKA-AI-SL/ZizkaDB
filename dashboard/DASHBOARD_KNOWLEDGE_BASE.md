@@ -73,7 +73,7 @@ app/dashboard/layout.tsx
 **Feature flags (env):**
 - `NEXT_PUBLIC_DEV_MODE === 'true'` → legacy dev-token button on the managed login page, changes onboarding copy.
 - `NEXT_PUBLIC_DEPLOYMENT_MODE === 'self_hosted'` (`IS_SELF_HOSTED`, `lib/constants.ts`) → self-hosted build: `middleware.ts` redirects `/` and every website route (signup, pricing, docs, trust, community…) to `/dashboard` (signed in) or `/login`; `/login` renders `SelfHostLogin` (no OTP/signup); cookie banner + marketing popup hidden; robots disallow-all, empty sitemap. Unset or `managed` = full website (managed PM2 build never sets it).
-- `NEXT_PUBLIC_API_URL` → API base (default same-origin; login dev-token defaults to `http://localhost:8000`).
+- `NEXT_PUBLIC_API_URL` → API base (default same-origin). When it is empty, `CreateApiKeyCard` shows `window.location.origin` as `ZIZKADB_HOST` (the single-container image serves the API on the dashboard's port through `infra/allinone/front-proxy.js`).
 
 **Loading/error handling:** per-page. Suspense boundaries wrap pages using `useSearchParams` (`/signup`, `/signup/start`, `/signup/checkout`, `/signup/success`, `/login`) — required by Next for CSR bailout. Errors are local component state rendered inline.
 
@@ -468,7 +468,7 @@ Landing → (Pricing: Pro) → `/signup?plan=pro` → `/signup/start` (consent) 
 
 | Var | Where read | Default | Purpose |
 |-----|-----------|---------|---------|
-| `NEXT_PUBLIC_API_URL` | client (`lib/api.ts`, `lib/demo.ts`, `lib/community.ts`, `useConnectionHealth`, `login`) | `''` (same-origin; `login` falls back to `http://localhost:8000`) | API base URL |
+| `NEXT_PUBLIC_API_URL` | client (`lib/api.ts`, `lib/demo.ts`, `lib/community.ts`, `useConnectionHealth`, `login`) | `''` (same-origin) | API base URL |
 | `NEXT_PUBLIC_DEV_MODE` | client (`login`, onboarding copy) | unset | `'true'` = self-host: enables dev-token login, changes onboarding copy |
 | `API_REWRITE_TARGET` | build/server (`next.config.mjs`) | `http://127.0.0.1:8000` | upstream host for the `/swagger` + `/openapi.json` rewrites |
 
