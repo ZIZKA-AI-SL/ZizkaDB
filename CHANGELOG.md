@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
 ### Dashboard fonts ship with the app
 
 - Inter and JetBrains Mono are bundled with the dashboard (`@fontsource`) instead of loaded from Google Fonts, so a visitor's browser no longer contacts Google for fonts. With that, a self-hosted dashboard makes no third-party requests. `docs/telemetry.md` is updated.

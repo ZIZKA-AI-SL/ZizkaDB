@@ -15,7 +15,7 @@ Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
 [![CI](https://github.com/Zizka-ai/ZizkaDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Zizka-ai/ZizkaDB/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.3.0-f97316)](https://github.com/Zizka-ai/ZizkaDB/releases)
+[![Release](https://img.shields.io/badge/release-v0.4.0-f97316)](https://github.com/Zizka-ai/ZizkaDB/releases)
 [![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK)](https://pypi.org/project/zizkadb-sdk/)
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/Zizka-ai/ZizkaDB?style=flat)](https://github.com/Zizka-ai/ZizkaDB/stargazers)
