@@ -4,6 +4,7 @@
 #
 # Production by default: sign-in needs the admin token generated on first start
 # (docker exec <container> grep SELFHOST_ADMIN_TOKEN /data/secrets.env).
+# Port 3001 serves the dashboard and the API (/v1) together; 8000 is the API alone.
 # Local one-click mode, with the well-known zizkadb_dev_local API key:
 #   docker run -e ENV=development -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 ...
 # Multi-container or semantic search (Qdrant): use infra/docker-compose.yml.
@@ -16,7 +17,10 @@ WORKDIR /app
 COPY dashboard/package.json dashboard/package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 COPY dashboard/ .
-ENV NEXT_PUBLIC_API_URL=http://localhost:8000 \
+# Empty API URL: the browser calls the dashboard's own origin and Next.js
+# forwards /v1 to the API inside the container (dashboard/next.config.mjs),
+# so one public port serves the whole product.
+ENV NEXT_PUBLIC_API_URL="" \
     NEXT_PUBLIC_DEV_MODE=false \
     NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted \
     NEXT_TELEMETRY_DISABLED=1
@@ -64,13 +68,10 @@ RUN chmod +x /opt/zizkadb/entrypoint.sh
 # ENV=production unless the operator passes ENV=development. The entrypoint
 # generates the database password, JWT secrets and SELFHOST_ADMIN_TOKEN once and
 # keeps them in /data/secrets.env. QDRANT_URL="" runs without Qdrant (embeddings
-# are off by default on self-host). TRUSTED_PROXIES covers the in-container
-# dashboard proxy and a platform proxy on a private network, so rate limits see
-# the real client address.
+# are off by default on self-host).
 ENV ENV=production \
     DEPLOYMENT_MODE=self_hosted \
     EMBEDDINGS_ENABLED=false \
-    TRUSTED_PROXIES=127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
     REDIS_URL=redis://127.0.0.1:6379 \
     QDRANT_URL="" \
     COMMUNITY_UPLOAD_DIR=/data/community_uploads \
