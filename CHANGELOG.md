@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed: agent baseline with a time window returned 500
+
+- `GET /v1/agents/{id}/baseline?window=24h|7d|30d` failed for every window (a naive cutoff was compared with timezone-aware session times). It now splits sessions at the cutoff, using the database clock. The count-based split (`recent_window`) was not affected.
+- With a window and no session inside it, the response is `insufficient_data` instead of a drift report against an empty window (which would have shown `significant_drift` for an agent that simply did not run). Every baseline response now includes `window`, and the warming-up message and dashboard text explain that a session older than the window is needed.
+
 ### Embed worker backs off and gives up on events that keep failing
 
 - A failed embedding is retried after 30 s, then 60 s, doubling up to 1 hour, instead of on every poll. After 10 attempts (about 3 hours) the event is marked `index_status = 'dead'` and no longer retried. Tunable with `EMBED_MAX_ATTEMPTS`, `EMBED_RETRY_BASE_SEC` and `EMBED_RETRY_MAX_SEC` on the worker.
