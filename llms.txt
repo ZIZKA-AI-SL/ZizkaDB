@@ -23,6 +23,8 @@ ZizkaDB is open-source (AGPL-3.0, except MCP server which is MIT). It runs as a 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guide
 - [Wiki: Architecture](wiki/Architecture.md) — System architecture overview
 - [Wiki: Self-Hosting](wiki/Self-Hosting.md) — Self-hosting guide
+- [redu.md](redu.md) — Deploy the single container on Redu Cloud
+- [docs/telemetry.md](docs/telemetry.md) — What ZizkaDB sends by default, and how to turn it off
 - [Wiki: REST API](wiki/REST-API.md) — API reference
 
 ## API

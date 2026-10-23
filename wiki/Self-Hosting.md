@@ -104,6 +104,21 @@ Integration tests (stack must be running):
 ZIZKADB_RUN_INTEGRATION=1 .venv/bin/pytest -m integration core/tests/test_integration_selfhost.py -v
 ```
 
+## Deploy on Redu Cloud
+
+The single-container image deploys to [Redu Cloud](https://redu.cloud) from this repository, unchanged. Add the redu MCP to your coding agent and ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The recipe it follows is [`redu.md`](https://github.com/Zizka-ai/ZizkaDB/blob/main/redu.md):
+
+- one VM, building `infra/allinone/Dockerfile`
+- port 3001 public, serving the dashboard with the API under `/v1`
+- `/data` kept between deploys
+- `ZIZKADB_PUBLIC_URL` set to the deployment URL, and `TRUSTED_PROXIES` covering the platform proxy
+
+After it is live:
+
+1. Read the admin token over SSH: `sudo podman exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`.
+2. Sign in with the token and create the API key in Settings.
+3. Point your agent at the deployment with `ZIZKADB_HOST` and `ZIZKADB_API_KEY`.
+
 ## Production self-host
 
 Self-host deploy uses `infra/deploy-selfhost.sh` and Docker Compose.

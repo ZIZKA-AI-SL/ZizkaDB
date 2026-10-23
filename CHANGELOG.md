@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Docs: deploy on Redu Cloud, and what ZizkaDB sends
+
+- New `redu.md`: the recipe redu uses to deploy the open-source single container from this repository. README and wiki have a "Deploy on Redu Cloud" section.
+- New `docs/telemetry.md`: every network call ZizkaDB makes on its own (SDK and install pings, dashboard fonts, optional features) and how to turn each off.
 ### Fixed: templates and examples ignored ZIZKADB_HOST when an API key was set
 
 - Python and TypeScript SDKs: when no host is passed, the client now uses `ZIZKADB_HOST` if it is set, so `ZizkaDB(api_key=...)` with a self-hosted key no longer goes to ZizkaDB Cloud and fails with "Invalid API key". An explicit host still wins, a key with no `ZIZKADB_HOST` still means Cloud, and the legacy `AGENTDB_HOST` is honoured too. **Behaviour change:** a Cloud API key used while `ZIZKADB_HOST` is exported now goes to that host; unset it to reach Cloud. The TypeScript constructor reads the environment only where a `process` global exists.
