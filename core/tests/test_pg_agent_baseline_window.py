@@ -66,7 +66,7 @@ async def test_window_wider_than_history_is_warming_up(history):
     body = response.json()
     assert body["status"] == "warming_up"  # nothing older than 30 days
     assert body["window"] == "30d"
-    assert "older session" in body["message"]  # not the session-count advice
+    assert "ended earlier" in body["message"]  # not the session-count advice
 
 
 async def test_idle_window_is_not_reported_as_drift(pg_db):
@@ -79,8 +79,9 @@ async def test_idle_window_is_not_reported_as_drift(pg_db):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "insufficient_data"
+    assert body["status"] == "no_current_data"  # same status as /behavior-change
     assert body["window"] == "24h"
+    assert body["sessions"] == 3
     assert "drift" not in body
 
 
@@ -89,3 +90,18 @@ async def test_count_based_split_still_works(history):
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "warming_up"  # 5 sessions, needs at least 6
+
+
+async def test_count_based_split_reports_drift(pg_db):
+    """The default split (no window) also goes through the new query."""
+    tenant = str(await pg_db.fetchval("INSERT INTO tenants (name) VALUES ('t') RETURNING tenant_id"))
+    for i in range(6):
+        await _session(pg_db, tenant, f"s-{i}", timedelta(hours=6 - i))
+
+    response = await _baseline(tenant, recent_window=5)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["window"] is None
+    assert (body["recent"]["sessions"], body["baseline"]["sessions"]) == (5, 1)
