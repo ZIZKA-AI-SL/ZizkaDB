@@ -2,15 +2,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 const createApiKey = vi.fn()
+const api = vi.hoisted(() => ({ base: 'http://localhost:8000' }))
 vi.mock('@/lib/api', () => ({
-  API: 'http://localhost:8000',
+  get API() {
+    return api.base
+  },
   createApiKey: (...a: unknown[]) => createApiKey(...a),
 }))
 vi.mock('@/lib/auth', () => ({ getToken: () => 'tok' }))
 
 import { CreateApiKeyCard } from './CreateApiKeyCard'
 
-beforeEach(() => createApiKey.mockReset())
+beforeEach(() => {
+  createApiKey.mockReset()
+  api.base = 'http://localhost:8000'
+})
 
 describe('CreateApiKeyCard', () => {
   it('explains that a new key is unassigned until first agent use', () => {
@@ -31,6 +37,16 @@ describe('CreateApiKeyCard', () => {
     // usage snippet points the app at the local host (the fix for cloud-vs-local 401s)
     expect(screen.getByText(/ZIZKADB_HOST=http:\/\/localhost:8000/)).toBeInTheDocument()
     expect(onCreated).toHaveBeenCalled()
+  })
+
+  it('points the snippet at this page when the API shares its origin', async () => {
+    api.base = ''
+    createApiKey.mockResolvedValueOnce({ key: 'zizkadb_live_same', prefix: 'zizkadb_live_sam', name: 'x' })
+    render(<CreateApiKeyCard />)
+    fireEvent.click(screen.getByRole('button', { name: /create key/i }))
+    await waitFor(() => expect(screen.getByText('zizkadb_live_same')).toBeInTheDocument())
+    expect(screen.getByText(new RegExp(`ZIZKADB_HOST=${window.location.origin}`))).toBeInTheDocument()
+    expect(screen.queryByText(/ZIZKADB_HOST=http:\/\/localhost:8000/)).toBeNull()
   })
 
   it('defaults an empty name to "default"', async () => {
