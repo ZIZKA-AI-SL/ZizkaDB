@@ -79,7 +79,7 @@ the SDK uses the cloud host and every request 401s.
 
 **Fix:** set both env vars for a self-hosted target — `ZIZKADB_HOST=<your server URL>`
 *and* `ZIZKADB_API_KEY=zizkadb_live_...`. The SDK uses `ZIZKADB_HOST` whenever no `host`
-argument is passed (zizkadb-sdk 0.4.0 and later; with 0.3.0 pass `host=` explicitly).
+argument is passed (zizkadb-sdk 0.4.1 and later; with 0.3.0 pass `host=` explicitly).
 The reverse also applies: with a Cloud key, unset `ZIZKADB_HOST`. Verify quickly:
 
 ```bash

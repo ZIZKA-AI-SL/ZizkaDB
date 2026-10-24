@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-24
+
 ### Single image: front proxy hardening
 
 - The front proxy handles any redirect value from the upstreams safely; redirects it cannot parse are passed through untouched.
