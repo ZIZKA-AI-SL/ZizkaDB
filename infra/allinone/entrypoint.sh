@@ -100,18 +100,42 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
+elif [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ] || [ "${DEV_API_KEY:-}" = "agdb_dev_local" ]; then
+  # The API refuses to start in production with a well-known dev key (and
+  # never accepts dev keys there anyway). Drop it instead of a start-up loop.
+  log "Ignoring the well-known DEV_API_KEY: it works only in local mode (-e ENV=development)."
+  unset DEV_API_KEY
 fi
 unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
 
-# Public address (optional): the base for links the API generates, and the
-# only browser origin the API accepts. The dashboard calls the API on its own
-# origin through the front proxy, so it never needs cross-origin access.
-DASHBOARD_ADDRESS="http://localhost:3001"
+# Public address (optional): the base for links the API generates. The front
+# proxy serves the dashboard and the API (/v1) on one port, so that one
+# address is enough.
+FRONT_PORT="${FRONT_PORT:-3001}"
+case "$FRONT_PORT" in
+  ''|*[!0-9]*|0*) log "FRONT_PORT must be a port number (1-65535), got '${FRONT_PORT}'."; exit 1 ;;
+esac
+if [ "$FRONT_PORT" -gt 65535 ]; then log "FRONT_PORT must be 65535 or lower."; exit 1; fi
+for internal in "${API_INTERNAL_PORT:-8000}" "${DASHBOARD_INTERNAL_PORT:-3002}" 5432 6379; do
+  if [ "$FRONT_PORT" = "$internal" ]; then
+    log "FRONT_PORT=${FRONT_PORT} is already used inside the container (API ${API_INTERNAL_PORT:-8000}, dashboard ${DASHBOARD_INTERNAL_PORT:-3002}, Postgres 5432, Redis 6379). Choose another."
+    exit 1
+  fi
+done
+export FRONT_PORT
+DASHBOARD_ADDRESS="http://localhost:${FRONT_PORT}"
 if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
   DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
   export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
+elif is_dev; then
+  # Local mode publishes the API on :8000, where the SDKs look by default.
+  export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
 fi
-export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
+# Without a public URL, production leaves PUBLIC_API_URL unset so the API
+# builds links from each request's own address (behind any domain or proxy).
+# The dashboard calls the API on its own origin, so browsers may call the API
+# only from that origin. This matters most in local mode, where the API also
+# accepts the well-known dev key. Set CORS_ALLOWED_ORIGINS to allow others.
 export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
@@ -210,7 +234,7 @@ PIDS+=($!)
   ready=0
   for _ in $(seq 1 240); do
     if curl -fsS "http://127.0.0.1:${API_INTERNAL_PORT:-8000}/health" >/dev/null 2>&1 \
-       && curl -fsS -o /dev/null http://127.0.0.1:3001/login 2>/dev/null; then
+       && curl -fsS -o /dev/null "http://127.0.0.1:${FRONT_PORT}/login" 2>/dev/null; then
       ready=1
       break
     fi
@@ -242,12 +266,12 @@ PIDS+=($!)
   fi
   echo ""
   if is_dev; then
-    echo "  Dashboard:  http://localhost:3001/dashboard/activity?agent=support-bot"
-    echo "  API:        http://localhost:8000   (key: ${DEV_API_KEY})"
+    echo "  Dashboard:  ${DASHBOARD_ADDRESS}/dashboard/activity?agent=support-bot"
+    echo "  API:        ${PUBLIC_API_URL}   (key: ${DEV_API_KEY})"
   else
     # Never print the token itself: platform log viewers show container output.
     echo "  Dashboard:  ${DASHBOARD_ADDRESS}   (sign in with the admin token)"
-    echo "  API:        ${PUBLIC_API_URL}"
+    echo "  API:        ${PUBLIC_API_URL:-$DASHBOARD_ADDRESS} (same address, under /v1)"
     echo ""
     if [ "$ADMIN_TOKEN_FROM_ENV" = true ]; then
       echo "  Admin token: the SELFHOST_ADMIN_TOKEN you set"
@@ -256,7 +280,7 @@ PIDS+=($!)
     fi
     echo "  Local one-click mode instead: start the container with -e ENV=development"
   fi
-  echo "  Swagger:    ${PUBLIC_API_URL}/swagger"
+  echo "  Swagger:    ${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}/swagger"
   echo ""
 ) &
 BANNER_PID=$!

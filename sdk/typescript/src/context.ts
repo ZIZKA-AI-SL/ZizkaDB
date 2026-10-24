@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks'
 import { randomUUID } from 'crypto'
+import { readEnv } from './env'
 
 const MID_CHAIN = new Set([
   'tool_call', 'tool_start', 'tool_end', 'tool_result', 'api_call', 'llm_end', 'retrieval',
@@ -66,7 +67,7 @@ export function resolveLogLineage(
       resolvedParent = state.forkParentId ?? state.lastEventId ?? null
     }
   } else if (
-    /^(1|true|yes|on)$/i.test(process.env.ZIZKADB_STRICT ?? '') &&
+    /^(1|true|yes|on)$/i.test(readEnv('ZIZKADB_STRICT') ?? '') &&
     !explicitParent &&
     MID_CHAIN.has(event)
   ) {
