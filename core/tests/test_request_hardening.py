@@ -98,8 +98,8 @@ class TestDefaultDbPasswordWarning:
         ("development", "postgresql://zizkadb:zizkadb@localhost:5432/zizkadb", False),
     ])
     def test_warns_only_in_production_with_default(self, monkeypatch, env, url, warns):
-        from db.connection import default_db_password_warning
+        from db.connection import uses_default_db_password
 
         monkeypatch.setenv("ENV", env)
         monkeypatch.setenv("DATABASE_URL", url)
-        assert (default_db_password_warning() is not None) is warns
+        assert uses_default_db_password() is warns

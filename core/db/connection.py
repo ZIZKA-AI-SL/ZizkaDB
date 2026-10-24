@@ -92,21 +92,22 @@ def qdrant_api_key() -> str | None:
 _WELL_KNOWN_DB_PASSWORDS = {"zizkadb", "postgres", "password"}
 
 
-def default_db_password_warning() -> str | None:
-    """A warning when production connects to Postgres with a well-known password."""
+_DEFAULT_DB_PASSWORD_WARNING = (
+    "Postgres uses a well-known password. Keep its port private, and set a "
+    "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
+    "see wiki/Self-Hosting.md."
+)
+
+
+def uses_default_db_password() -> bool:
+    """True when production connects to Postgres with a well-known password."""
     if is_dev_mode():
-        return None
+        return False
     try:
         password = urlsplit(os.getenv("DATABASE_URL") or "").password
     except ValueError:
-        return None
-    if password not in _WELL_KNOWN_DB_PASSWORDS:
-        return None
-    return (
-        "Postgres uses a well-known password. Keep its port private, and set a "
-        "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
-        "see wiki/Self-Hosting.md."
-    )
+        return False
+    return password in _WELL_KNOWN_DB_PASSWORDS
 
 
 async def init_db():
@@ -121,9 +122,8 @@ async def init_db():
     )
 
     logger.info("Postgres connected")
-    db_password_warn = default_db_password_warning()
-    if db_password_warn:
-        logger.warning(db_password_warn)
+    if uses_default_db_password():
+        logger.warning(_DEFAULT_DB_PASSWORD_WARNING)
     workers, assumed = uvicorn_worker_count()
     pool_warn = warn_if_pool_near_pg_limit(
         PG_POOL_MAX_SIZE, workers, assumed=assumed
