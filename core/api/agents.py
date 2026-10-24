@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -30,6 +29,7 @@ from services import token_optimization_config
 from services.ai import config as ai_config
 from services.ai.provider import AIProviderError
 from services.suggestions import engine as suggestions_engine
+from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.api_keys import (
     assert_and_reserve_api_key_slot,
     create_api_key_record,
@@ -42,7 +42,6 @@ from services.runtime_env import is_dev_mode
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$")
 # Time windows accepted by /baseline (the route's Query pattern lists the same keys).
 _BASELINE_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 
@@ -125,10 +124,8 @@ async def _check_suggestions_rate(
 
 def _validate_agent_id(agent_id: str) -> str:
     agent_id = agent_id.strip()
-    if not agent_id or not _AGENT_ID_RE.match(agent_id):
-        raise bad_request(
-            "agent_id must be 1–255 chars: letters, numbers, dots, dashes, underscores"
-        )
+    if not is_valid_agent_id(agent_id):
+        raise bad_request(f"agent_id must be {AGENT_ID_RULE}")
     return agent_id
 
 
