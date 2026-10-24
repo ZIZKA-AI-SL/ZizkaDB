@@ -737,13 +737,13 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 ### 18.4 Events & memory
 
-- **`write_event`** (`core/services/event_write.py:16-109`): upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
+- **`write_event`** (`core/services/event_write.py:16-109`): a **new** agent name must match the agent-id rule (`core/services/agent_ids.py`, 400 otherwise; agents stored before the rule keep working; first use of an unassigned key applies the same rule in `claim_unassigned_api_key`); upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
 - **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /{id}/impact` walks downstream through children (`0≤depth≤50`, at most 500 nodes; `truncated` when the node cap was hit, `depth_truncated` when events lie below the depth limit) with the same agent scoping as `/why`; `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
 - **Memory** (`core/api/memory.py`): `POST /context` (recent + semantic search merged into a char-budgeted prompt block), `GET /diff/{session_id}` (session summary + new event types vs prior), `DELETE /forget` (deletes events by exact JSONB match; Qdrant vectors are deleted **first** — if that fails with embeddings on it returns 503 and deletes nothing; response has `vector_cleanup`; logs only a hash of the value; scoped key → own agent only, unbound key → 400, JWT → tenant-wide).
 
 ### 18.5 Agents & baseline (`core/api/agents.py`)
 
-- `agent_id` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$` (`agents.py:18-28`); `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
+- `agent_id` must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}` (`core/services/agent_ids.py`, full match). The same rule applies when `POST /v1/events` or key binding would create a new agent (400); agents stored before the rule keep working. `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
 - **Baseline / drift** (`agents.py:453-544`): splits sessions into recent N (default 50) vs older; computes event distribution, parent→child transitions, session shape, error rate; `drift_score = 0.5·L1(event_dist) + 0.5·L1(transitions)`; verdicts `stable | minor_drift | noticeable_drift | significant_drift`; status can be `insufficient_data`, `warming_up`, or `ok`.
 
 ### 18.6 Admin (`core/api/admin.py`) — managed-cloud only (not in OSS)

@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from services.exceptions import conflict
+from services.exceptions import bad_request, conflict
 
+from services.agent_ids import AGENT_ID_RULE, is_storable, is_valid_agent_id
 from services.auth import generate_api_key
 from services.billing import fetch_effective_plan
 from services.entitlements import api_key_limit_for_plan, limits_enforced
@@ -188,9 +189,20 @@ async def claim_unassigned_api_key(
         from db.connection import get_pool
 
         pool = get_pool()
-    # Binding a key to a new agent name creates that agent: the plan must
-    # have room for it (409 otherwise; the key stays unassigned).
+    # Binding a key to a new agent name creates that agent: it must be
+    # reachable through /v1/agents/{id} (400 otherwise), and the plan must
+    # have room for it (409 otherwise). Either way the key stays unassigned.
     from services.agent_limits import reserve_agent_slot
+
+    if not is_valid_agent_id(agent_id) and (
+        not is_storable(agent_id)
+        or not await pool.fetchval(
+            "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+            tenant_id,
+            agent_id,
+        )
+    ):
+        raise bad_request(f"agent must be {AGENT_ID_RULE}")
 
     await reserve_agent_slot(pool, tenant_id=tenant_id, agent_id=agent_id)
 

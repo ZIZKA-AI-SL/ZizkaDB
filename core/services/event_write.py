@@ -12,6 +12,7 @@ from uuid import UUID
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
 from services.embeddings import generate_embedding, event_to_text
+from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.agent_limits import assert_agent_slot
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
@@ -133,6 +134,10 @@ async def write_event(
                 agent,
             )
             if not agent_exists:
+                # A new agent must be reachable through /v1/agents/{id}. Agents
+                # stored before this rule existed keep accepting events.
+                if not is_valid_agent_id(agent):
+                    raise bad_request(f"agent must be {AGENT_ID_RULE}")
                 await assert_agent_slot(conn, tenant_id=tenant_id, agent_id=agent)
 
             await conn.execute(

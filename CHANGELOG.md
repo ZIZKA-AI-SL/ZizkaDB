@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Agent names on write follow the agent-route rule
+
+- **Breaking:** a new agent can no longer be created under a name no `/v1/agents/{agent_id}` route accepts. `POST /v1/events`, and the first use of an unassigned API key, return a 400 that states the rule: 1–255 characters of letters, numbers, dots, dashes and underscores, starting with a letter or number. Before, names such as `my bot` or `team/bot` were stored but could not be opened, analysed or deleted, and an unassigned key could be bound to a new one on its first use, from any route that takes an `agent`. Leading or trailing spaces are rejected, not trimmed. Agents already stored under such names keep accepting events.
+
 ## [0.4.1] - 2026-10-24
 
 ### Single image: front proxy hardening
