@@ -100,19 +100,30 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
+elif [ -n "${DEV_API_KEY:-}" ]; then
+  # Production never accepts dev keys, and the API refuses to start with a
+  # well-known one. Drop it with a warning instead of a crash loop.
+  log "Ignoring DEV_API_KEY: dev keys work only with -e ENV=development."
+  unset DEV_API_KEY
 fi
 unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
 
-# Public address (optional): the base for links the API generates, and the
-# only browser origin the API accepts. The dashboard calls the API on its own
-# origin through the front proxy, so it never needs cross-origin access.
-DASHBOARD_ADDRESS="http://localhost:3001"
-if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
-  DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
+# Public address (optional): the base for links the API generates. The front
+# proxy serves the dashboard and the API (/v1) on one port, so that one
+# address is enough.
+FRONT_PORT="${FRONT_PORT:-3001}"
+export FRONT_PORT
+DASHBOARD_ADDRESS="http://localhost:${FRONT_PORT}"
+[ -n "${ZIZKADB_PUBLIC_URL:-}" ] && DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
+if is_dev; then
+  # Local mode publishes the API on :8000, where the SDKs look by default.
+  export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
+else
   export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
+  # The dashboard calls the API on its own origin, so production accepts
+  # browser calls from that origin only. Local mode keeps the API's default.
+  export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 fi
-export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
-export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -210,7 +221,7 @@ PIDS+=($!)
   ready=0
   for _ in $(seq 1 240); do
     if curl -fsS "http://127.0.0.1:${API_INTERNAL_PORT:-8000}/health" >/dev/null 2>&1 \
-       && curl -fsS -o /dev/null http://127.0.0.1:3001/login 2>/dev/null; then
+       && curl -fsS -o /dev/null "http://127.0.0.1:${FRONT_PORT}/login" 2>/dev/null; then
       ready=1
       break
     fi

@@ -14,7 +14,7 @@ const net = require('node:net')
 const LISTEN_PORT = Number(process.env.FRONT_PORT || 3001)
 const API = { host: '127.0.0.1', port: Number(process.env.API_INTERNAL_PORT || 8000) }
 const WEB = { host: '127.0.0.1', port: Number(process.env.DASHBOARD_INTERNAL_PORT || 3002) }
-const API_PREFIXES = ['/v1', '/health', '/swagger', '/openapi.json']
+const API_PREFIXES = ['/v1', '/health', '/swagger', '/openapi.json', '/api-explorer']
 
 // Hop-by-hop headers (RFC 9110 §7.6.1) are not forwarded. Transfer-Encoding
 // is kept on requests so Node re-frames a chunked body for any method.
