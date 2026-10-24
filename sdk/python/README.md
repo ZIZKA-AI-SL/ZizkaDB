@@ -1,6 +1,6 @@
 # zizkadb-sdk
 
-**PyPI:** [zizkadb-sdk 0.4.0](https://pypi.org/project/zizkadb-sdk/0.4.0/)
+**PyPI:** [zizkadb-sdk 0.4.1](https://pypi.org/project/zizkadb-sdk/0.4.1/)
 
 Python SDK for [ZizkaDB](https://github.com/Zizka-ai/ZizkaDB) — **Why did your agent do that?** Call `db.why(event_id)` or `zizkadb why <id>` after logging with `parent_id`.
 
