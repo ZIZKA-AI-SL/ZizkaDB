@@ -14,7 +14,9 @@ const net = require('node:net')
 const LISTEN_PORT = Number(process.env.FRONT_PORT || 3001)
 const API = { host: '127.0.0.1', port: Number(process.env.API_INTERNAL_PORT || 8000) }
 const WEB = { host: '127.0.0.1', port: Number(process.env.DASHBOARD_INTERNAL_PORT || 3002) }
-const API_PREFIXES = ['/v1', '/health', '/swagger', '/openapi.json', '/api-explorer']
+const API_PREFIXES = ['/v1', '/health', '/swagger', '/openapi.json']
+// Exact paths only: /api-explorer/... stays with the dashboard's redirect.
+const API_EXACT = ['/api-explorer']
 
 // Hop-by-hop headers (RFC 9110 §7.6.1) are not forwarded. Transfer-Encoding
 // is kept on requests so Node re-frames a chunked body for any method.
@@ -27,15 +29,51 @@ const HOP_BY_HOP = [
 // upstream's keep-alive timeout and turns a healthy request into a 502.
 const agent = new http.Agent({ keepAlive: false })
 
-const trusted = new net.BlockList()
-for (const entry of (process.env.TRUSTED_PROXIES || '127.0.0.1,::1').split(',')) {
-  const item = entry.trim()
-  if (!item) continue
-  const [addr, bits] = item.split('/')
-  const type = net.isIPv6(addr) ? 'ipv6' : net.isIPv4(addr) ? 'ipv4' : null
-  if (!type) continue
-  if (bits === undefined) trusted.addAddress(addr, type)
-  else trusted.addSubnet(addr, Number(bits), type)
+// Same rules as core/api/utils.py parse_trusted_proxies: invalid entries are
+// skipped with a warning, never trusted and never fatal.
+function parseTrusted(raw) {
+  const list = new net.BlockList()
+  let invalid = 0
+  for (const entry of (raw || '').split(',')) {
+    const item = entry.trim()
+    if (!item) continue
+    const [addr, bits, extra] = item.split('/')
+    const type = net.isIPv6(addr) ? 'ipv6' : net.isIPv4(addr) ? 'ipv4' : null
+    const max = type === 'ipv6' ? 128 : 32
+    if (!type || extra !== undefined) { invalid++; continue }
+    if (bits === undefined) { list.addAddress(addr, type); continue }
+    if (!/^\d{1,3}$/.test(bits) || Number(bits) > max) { invalid++; continue }
+    list.addSubnet(addr, Number(bits), type)
+  }
+  if (invalid) console.warn(`[front-proxy] ignoring ${invalid} invalid TRUSTED_PROXIES entr${invalid === 1 ? 'y' : 'ies'}`)
+  return list
+}
+
+const trusted = parseTrusted(process.env.TRUSTED_PROXIES || '127.0.0.1,::1')
+
+// Local mode (ENV=development) accepts the well-known dev key, so only local
+// host names may reach it: this blocks DNS-rebinding pages that point their
+// own domain at 127.0.0.1. ZIZKADB_PUBLIC_URL's host is allowed too.
+const DEV_MODE = (process.env.ENV || '').trim().toLowerCase() === 'development'
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+function publicUrlHost() {
+  try {
+    return process.env.ZIZKADB_PUBLIC_URL ? new URL(process.env.ZIZKADB_PUBLIC_URL).hostname : null
+  } catch {
+    return null
+  }
+}
+const EXTRA_HOST = publicUrlHost()
+
+function hostAllowed(hostHeader, devMode = DEV_MODE, extra = EXTRA_HOST) {
+  if (!devMode) return true
+  let name
+  try {
+    name = new URL(`http://${hostHeader || ''}`).hostname
+  } catch {
+    return false
+  }
+  return LOCAL_HOSTS.has(name) || (extra !== null && name === extra)
 }
 
 function isTrusted(addr) {
@@ -46,7 +84,7 @@ function isTrusted(addr) {
 
 function isApiPath(url) {
   const path = (url || '/').split('?', 1)[0]
-  return API_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))
+  return API_EXACT.includes(path) || API_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))
 }
 
 function peerAddress(socket) {
@@ -65,8 +103,15 @@ const BASE = 'http://front-proxy.invalid'
 
 function publicLocation(location, ports = INTERNAL_PORTS) {
   if (!location) return location
-  // A base resolves protocol-relative values (//host:port/path) too.
-  const url = new URL(location, BASE)
+  // A base resolves protocol-relative values (//host:port/path) too. A value
+  // the URL parser rejects (e.g. built from a bogus Host) is passed on as is:
+  // it is not ours to rewrite, and it must never crash the proxy.
+  let url
+  try {
+    url = new URL(location, BASE)
+  } catch {
+    return location
+  }
   if (url.origin === BASE) return location // path-relative already
   const port = url.port || (url.protocol === 'https:' ? '443' : '80')
   if (!INTERNAL_HOSTS.has(url.hostname) || !ports.has(port)) return location
@@ -81,6 +126,11 @@ function withoutHopByHop(headers, extra = []) {
 }
 
 const server = http.createServer((req, res) => {
+  if (!hostAllowed(req.headers.host)) {
+    res.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('Local mode answers on localhost only. Set ZIZKADB_PUBLIC_URL to use another host name.\n')
+    return
+  }
   const api = isApiPath(req.url)
   const peer = peerAddress(req.socket)
   const headers = withoutHopByHop(req.headers)
@@ -121,8 +171,13 @@ const server = http.createServer((req, res) => {
   req.pipe(upstream)
 })
 
+// Outlive a platform proxy's pooled idle connections (commonly 60-90 s), so a
+// reused socket is not closed under it.
+server.keepAliveTimeout = 65_000
+server.headersTimeout = 66_000
+
 if (require.main === module) {
   server.listen(LISTEN_PORT, '0.0.0.0')
 }
 
-module.exports = { publicLocation }
+module.exports = { publicLocation, parseTrusted, hostAllowed }
