@@ -166,7 +166,7 @@ cd dashboard && npm run lint && npm test && npm run build
 | Plan entitlements | Only `core/services/entitlements.py::PLAN_ENTITLEMENTS` |
 | What any component sends by default (pings, third-party requests) | `docs/telemetry.md` + CHANGELOG, before it ships (Redu agreement §4) |
 | Single-container image (ports, env, secrets, proxy) | `redu.md` + README single-container section + `wiki/Self-Hosting.md` |
-| SDK version | Bump `sdk/python/pyproject.toml`, `sdk/typescript/package.json`, `mcp/pyproject.toml`, `core/main.py version=` together |
+| SDK version | Bump `sdk/python/pyproject.toml`, `sdk/typescript/package.json` and `core/main.py` `API_VERSION` together (`scripts/publish-packages.sh` refuses mismatched SDK versions). `mcp/pyproject.toml` has its own version line: bump it whenever `mcp/` changes |
 
 ---
 

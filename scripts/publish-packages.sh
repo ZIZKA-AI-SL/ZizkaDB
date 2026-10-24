@@ -77,6 +77,7 @@ echo "→ Upload zizkadb-sdk ${SDK_VER} to PyPI"
 twine upload $SDK_SKIP --verbose "sdk/python/dist/zizkadb_sdk-${SDK_VER}"*
 
 echo "→ Upload zizkadb-mcp ${MCP_VER} to PyPI (skipped if ${MCP_VER} is already published)"
+echo "  If you changed mcp/ in this release, bump mcp/pyproject.toml first: an unchanged version is not re-uploaded."
 twine upload --skip-existing --verbose "mcp/dist/zizkadb_mcp-${MCP_VER}"*
 
 echo "→ Publish to npm (run: npm login --auth-type=web  if not logged in)"
