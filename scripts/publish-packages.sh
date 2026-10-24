@@ -61,10 +61,14 @@ echo "→ Build TypeScript SDK"
 (cd sdk/typescript && npm ci -q && npm run build)
 
 # The SDK upload fails if this version is already on PyPI, so a forgotten
-# version bump stops the release here. MCP versions independently, so an
-# unchanged MCP version is skipped.
+# version bump stops the release here. To finish a release whose npm step
+# failed after PyPI succeeded, re-run with PUBLISH_RESUME=1. MCP versions
+# independently, so an unchanged MCP version is always skipped.
+SDK_SKIP=""
+if [ "${PUBLISH_RESUME:-}" = "1" ]; then SDK_SKIP="--skip-existing"; fi
 echo "→ Upload zizkadb-sdk ${SDK_VER} to PyPI"
-twine upload --verbose "sdk/python/dist/zizkadb_sdk-${SDK_VER}"*
+# shellcheck disable=SC2086  # SDK_SKIP is empty or one flag
+twine upload $SDK_SKIP --verbose "sdk/python/dist/zizkadb_sdk-${SDK_VER}"*
 
 echo "→ Upload zizkadb-mcp ${MCP_VER} to PyPI (skipped if ${MCP_VER} is already published)"
 twine upload --skip-existing --verbose "mcp/dist/zizkadb_mcp-${MCP_VER}"*
