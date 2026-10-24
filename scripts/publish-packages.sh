@@ -21,6 +21,12 @@ cd "$ROOT"
 SDK_VER="$(grep '^version' sdk/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
 MCP_VER="$(grep '^version' mcp/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
 
+TS_VER="$(node -p "require('./sdk/typescript/package.json').version")"
+if [[ "$SDK_VER" != "$TS_VER" ]]; then
+  echo "Version mismatch: Python SDK ${SDK_VER}, TypeScript SDK ${TS_VER}. Bump both before publishing."
+  exit 1
+fi
+
 if [[ "${TWINE_USERNAME:-}" != "__token__" ]]; then
   echo "Set PyPI credentials before running:"
   echo '  export TWINE_USERNAME=__token__'
