@@ -34,6 +34,17 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 - **Drift detection.** See when an agent's behavior shifts from its baseline.
 - **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure. Self-hosted runs **one agent with one API key**; multiple agents, agent fleets and agent-to-agent messaging are on Cloud.
 
+**In plain words:** ZizkaDB is a flight recorder for AI agents. It records every step an agent takes and which step led to it, so when an agent does something unexpected, you can see exactly why.
+
+### Start here
+
+| You are… | Go to |
+| --- | --- |
+| New to ZizkaDB, or not technical | [ZizkaDB Cloud](https://db.zizka.ai): nothing to install |
+| A developer trying it on your laptop | [Quickstart](#quickstart-60-seconds): one command, about a minute |
+| Adding it to an agent you already have | [Connect your agent](#connect-your-agent) |
+| Running it for your team on a server | [Self-host on a server](#self-host-on-a-server) or [Deploy on Redu Cloud](#deploy-on-redu-cloud) |
+
 <p align="center">
   <a href="#quickstart-60-seconds"><img src="docs/assets/why-chain.svg" alt="Animated: db.why() walks from a tool_call back through llm_response to the root-cause user_message" width="900"/></a>
 </p>
@@ -41,6 +52,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 ## Contents
 
 - [Quickstart (60 seconds)](#quickstart-60-seconds)
+  - [Self-host on a server](#self-host-on-a-server) · [Deploy on Redu Cloud](#deploy-on-redu-cloud)
 - [Integrations](#integrations)
 - [Connect your agent](#connect-your-agent)
 - [What it does](#what-it-does)
@@ -102,7 +114,19 @@ docker run -d --name zizkadb -e ENV=development \
 
 </details>
 
-With `ENV=development` the single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. Without it, the image runs in production mode: it generates its own secrets on first start and the dashboard asks for the admin token (`docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`). It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
+The single container has two modes:
+
+- **On your own machine** (`-e ENV=development`, what the quickstart uses): one-click sign-in and a well-known API key, with the ports bound to `127.0.0.1` only.
+- **On a server** (the default, production mode): the container generates its own secrets on first start, and the dashboard and API share port 3001. Sign in with the admin token:
+
+  ```bash
+  docker run -d --name zizkadb -p 3001:3001 -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
+  docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env   # your admin token
+  ```
+
+  Put it behind HTTPS, and set `ZIZKADB_PUBLIC_URL=https://your-domain` so the links it generates are correct.
+
+The single container runs without Qdrant, so semantic search and embeddings need the full stack below.
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
@@ -339,6 +363,12 @@ No. The curl quickstart downloads config and Docker images only.
 
 **Do I need an API key locally?**  
 No. `http://localhost:8000` uses a built-in dev key.
+
+**My server's login page asks for an admin token. Where is it?**  
+A server install generates one on first start. Single container: `docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Full stack: the `SELFHOST_ADMIN_TOKEN` you set in `infra/.env`. After signing in, create your API key in **Settings**.
+
+**Where does my data go?**  
+When you self-host, everything stays on your machine. The server and dashboard make no outside requests; the SDKs send one anonymous install ping, which `ZIZKADB_TELEMETRY=false` turns off. Details: [docs/telemetry.md](docs/telemetry.md).
 
 **`zizkadb demo` says connection refused?**  
 The stack isn't running. Start it with the curl command above or `bash scripts/setup-local.sh`.

@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Single image: review fixes; README for every reader
+
+- A production container started with the old `DEV_API_KEY=zizkadb_dev_local` now ignores it with a warning instead of refusing to start in a loop.
+- Production links and the banner use the dashboard port (3001), which serves the API too, instead of port 8000. Cross-origin browser calls are limited to that address in production only; local mode (`ENV=development`) keeps the API's default.
+- `/api-explorer` reaches the API through port 3001, and a custom `FRONT_PORT` keeps the health check passing.
+- TypeScript SDK: the constructor tolerates a `process` shim without `env`.
+- `scripts/publish-packages.sh` stops if the Python SDK version is already on PyPI (only MCP is skipped when unchanged).
+- README: a plain-language summary, a "Start here" guide for each kind of reader, a server command for the single image, and FAQ answers about the admin token and where data goes.
+
 ## [0.4.0] - 2026-10-24
 
 ### Dashboard fonts ship with the app
