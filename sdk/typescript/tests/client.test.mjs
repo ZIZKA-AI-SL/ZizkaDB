@@ -271,6 +271,16 @@ it('constructs without a process global (browsers, edge runtimes)', () => {
   }
 })
 
+it('constructs with a process shim that has no env (browser polyfills)', () => {
+  const realProcess = globalThis.process
+  try {
+    globalThis.process = {}
+    expect(() => new ZizkaDB({ apiKey: 'zizkadb_live_x' })).not.toThrow()
+  } finally {
+    globalThis.process = realProcess
+  }
+})
+
 it('a blank ZIZKADB_HOST falls through to AGENTDB_HOST', async () => {
   process.env.ZIZKADB_HOST = '  '
   process.env.AGENTDB_HOST = 'https://legacy.example.com'

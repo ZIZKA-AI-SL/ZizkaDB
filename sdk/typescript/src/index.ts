@@ -56,7 +56,7 @@ function isLocalHost(host: string): boolean {
 
 /** Environment variable, or undefined where there is no `process` (browsers, edge). */
 function readEnv(name: string): string | undefined {
-  return typeof process !== 'undefined' ? process.env[name] : undefined
+  return typeof process !== 'undefined' ? process.env?.[name] : undefined
 }
 
 /** ZIZKADB_API_KEY preferred; AGENTDB_API_KEY for legacy managed-cloud users. */
