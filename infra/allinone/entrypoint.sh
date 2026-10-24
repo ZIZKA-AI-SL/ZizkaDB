@@ -101,9 +101,9 @@ if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
 elif [ -n "${DEV_API_KEY:-}" ]; then
-  # Production never accepts dev keys, and the API refuses to start with a
-  # well-known one. Drop it with a warning instead of a crash loop.
-  log "Ignoring DEV_API_KEY: dev keys work only with -e ENV=development."
+  # Production never accepts any dev key, and the API refuses to start with
+  # a well-known one. Drop it with a warning instead of a start-up loop.
+  log "Ignoring DEV_API_KEY: production mode never accepts dev keys (local mode: -e ENV=development)."
   unset DEV_API_KEY
 fi
 unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
@@ -113,17 +113,26 @@ unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_T
 # address is enough.
 FRONT_PORT="${FRONT_PORT:-3001}"
 export FRONT_PORT
+for internal in "${API_INTERNAL_PORT:-8000}" "${DASHBOARD_INTERNAL_PORT:-3002}"; do
+  if [ "$FRONT_PORT" = "$internal" ]; then
+    log "FRONT_PORT=${FRONT_PORT} clashes with an internal port (API ${API_INTERNAL_PORT:-8000}, dashboard ${DASHBOARD_INTERNAL_PORT:-3002}). Choose another."
+    exit 1
+  fi
+done
 DASHBOARD_ADDRESS="http://localhost:${FRONT_PORT}"
-[ -n "${ZIZKADB_PUBLIC_URL:-}" ] && DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
-if is_dev; then
+if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
+  DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
+  export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
+elif is_dev; then
   # Local mode publishes the API on :8000, where the SDKs look by default.
   export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
 else
   export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
-  # The dashboard calls the API on its own origin, so production accepts
-  # browser calls from that origin only. Local mode keeps the API's default.
-  export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 fi
+# The dashboard calls the API on its own origin, so browsers may call the API
+# only from that origin. This matters most in local mode, where the API also
+# accepts the well-known dev key. Set CORS_ALLOWED_ORIGINS to allow others.
+export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -253,7 +262,7 @@ PIDS+=($!)
   fi
   echo ""
   if is_dev; then
-    echo "  Dashboard:  http://localhost:3001/dashboard/activity?agent=support-bot"
+    echo "  Dashboard:  ${DASHBOARD_ADDRESS}/dashboard/activity?agent=support-bot"
     echo "  API:        http://localhost:8000   (key: ${DEV_API_KEY})"
   else
     # Never print the token itself: platform log viewers show container output.
