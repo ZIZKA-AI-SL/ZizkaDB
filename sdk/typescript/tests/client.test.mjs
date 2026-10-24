@@ -271,11 +271,14 @@ it('constructs without a process global (browsers, edge runtimes)', () => {
   }
 })
 
-it('constructs with a process shim that has no env (browser polyfills)', () => {
+it('constructs and logs with a process shim that has no env (bundler polyfills)', async () => {
   const realProcess = globalThis.process
+  globalThis.fetch = async () => jsonResponse({ event_id: 'e', timestamp: 't', sequence_no: 1, checksum: 'c' })
   try {
     globalThis.process = {}
-    expect(() => new ZizkaDB({ apiKey: 'zizkadb_live_x' })).not.toThrow()
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_x', host: 'http://localhost:8000' })
+    // log() reads ZIZKADB_QUIET / LOG_HINTS / STRICT: none may throw without env.
+    await expect(db.log({ agent: 'a', event: 'user_message', data: {} })).resolves.toBeTruthy()
   } finally {
     globalThis.process = realProcess
   }

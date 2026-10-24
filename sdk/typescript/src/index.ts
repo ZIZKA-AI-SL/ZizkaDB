@@ -39,6 +39,7 @@ import type {
 } from './types'
 import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
 import { LineageContext, resolveLogLineage, recordLogResult } from './context'
+import { readEnv } from './env'
 import packageJson from '../package.json'
 
 export * from './types'
@@ -54,10 +55,6 @@ function isLocalHost(host: string): boolean {
   return h.includes('localhost') || h.includes('127.0.0.1') || h.includes('0.0.0.0')
 }
 
-/** Environment variable, or undefined where there is no `process` (browsers, edge). */
-function readEnv(name: string): string | undefined {
-  return typeof process !== 'undefined' ? process.env?.[name] : undefined
-}
 
 /** ZIZKADB_API_KEY preferred; AGENTDB_API_KEY for legacy managed-cloud users. */
 function apiKeyFromEnv(): string | undefined {
@@ -65,9 +62,9 @@ function apiKeyFromEnv(): string | undefined {
 }
 
 function logHintsEnabled(baseUrl: string): boolean {
-  const quiet = (process.env.ZIZKADB_QUIET ?? '').toLowerCase()
+  const quiet = (readEnv('ZIZKADB_QUIET') ?? '').toLowerCase()
   if (['1', 'true', 'yes', 'on'].includes(quiet)) return false
-  if (['1', 'true', 'yes', 'on'].includes((process.env.ZIZKADB_LOG_HINTS ?? '').toLowerCase())) {
+  if (['1', 'true', 'yes', 'on'].includes((readEnv('ZIZKADB_LOG_HINTS') ?? '').toLowerCase())) {
     return true
   }
   return isLocalHost(baseUrl)
@@ -82,7 +79,7 @@ function emitLogHint(baseUrl: string, eventId: string): void {
 let _telemetrySent = false
 
 function _isLocalSelfHost(): boolean {
-  const host = process.env.ZIZKADB_HOST ?? ''
+  const host = readEnv('ZIZKADB_HOST') ?? ''
   return (
     host.startsWith('http://localhost') ||
     host.startsWith('http://127.0.0.1') ||
@@ -93,8 +90,7 @@ function _isLocalSelfHost(): boolean {
 function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
   if (_telemetrySent) return
   if (
-    typeof process !== 'undefined' &&
-    /^(false|0|no|off)$/i.test(process.env.ZIZKADB_TELEMETRY ?? '')
+    /^(false|0|no|off)$/i.test(readEnv('ZIZKADB_TELEMETRY') ?? '')
   ) return
 
   _telemetrySent = true
