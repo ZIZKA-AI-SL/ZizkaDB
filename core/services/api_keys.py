@@ -7,7 +7,7 @@ from uuid import UUID
 
 from services.exceptions import bad_request, conflict
 
-from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
+from services.agent_ids import AGENT_ID_RULE, is_storable, is_valid_agent_id
 from services.auth import generate_api_key
 from services.billing import fetch_effective_plan
 from services.entitlements import api_key_limit_for_plan, limits_enforced
@@ -194,10 +194,13 @@ async def claim_unassigned_api_key(
     # have room for it (409 otherwise). Either way the key stays unassigned.
     from services.agent_limits import reserve_agent_slot
 
-    if not is_valid_agent_id(agent_id) and not await pool.fetchval(
-        "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
-        tenant_id,
-        agent_id,
+    if not is_valid_agent_id(agent_id) and (
+        not is_storable(agent_id)
+        or not await pool.fetchval(
+            "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+            tenant_id,
+            agent_id,
+        )
     ):
         raise bad_request(f"agent must be {AGENT_ID_RULE}")
 

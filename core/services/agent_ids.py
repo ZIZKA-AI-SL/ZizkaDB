@@ -16,3 +16,15 @@ AGENT_ID_RULE = "1–255 chars: letters, numbers, dots, dashes, underscores, sta
 def is_valid_agent_id(agent_id: str) -> bool:
     # fullmatch, not match with "$": "$" also matches before a trailing newline.
     return AGENT_ID_RE.fullmatch(agent_id) is not None
+
+
+def is_storable(agent_id: str) -> bool:
+    """False for text Postgres cannot store (NUL, unpaired surrogates), so no
+    agent with that name can exist and looking it up would fail."""
+    if "\x00" in agent_id:
+        return False
+    try:
+        agent_id.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True

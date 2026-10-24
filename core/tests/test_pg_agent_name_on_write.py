@@ -75,3 +75,43 @@ async def test_agent_stored_before_the_rule_keeps_working(pg_db):
     assert tenant["agent_id"] == "legacy bot"
     assert await _count(pg_db, "agents", tenant_id) == 1
     assert await _count(pg_db, "events", tenant_id) == 1
+
+
+@pytest.mark.parametrize(
+    "method,agent",
+    [
+        ("post", "my bot"),
+        ("post", "a\x00b"),
+        ("get", "my bot"),
+        ("get", "a\x00b"),
+        ("get", "a" * 300),
+    ],
+)
+async def test_unassigned_key_over_http_gets_400_for_an_unreachable_name(pg_db, method, agent):
+    """The full route: get_tenant, then key binding, then the write."""
+    import json
+
+    import httpx
+
+    from main import app
+
+    tenant_id = await _tenant(pg_db)
+    key = await create_api_key_record(pg_db, tenant_id=tenant_id, name="first")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {key['key']}", "content-type": "application/json"},
+    ) as client:
+        if method == "post":
+            # json.dumps keeps the NUL and the lone surrogate as JSON escapes.
+            body = json.dumps({"agent": agent, "event": "ping", "data": {}})
+            response = await client.post("/v1/events", content=body)
+        else:
+            response = await client.get("/v1/events", params={"agent": agent})
+
+    assert response.status_code == 400, response.text
+    assert await _count(pg_db, "agents", tenant_id) == 0
+    assert await pg_db.fetchval(
+        "SELECT agent_id FROM api_keys WHERE key_id = $1::uuid", key["key_id"]
+    ) is None

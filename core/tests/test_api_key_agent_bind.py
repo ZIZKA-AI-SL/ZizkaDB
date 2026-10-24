@@ -227,3 +227,18 @@ async def test_claim_does_not_look_up_a_valid_name(monkeypatch):
             key_id="k", tenant_id="t", agent_id="my-bot", pool=_Pool(exists=False)
         )
     assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", ["a\x00b", "\ud800x"])
+async def test_claim_rejects_a_name_postgres_cannot_store_without_looking_it_up(agent):
+    class _Pool(_NamePool):
+        async def fetchval(self, sql, *args):
+            raise AssertionError("asyncpg would fail on this value")
+
+    with pytest.raises(HTTPException) as exc:
+        await api_keys.claim_unassigned_api_key(
+            key_id="k", tenant_id="t", agent_id=agent, pool=_Pool(exists=False)
+        )
+
+    assert exc.value.status_code == 400
