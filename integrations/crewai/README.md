@@ -1,6 +1,6 @@
 # zizkadb-crewai
 
-**PyPI:** [zizkadb-crewai 0.1.3](https://pypi.org/project/zizkadb-crewai/0.1.3/) · requires `zizkadb-sdk>=0.3.0`
+**PyPI:** [zizkadb-crewai 0.1.4](https://pypi.org/project/zizkadb-crewai/0.1.4/) · requires `zizkadb-sdk>=0.4.1`
 
 Self-hosted, open-source **observability and causal debugging** for [CrewAI](https://crewai.com).
 
