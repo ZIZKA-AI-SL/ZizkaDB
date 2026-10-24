@@ -5,10 +5,11 @@ Official adapters for agent frameworks. Each package is optional — core SDK is
 | Package | Registry | Install | Telemetry `sdk` | Use case |
 |---------|----------|---------|-------------------|----------|
 | `zizkadb-sdk` | PyPI **0.4.1** | `pip install zizkadb-sdk` | `python` | Core Python client |
-| [langchain](langchain/) | PyPI **0.1.3** | `pip install zizkadb-langchain` | `langchain` | LangChain callback handler |
-| [crewai](crewai/) | PyPI **0.1.3** | `pip install zizkadb-crewai` | `crewai` | CrewAI crew logger |
-| [livekit](livekit/) | PyPI **0.2.0** | `pip install zizkadb-livekit` | `livekit` | LiveKit voice → Sessions + Events |
-| [mcp](../mcp/) | PyPI **0.1.8** | `uvx zizkadb-mcp` | `mcp` | Cursor / Claude Desktop tools |
+| [langchain](langchain/) | PyPI **0.1.4** | `pip install zizkadb-langchain` | `langchain` | LangChain callback handler |
+| [crewai](crewai/) | PyPI **0.1.4** | `pip install zizkadb-crewai` | `crewai` | CrewAI crew logger |
+| [livekit](livekit/) | PyPI **0.2.2** | `pip install zizkadb-livekit` | `livekit` | LiveKit voice → Sessions + Events |
+| [langgraph](langgraph/) | PyPI **0.1.1** | `pip install zizkadb-langgraph` | `langgraph` | LangGraph node logging middleware |
+| [mcp](../mcp/) | PyPI **0.1.9** | `uvx zizkadb-mcp` | `mcp` | Cursor / Claude Desktop tools |
 | TypeScript SDK | npm **0.4.1** | `npm install zizkadb-sdk` | `typescript` | Node / Bun / Deno client |
 | Docker OSS | — | `bash scripts/quickstart.sh` | `docker` | Self-hosted stack |
 
