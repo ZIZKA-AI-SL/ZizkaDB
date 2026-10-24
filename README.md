@@ -124,7 +124,7 @@ The single container has two modes:
   docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env   # your admin token
   ```
 
-  Put it behind HTTPS, and set `ZIZKADB_PUBLIC_URL=https://your-domain` so the links it generates are correct.
+  Put it behind HTTPS, and set `ZIZKADB_PUBLIC_URL=https://your-domain` so the links it generates are correct. If a reverse proxy on the same host forwards to it, add `-e TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12` so sign-in rate limits see each visitor.
 
 The single container runs without Qdrant, so semantic search and embeddings need the full stack below.
 

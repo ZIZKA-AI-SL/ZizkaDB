@@ -23,6 +23,7 @@ The API and the single-container image make no outbound calls of their own.
 
 - **No third-party requests.** A self-hosted build serves only the sign-in page and the dashboard; the marketing website and docs pages, which show package badges from shields.io, are not part of it. The fonts (Inter and JetBrains Mono) ship with the dashboard, so a visitor's browser only talks to your ZizkaDB server.
 - **No analytics.** The dashboard loads no analytics, tracking or advertising scripts.
+- **API reference page.** The interactive API reference at `/swagger` loads the Swagger UI from `cdn.jsdelivr.net` and its icon from `fastapi.tiangolo.com`, as FastAPI does by default. Only people who open that page make these requests.
 
 ## SDKs, MCP server and integrations
 
