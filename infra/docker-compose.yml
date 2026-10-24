@@ -18,6 +18,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zizkadb}
       POSTGRES_DB: ${POSTGRES_DB:-zizkadb}
 
+    # Data ports listen on the server itself only, never the internet. The API
+    # reaches every data service over the compose network. From another
+    # machine, use an SSH tunnel: ssh -L 5432:127.0.0.1:5432 you@server
     ports:
       - "127.0.0.1:5432:5432"
 
@@ -47,6 +50,13 @@ services:
 
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+
+    # QDRANT_API_KEY in infra/.env turns on Qdrant's API key; empty keeps it off.
+    entrypoint:
+      - sh
+      - -c
+      - '[ -n "$$QDRANT_API_KEY" ] && export QDRANT__SERVICE__API_KEY="$$QDRANT_API_KEY"; exec ./entrypoint.sh'
 
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
@@ -66,10 +76,17 @@ services:
     volumes:
       - redis_data:/data
 
-    command: redis-server --appendonly yes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+    # REDIS_PASSWORD in infra/.env turns on requirepass; empty keeps it off.
+    command:
+      - sh
+      - -c
+      - 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
 
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", 'redis-cli $${REDIS_PASSWORD:+--no-auth-warning -a "$$REDIS_PASSWORD"} ping | grep -q PONG']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -89,7 +106,9 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-zizkadb}:${POSTGRES_PASSWORD:-zizkadb}@postgres:5432/${POSTGRES_DB:-zizkadb}
       REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
 
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -167,7 +186,9 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-zizkadb}:${POSTGRES_PASSWORD:-zizkadb}@postgres:5432/${POSTGRES_DB:-zizkadb}
       REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ENV: ${ENV:?Set ENV in infra/.env - production for a server, development for local use only}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-managed}

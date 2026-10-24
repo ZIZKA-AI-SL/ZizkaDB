@@ -150,12 +150,23 @@ Local laptop reset only:
 bash scripts/reset-local-db.sh
 ```
 
-Configure in `infra/.env`:
+Configure in `infra/.env`. Start with `bash scripts/init-secrets.sh`: it replaces the defaults from `.env.example` with random `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `QDRANT_API_KEY` and JWT secrets, and prints only the names it changed. `scripts/setup-local.sh` runs it when it creates `infra/.env`. It never changes the Postgres password of an existing database volume.
 
 - `DATABASE_URL`
 - `REDIS_URL`
 - `QDRANT_URL`
 - `JWT_SECRET` / `JWT_REFRESH_SECRET`
+- `POSTGRES_PASSWORD` — set a random value **before the first start** of a new install. Postgres keeps the password it was created with, so on an existing install leave it as is (or change it inside Postgres with `ALTER USER` first).
+  To move an existing install off the default (back up first):
+  ```bash
+  NEW=$(openssl rand -hex 24)
+  docker exec zizkadb_postgres psql -U zizkadb -d zizkadb -c "ALTER USER zizkadb PASSWORD '$NEW'"
+  sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$NEW/" infra/.env
+  docker compose -f infra/docker-compose.yml up -d --no-deps --force-recreate api embed-worker
+  ```
+- `REDIS_PASSWORD` / `QDRANT_API_KEY` — optional, recommended (`openssl rand -hex 24`). Empty keeps the old no-password behaviour.
+- `TRUSTED_PROXIES` — only if a proxy on **another machine** (load balancer, Cloudflare) sits in front of the API: its IPs/CIDRs, comma-separated, so rate limits see the real client IP. nginx on the same host or the Docker network needs nothing.
+- Postgres, Redis and Qdrant ports listen on `127.0.0.1` only. From another machine use an SSH tunnel: `ssh -L 5432:127.0.0.1:5432 you@server`.
 - `SELFHOST_ADMIN_TOKEN` — required to sign in to the dashboard when `ENV=production` (no email/SMTP needed)
 - `ENV=production` (disables dev key bypass). `infra/docker-compose.yml` requires `ENV` and stops with an error if it is missing; never use `ENV=development` on a server
 - `DEV_API_KEY` — set a unique random value (`openssl rand -hex 24`) — the API refuses to start in production if it is empty or the default, and never accepts it as auth there

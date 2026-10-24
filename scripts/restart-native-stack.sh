@@ -49,6 +49,9 @@ if ! curl -sf http://localhost:8000/health >/dev/null 2>&1; then
   (
     cd core
     set -a && source ../infra/.env && set +a
+    # The native Redis and Qdrant run without auth; the passwords in infra/.env
+    # are for the Docker stack.
+    unset REDIS_PASSWORD QDRANT_API_KEY
     nohup ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 \
       > ../.local/logs/api.log 2>&1 &
     echo $! > ../.local/pids/api.pid

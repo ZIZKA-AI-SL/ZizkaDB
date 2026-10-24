@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security hardening, without extra setup
+
+- **New installs get random secrets.** `scripts/setup-local.sh` runs the new `scripts/init-secrets.sh` when it creates `infra/.env`. The script replaces the defaults with a random Postgres password, Redis password, Qdrant API key and JWT secrets, and prints only the names it changed. It never changes the Postgres password of an existing database volume. Servers can run it by hand.
+- **Optional Redis password and Qdrant API key** in `infra/docker-compose.yml`. Set `REDIS_PASSWORD` / `QDRANT_API_KEY` in `infra/.env` and the containers and the API use them. Empty keeps the old behaviour. `scripts/restart-native-stack.sh` ignores both, because the native Redis and Qdrant run without auth.
+- **The API warns at start-up in production when Postgres uses a well-known password.** `scripts/validate-selfhost-config.sh` warns about the same thing, and also when the Redis password or Qdrant API key is missing. `wiki/Self-Hosting.md` shows how to change the password of an existing install.
+- **Self-host admin login has a global attempt limit:** 60 per minute across all IPs, checked before the token is compared, on top of the per-IP limit.
+- **Anonymous telemetry pings are rate-limited** to 120 per IP per hour. Pings over the limit are dropped, still with a 200, so SDKs never see an error.
+- **Dashboard security headers:** `X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`, `nosniff`, a referrer policy and a permissions policy.
+- Community image links use the request's `Host` header only when it is a plain hostname. Otherwise they use the default; set `PUBLIC_API_URL` to pin it.
+- `infra/docker-compose.dashboard.yml` builds the dashboard with `NEXT_PUBLIC_DEV_MODE=false` by default. Local one-click sign-in still works through `ENV=development`.
+
 ### Python integrations and MCP republished for SDK 0.4.1
 
 - `zizkadb-langchain` 0.1.4, `zizkadb-crewai` 0.1.4, `zizkadb-langgraph` 0.1.1 and `zizkadb-livekit` 0.2.2 require `zizkadb-sdk>=0.4.1`, so installing any of them brings the current SDK.
@@ -112,7 +123,7 @@ Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-liveki
 - `infra/lib/production-guard.sh` (used by `scripts/reset-local-db.sh`) now refuses unless `infra/.env` sets `ENV=development`; an unset `ENV` counts as production, matching the API.
 - `infra/backup-postgres.sh` and `infra/backup-qdrant.sh` keep working on a server whose `infra/.env` has no `ENV` line (they only read from the running containers).
 - `scripts/validate-selfhost-config.sh` follows the API: an unset `ENV` is production, and an empty `DEV_API_KEY` is accepted in production (only the published dev keys are rejected).
-- Unchanged for now: data ports in `infra/docker-compose.yml` (Postgres, Redis, Qdrant) are still published on all interfaces, and `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers.
+- Unchanged for now: `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers. (The data ports were moved to `127.0.0.1` later; see Security hardening above.)
 
 ### Development mode is opt-in (unset `ENV` means production)
 

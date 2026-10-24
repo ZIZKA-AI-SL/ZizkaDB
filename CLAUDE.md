@@ -151,8 +151,9 @@ cd dashboard && npm run lint && npm test && npm run build
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.
 5. **Idempotent DDL**: all schema changes must use `IF NOT EXISTS` / `IF EXISTS` — the same migration runs on fresh installs and live databases.
 6. **`docker-compose.yml` is production**: never add `--reload` or `../core:/app` volume mounts to the base compose file. Those belong in `docker-compose.dev.yml`.
-7. **Self-hosted security**: development mode is opt-in. Only `ENV=development` enables the hardcoded dev API keys (`zizkadb_dev_local`), `/v1/auth/dev-token` and one-click sign-in; an unset or misspelt `ENV` is production (`core/services/runtime_env.py`). Never set `ENV=development` on a reachable deployment, and gate any new dev-only behaviour on `is_dev_mode()`, never on a raw `os.getenv("ENV")` comparison.
-8. **`NEXT_PUBLIC_DEV_MODE`**: must be `false` in any public-facing deployment — when `true`, the dashboard login screen is bypassed entirely (no OTP required).
+7. **Data ports stay private**: `infra/docker-compose.yml` publishes Postgres/Redis/Qdrant on `127.0.0.1` only. Never publish them on all interfaces.
+8. **Self-hosted security**: development mode is opt-in. Only `ENV=development` enables the hardcoded dev API keys (`zizkadb_dev_local`), `/v1/auth/dev-token` and one-click sign-in; an unset or misspelt `ENV` is production (`core/services/runtime_env.py`). Never set `ENV=development` on a reachable deployment, and gate any new dev-only behaviour on `is_dev_mode()`, never on a raw `os.getenv("ENV")` comparison.
+9. **`NEXT_PUBLIC_DEV_MODE`**: must be `false` in any public-facing deployment — when `true`, the dashboard login screen is bypassed entirely (no OTP required).
 
 ---
 

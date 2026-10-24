@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import os
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
 import redis.asyncio as redis
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, VectorParams
+
+from services.runtime_env import is_dev_mode
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +72,44 @@ def warn_if_pool_near_pg_limit(
 # Initialize all databases
 # --------------------------------------------------------------------
 
+def redis_url() -> str:
+    """REDIS_URL, with REDIS_PASSWORD added when set and the URL carries none."""
+    url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    password = (os.getenv("REDIS_PASSWORD") or "").strip()
+    if not password:
+        return url
+    parts = urlsplit(url)
+    if parts.password or "@" in parts.netloc:
+        return url
+    return urlunsplit(parts._replace(netloc=f":{quote(password, safe='')}@{parts.netloc}"))
+
+
+def qdrant_api_key() -> str | None:
+    return (os.getenv("QDRANT_API_KEY") or "").strip() or None
+
+
+# Passwords published in .env.example and the docs.
+_WELL_KNOWN_DB_PASSWORDS = {"zizkadb", "postgres", "password"}
+
+
+_DEFAULT_DB_PASSWORD_WARNING = (
+    "Postgres uses a well-known password. Keep its port private, and set a "
+    "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
+    "see wiki/Self-Hosting.md."
+)
+
+
+def uses_default_db_password() -> bool:
+    """True when production connects to Postgres with a well-known password."""
+    if is_dev_mode():
+        return False
+    try:
+        password = urlsplit(os.getenv("DATABASE_URL") or "").password
+    except ValueError:
+        return False
+    return password in _WELL_KNOWN_DB_PASSWORDS
+
+
 async def init_db():
     global _pg_pool, _redis, _qdrant
 
@@ -81,6 +122,8 @@ async def init_db():
     )
 
     logger.info("Postgres connected")
+    if uses_default_db_password():
+        logger.warning(_DEFAULT_DB_PASSWORD_WARNING)
     workers, assumed = uvicorn_worker_count()
     pool_warn = warn_if_pool_near_pg_limit(
         PG_POOL_MAX_SIZE, workers, assumed=assumed
@@ -360,12 +403,7 @@ async def init_db():
 
     # ---------------- Redis ----------------
 
-    _redis = redis.from_url(
-        os.getenv(
-            "REDIS_URL",
-            "redis://localhost:6379",
-        )
-    )
+    _redis = redis.from_url(redis_url())
 
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS demo_requests (
@@ -417,7 +455,7 @@ async def init_db():
             ON email_suppressions (LOWER(email));
     """)
 
-    _redis = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+    _redis = redis.from_url(redis_url())
     logger.info("Redis connected")
 
     # ---------------- Qdrant ----------------
@@ -440,6 +478,7 @@ async def init_db():
 
     _qdrant = AsyncQdrantClient(
         url=qdrant_url,
+        api_key=qdrant_api_key(),
         timeout=30,
         check_compatibility=False,
     )
@@ -552,7 +591,8 @@ async def _log_qdrant_version() -> None:
 
         url = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")
         async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"{url}/")
+            key = qdrant_api_key()
+            response = await client.get(f"{url}/", headers={"api-key": key} if key else None)
             if response.status_code == 200:
                 version = response.json().get("version", "unknown")
                 logger.info("Qdrant server version: %s", version)

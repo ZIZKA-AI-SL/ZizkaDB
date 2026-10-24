@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 UPDATES_RATE_WINDOW_SEC = 3600
 UPDATES_RATE_MAX = 20
 
+# Anonymous pings per IP per hour. SDKs ping once per process start, so this
+# only bites floods; over the limit the ping is dropped, still with a 200.
+PING_RATE_WINDOW_SEC = 3600
+PING_RATE_MAX = 120
+
 updates_limiter = RateLimiter(
     limit=UPDATES_RATE_MAX,
     window_sec=UPDATES_RATE_WINDOW_SEC,
@@ -34,6 +39,24 @@ updates_limiter = RateLimiter(
     strategy=SlidingWindowStrategy(),
     detail="Too many requests. Try again later.",
 )
+
+
+ping_limiter = RateLimiter(
+    limit=PING_RATE_MAX,
+    window_sec=PING_RATE_WINDOW_SEC,
+    storage=RedisStorage(key_prefix="ratelimit:telemetry-ping"),
+    strategy=SlidingWindowStrategy(),
+)
+
+
+async def _ping_allowed(ip: str) -> bool:
+    try:
+        await ping_limiter.check(ip)
+    except HTTPException:
+        return False
+    except Exception:
+        logger.debug("Telemetry ping rate limit backend unavailable", exc_info=True)
+    return True
 
 
 class TelemetryPing(BaseModel):
@@ -57,6 +80,8 @@ class TelemetryUpdatesBody(BaseModel):
 @router.post("", status_code=200)
 async def receive_ping(body: TelemetryPing, request: Request):
     """Accept anonymous telemetry ping. Always returns 200."""
+    if not await _ping_allowed(client_ip(request)):
+        return {"ok": True}
     try:
         pool = get_pool()
         runtime = body.python or body.node or "unknown"
