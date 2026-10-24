@@ -743,7 +743,7 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 ### 18.5 Agents & baseline (`core/api/agents.py`)
 
-- `agent_id` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$` (`agents.py:18-28`); `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
+- `agent_id` must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}` (`core/services/agent_ids.py`, full match). The same rule applies when `POST /v1/events` or key binding would create a new agent (400); agents stored before the rule keep working. `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
 - **Baseline / drift** (`agents.py:453-544`): splits sessions into recent N (default 50) vs older; computes event distribution, parent→child transitions, session shape, error rate; `drift_score = 0.5·L1(event_dist) + 0.5·L1(transitions)`; verdicts `stable | minor_drift | noticeable_drift | significant_drift`; status can be `insufficient_data`, `warming_up`, or `ok`.
 
 ### 18.6 Admin (`core/api/admin.py`) — managed-cloud only (not in OSS)
