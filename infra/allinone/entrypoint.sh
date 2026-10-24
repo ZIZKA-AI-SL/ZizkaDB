@@ -100,10 +100,10 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
-elif [ -n "${DEV_API_KEY:-}" ]; then
-  # Production never accepts any dev key, and the API refuses to start with
-  # a well-known one. Drop it with a warning instead of a start-up loop.
-  log "Ignoring DEV_API_KEY: production mode never accepts dev keys (local mode: -e ENV=development)."
+elif [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ] || [ "${DEV_API_KEY:-}" = "agdb_dev_local" ]; then
+  # The API refuses to start in production with a well-known dev key (and
+  # never accepts dev keys there anyway). Drop it instead of a start-up loop.
+  log "Ignoring the well-known DEV_API_KEY: it works only in local mode (-e ENV=development)."
   unset DEV_API_KEY
 fi
 unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
@@ -112,13 +112,17 @@ unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_T
 # proxy serves the dashboard and the API (/v1) on one port, so that one
 # address is enough.
 FRONT_PORT="${FRONT_PORT:-3001}"
-export FRONT_PORT
-for internal in "${API_INTERNAL_PORT:-8000}" "${DASHBOARD_INTERNAL_PORT:-3002}"; do
+case "$FRONT_PORT" in
+  ''|*[!0-9]*|0*) log "FRONT_PORT must be a port number (1-65535), got '${FRONT_PORT}'."; exit 1 ;;
+esac
+if [ "$FRONT_PORT" -gt 65535 ]; then log "FRONT_PORT must be 65535 or lower."; exit 1; fi
+for internal in "${API_INTERNAL_PORT:-8000}" "${DASHBOARD_INTERNAL_PORT:-3002}" 5432 6379; do
   if [ "$FRONT_PORT" = "$internal" ]; then
-    log "FRONT_PORT=${FRONT_PORT} clashes with an internal port (API ${API_INTERNAL_PORT:-8000}, dashboard ${DASHBOARD_INTERNAL_PORT:-3002}). Choose another."
+    log "FRONT_PORT=${FRONT_PORT} is already used inside the container (API ${API_INTERNAL_PORT:-8000}, dashboard ${DASHBOARD_INTERNAL_PORT:-3002}, Postgres 5432, Redis 6379). Choose another."
     exit 1
   fi
 done
+export FRONT_PORT
 DASHBOARD_ADDRESS="http://localhost:${FRONT_PORT}"
 if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
   DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
@@ -126,9 +130,9 @@ if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
 elif is_dev; then
   # Local mode publishes the API on :8000, where the SDKs look by default.
   export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
-else
-  export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
 fi
+# Without a public URL, production leaves PUBLIC_API_URL unset so the API
+# builds links from each request's own address (behind any domain or proxy).
 # The dashboard calls the API on its own origin, so browsers may call the API
 # only from that origin. This matters most in local mode, where the API also
 # accepts the well-known dev key. Set CORS_ALLOWED_ORIGINS to allow others.
@@ -263,11 +267,11 @@ PIDS+=($!)
   echo ""
   if is_dev; then
     echo "  Dashboard:  ${DASHBOARD_ADDRESS}/dashboard/activity?agent=support-bot"
-    echo "  API:        http://localhost:8000   (key: ${DEV_API_KEY})"
+    echo "  API:        ${PUBLIC_API_URL}   (key: ${DEV_API_KEY})"
   else
     # Never print the token itself: platform log viewers show container output.
     echo "  Dashboard:  ${DASHBOARD_ADDRESS}   (sign in with the admin token)"
-    echo "  API:        ${PUBLIC_API_URL}"
+    echo "  API:        ${PUBLIC_API_URL:-$DASHBOARD_ADDRESS} (same address, under /v1)"
     echo ""
     if [ "$ADMIN_TOKEN_FROM_ENV" = true ]; then
       echo "  Admin token: the SELFHOST_ADMIN_TOKEN you set"
@@ -276,7 +280,7 @@ PIDS+=($!)
     fi
     echo "  Local one-click mode instead: start the container with -e ENV=development"
   fi
-  echo "  Swagger:    ${PUBLIC_API_URL}/swagger"
+  echo "  Swagger:    ${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}/swagger"
   echo ""
 ) &
 BANNER_PID=$!

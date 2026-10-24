@@ -80,6 +80,8 @@ ENV ENV=production \
     NEXT_TELEMETRY_DISABLED=1
 
 VOLUME /data
+# 3001 is the front proxy (FRONT_PORT); EXPOSE is static, so a custom
+# FRONT_PORT must be published explicitly with -p.
 EXPOSE 8000 3001
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
