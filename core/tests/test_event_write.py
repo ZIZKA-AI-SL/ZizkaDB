@@ -442,3 +442,45 @@ async def test_session_id_longer_than_the_column_is_rejected_with_400(mock_pool,
 
     assert exc.value.status_code == 400
     mock_pool.acquire.assert_not_called()
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent",
+    ["my bot", "team/bot", " bot", "bot ", "bot\n", "bot\t", "-bot", ".bot", "bot?x", "bot#1", "b%2Fot", "a" * 256],
+)
+async def test_new_agent_no_agent_route_can_reach_is_rejected_before_any_insert(mock_pool, agent):
+    """A new agent must be reachable through /v1/agents/{id}."""
+    mock_pool.conn.fetchval.return_value = None  # no such agent yet
+
+    with pytest.raises(HTTPException) as exc:
+        await write_event(tenant_id="tenant1", agent=agent, event="message", data={})
+
+    assert exc.value.status_code == 400
+    assert "letters, numbers, dots, dashes, underscores" in exc.value.detail
+    mock_pool.conn.execute.assert_not_awaited()
+    mock_pool.conn.fetchrow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent", ["bot", "support-bot", "a.b_c-1", "Agent007", "9lives", "a" * 255],
+)
+async def test_new_agent_names_the_agent_routes_accept_are_written(mock_pool, agent):
+    from api.agents import _validate_agent_id
+
+    mock_pool.conn.fetchval.return_value = None
+
+    assert _validate_agent_id(agent) == agent
+    await write_event(tenant_id="tenant1", agent=agent, event="message", data={})
+    mock_pool.conn.fetchrow.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_agent_stored_before_the_rule_still_accepts_events(mock_pool):
+    mock_pool.conn.fetchval.return_value = 1  # the agent row already exists
+
+    await write_event(tenant_id="tenant1", agent="legacy bot", event="message", data={})
+
+    mock_pool.conn.fetchrow.assert_awaited()
