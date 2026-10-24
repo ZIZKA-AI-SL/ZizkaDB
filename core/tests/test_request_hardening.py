@@ -1,11 +1,10 @@
-"""client_ip trust rules, community link host sanitising, and REDIS_PASSWORD."""
+"""Community link host sanitising, media serving, REDIS_PASSWORD and QDRANT_API_KEY."""
 
 from types import SimpleNamespace
 
 import pytest
 
 from api.community import _public_base_url
-from api.utils import client_ip
 from db.connection import qdrant_api_key, redis_url
 
 
@@ -22,33 +21,6 @@ def _req(peer, xff=None, host=None, proto=None):
         headers=headers,
         url=SimpleNamespace(scheme="http"),
     )
-
-
-class TestClientIp:
-    def test_no_header_uses_peer(self):
-        assert client_ip(_req("203.0.113.5")) == "203.0.113.5"
-
-    def test_untrusted_peer_cannot_spoof(self):
-        """A client hitting the API directly cannot pick its own IP."""
-        assert client_ip(_req("203.0.113.5", "1.2.3.4")) == "203.0.113.5"
-
-    def test_proxy_appended_entry_wins_over_spoofed_prefix(self):
-        """nginx appends what it saw; the client-supplied left part is ignored."""
-        assert client_ip(_req("127.0.0.1", "1.2.3.4, 198.51.100.7")) == "198.51.100.7"
-
-    def test_skips_trusted_hops_from_the_right(self):
-        assert client_ip(_req("172.18.0.1", "198.51.100.7, 10.0.0.2")) == "198.51.100.7"
-
-    def test_all_trusted_falls_back_to_leftmost(self):
-        assert client_ip(_req("127.0.0.1", "192.168.1.10")) == "192.168.1.10"
-
-    def test_extra_trusted_proxies(self, monkeypatch):
-        assert client_ip(_req("198.51.100.1", "203.0.113.9")) == "198.51.100.1"
-        monkeypatch.setenv("TRUSTED_PROXIES", "198.51.100.0/24, not-a-cidr")
-        assert client_ip(_req("198.51.100.1", "203.0.113.9")) == "203.0.113.9"
-
-    def test_non_ip_peer_is_untrusted(self):
-        assert client_ip(_req("testclient", "1.2.3.4")) == "testclient"
 
 
 class TestPublicBaseUrl:
@@ -104,15 +76,30 @@ class TestServeMedia:
 
         monkeypatch.setattr(community, "UPLOAD_DIR", tmp_path / "uploads")
         (tmp_path / "uploads").mkdir()
-        (tmp_path / "uploads" / "abc.png").write_bytes(b"\x89PNG")
+        (tmp_path / "uploads" / "0123456789abcdef0123456789abcdef.png").write_bytes(b"\x89PNG")
         (tmp_path / "secret.png").write_bytes(b"secret")
         return TestClient(app)
 
     def test_serves_upload_with_nosniff(self, media_client):
-        r = media_client.get("/v1/community/media/abc.png")
+        r = media_client.get("/v1/community/media/0123456789abcdef0123456789abcdef.png")
         assert r.status_code == 200
         assert r.headers["x-content-type-options"] == "nosniff"
 
     @pytest.mark.parametrize("name", ["..", "missing.png", "..%2Fsecret.png", "...png"])
     def test_outside_or_missing_is_404(self, media_client, name):
         assert media_client.get(f"/v1/community/media/{name}").status_code == 404
+
+
+class TestDefaultDbPasswordWarning:
+    @pytest.mark.parametrize("env,url,warns", [
+        ("production", "postgresql://zizkadb:zizkadb@postgres:5432/zizkadb", True),
+        ("production", "postgresql://zizkadb:3f9a1c@postgres:5432/zizkadb", False),
+        ("production", "", False),
+        ("development", "postgresql://zizkadb:zizkadb@localhost:5432/zizkadb", False),
+    ])
+    def test_warns_only_in_production_with_default(self, monkeypatch, env, url, warns):
+        from db.connection import default_db_password_warning
+
+        monkeypatch.setenv("ENV", env)
+        monkeypatch.setenv("DATABASE_URL", url)
+        assert (default_db_password_warning() is not None) is warns

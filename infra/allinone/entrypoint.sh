@@ -11,12 +11,14 @@ SCHEMA_MARKER="$PGDATA/.zizkadb_schema_applied"
 DEMO_MARKER="$DATA/.demo_seeded"
 
 log() { echo "[zizkadb] $*"; }
-# Same rule as the API: only ENV=development (any case) is development.
-if [ "$(printf '%s' "${ENV:-}" | tr '[:upper:]' '[:lower:]')" = "development" ]; then
-  DEV_MODE=1
-else
-  DEV_MODE=0
-fi
+# Same rule as the API (services/runtime_env.py): trim the ends, ignore case.
+is_dev() {
+  local v
+  v="$(printf '%s' "${ENV:-production}" | tr '[:upper:]' '[:lower:]')"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  [ "$v" = "development" ]
+}
 # setpriv keeps the environment, so give each user a HOME it can read
 # (asyncpg and psql look in ~/.postgresql).
 PG_USER=(env HOME=/var/lib/postgresql setpriv --reuid=postgres --regid=postgres --init-groups)
@@ -30,38 +32,111 @@ chmod 700 "$PGDATA"
 chown zizkadb:zizkadb "$DATA/redis" "$DATA/community_uploads"
 
 # ── Secrets: generated once per install, kept in the volume ──────────────────
-if [ ! -f "$SECRETS" ]; then
-  (
-    umask 077
-    python - > "$SECRETS" <<'PY'
+# Keys that are missing or empty are added; existing values are never replaced,
+# so a secrets.env from an older image is upgraded in place. The file is
+# rewritten atomically, so an interrupted first start cannot leave a half line.
+(
+  umask 077
+  python - "$SECRETS" <<'PY'
+import os
 import secrets
-print(f"GEN_JWT_SECRET={secrets.token_hex(32)}")
-print(f"GEN_JWT_REFRESH_SECRET={secrets.token_hex(32)}")
-print(f"GEN_DEV_API_KEY=zizkadb_local_{secrets.token_hex(24)}")
+import sys
+
+path = sys.argv[1]
+lines, have = [], set()
+if os.path.exists(path):
+    with open(path) as f:
+        for line in f:
+            key, sep, value = line.rstrip("\n").partition("=")
+            if sep and value:
+                lines.append(f"{key}={value}")
+                have.add(key)
+wanted = {
+    "GEN_JWT_SECRET": lambda: secrets.token_hex(32),
+    "GEN_JWT_REFRESH_SECRET": lambda: secrets.token_hex(32),
+    "GEN_SELFHOST_ADMIN_TOKEN": lambda: secrets.token_urlsafe(32),
+    "GEN_PG_PASSWORD": lambda: secrets.token_hex(24),
+}
+missing = [k for k in wanted if k not in have]
+if missing:
+    lines += [f"{k}={wanted[k]()}" for k in missing]
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 PY
-  )
-fi
-# Installs from before the admin token was generated here get one added.
-if ! grep -q '^GEN_SELFHOST_ADMIN_TOKEN=' "$SECRETS"; then
-  (
-    umask 077
-    python -c 'import secrets; print(f"GEN_SELFHOST_ADMIN_TOKEN={secrets.token_urlsafe(32)}")' >> "$SECRETS"
-  )
-fi
+)
 # shellcheck disable=SC1090
 . "$SECRETS"
 export JWT_SECRET="${JWT_SECRET:-$GEN_JWT_SECRET}"
 export JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET:-$GEN_JWT_REFRESH_SECRET}"
-# The API refuses production with the well-known dev key. Production also
-# needs an admin token for dashboard sign-in; use the generated one unless
-# SELFHOST_ADMIN_TOKEN is passed in.
-if [ "$DEV_MODE" -eq 0 ]; then
-  if [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ]; then
-    export DEV_API_KEY="$GEN_DEV_API_KEY"
-  fi
-  export SELFHOST_ADMIN_TOKEN="${SELFHOST_ADMIN_TOKEN:-$GEN_SELFHOST_ADMIN_TOKEN}"
+# An operator token wins unless it is blank (the API trims it the same way).
+ADMIN_TOKEN_FROM_ENV=false
+if [ -n "$(printf '%s' "${SELFHOST_ADMIN_TOKEN:-}" | tr -d '[:space:]')" ]; then
+  ADMIN_TOKEN_FROM_ENV=true
+else
+  SELFHOST_ADMIN_TOKEN="$GEN_SELFHOST_ADMIN_TOKEN"
 fi
-unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN
+export SELFHOST_ADMIN_TOKEN
+# The local role's password: the generated one, or the one in an
+# operator-supplied DATABASE_URL that points at this container's database.
+PG_PASSWORD="$GEN_PG_PASSWORD"
+if [ -n "${DATABASE_URL:-}" ]; then
+  url_pw="$(python - <<'PY'
+import os
+from urllib.parse import unquote, urlsplit
+
+u = urlsplit(os.environ["DATABASE_URL"])
+if u.hostname in ("127.0.0.1", "localhost", "::1") and u.username == "zizkadb" and u.password:
+    print(unquote(u.password), end="")
+PY
+)"
+  [ -n "$url_pw" ] && PG_PASSWORD="$url_pw"
+  unset url_pw
+fi
+export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0.1:5432/zizkadb}"
+if is_dev; then
+  # Local one-click mode keeps the well-known key the README and SDK examples use.
+  export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
+elif [ "${DEV_API_KEY:-}" = "zizkadb_dev_local" ] || [ "${DEV_API_KEY:-}" = "agdb_dev_local" ]; then
+  # The API refuses to start in production with a well-known dev key (and
+  # never accepts dev keys there anyway). Drop it instead of a start-up loop.
+  log "Ignoring the well-known DEV_API_KEY: it works only in local mode (-e ENV=development)."
+  unset DEV_API_KEY
+fi
+unset GEN_JWT_SECRET GEN_JWT_REFRESH_SECRET GEN_DEV_API_KEY GEN_SELFHOST_ADMIN_TOKEN GEN_PG_PASSWORD
+
+# Public address (optional): the base for links the API generates. The front
+# proxy serves the dashboard and the API (/v1) on one port, so that one
+# address is enough.
+FRONT_PORT="${FRONT_PORT:-3001}"
+case "$FRONT_PORT" in
+  ''|*[!0-9]*|0*) log "FRONT_PORT must be a port number (1-65535), got '${FRONT_PORT}'."; exit 1 ;;
+esac
+if [ "$FRONT_PORT" -gt 65535 ]; then log "FRONT_PORT must be 65535 or lower."; exit 1; fi
+for internal in "${API_INTERNAL_PORT:-8000}" "${DASHBOARD_INTERNAL_PORT:-3002}" 5432 6379; do
+  if [ "$FRONT_PORT" = "$internal" ]; then
+    log "FRONT_PORT=${FRONT_PORT} is already used inside the container (API ${API_INTERNAL_PORT:-8000}, dashboard ${DASHBOARD_INTERNAL_PORT:-3002}, Postgres 5432, Redis 6379). Choose another."
+    exit 1
+  fi
+done
+export FRONT_PORT
+DASHBOARD_ADDRESS="http://localhost:${FRONT_PORT}"
+if [ -n "${ZIZKADB_PUBLIC_URL:-}" ]; then
+  DASHBOARD_ADDRESS="${ZIZKADB_PUBLIC_URL%/}"
+  export PUBLIC_API_URL="${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}"
+elif is_dev; then
+  # Local mode publishes the API on :8000, where the SDKs look by default.
+  export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:8000}"
+fi
+# Without a public URL, production leaves PUBLIC_API_URL unset so the API
+# builds links from each request's own address (behind any domain or proxy).
+# The dashboard calls the API on its own origin, so browsers may call the API
+# only from that origin. This matters most in local mode, where the API also
+# accepts the well-known dev key. Set CORS_ALLOWED_ORIGINS to allow others.
+export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -70,19 +145,42 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     --auth-local=trust --auth-host=scram-sha-256 >/dev/null
 fi
 
-if [ ! -f "$SCHEMA_MARKER" ]; then
+# The local role's password follows secrets.env. The marker holds a hash of the
+# password last set, so a changed or regenerated secrets.env is applied on the
+# next start instead of locking the API out. Installs from older images used a
+# fixed password; it is replaced here the first time this image starts.
+PASSWORD_MARKER="$PGDATA/.zizkadb_password_sha256"
+PG_PASSWORD_HASH="$(printf '%s' "$PG_PASSWORD" | sha256sum | cut -d' ' -f1)"
+if [ -f "$SCHEMA_MARKER" ] && [ ! -f "$PASSWORD_MARKER" ] && ! is_dev; then
+  # First start of this image on a volume from an older one, which ran in
+  # development mode unless told otherwise.
+  log "Upgraded volume: this image runs in production mode by default."
+  log "  The well-known dev key and one-click sign-in are off; sign in with the admin token."
+  log "  For local one-click mode, start the container with -e ENV=development."
+fi
+if [ ! -f "$SCHEMA_MARKER" ] || [ "$(cat "$PASSWORD_MARKER" 2>/dev/null)" != "$PG_PASSWORD_HASH" ]; then
   as_pg pg_ctl -D "$PGDATA" -o "-c listen_addresses=''" -w start >/dev/null
-  as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
-SELECT 'CREATE ROLE zizkadb LOGIN SUPERUSER PASSWORD ''zizkadb'''
+  # psql reads the password verbatim from its environment (\getenv), never
+  # from argv, and :'pw' quotes it, so any character is safe.
+  PG_ROLE_PASSWORD="$PG_PASSWORD" as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<'SQL'
+\getenv pw PG_ROLE_PASSWORD
+SELECT format('CREATE ROLE zizkadb LOGIN SUPERUSER PASSWORD %L', :'pw')
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'zizkadb') \gexec
+ALTER ROLE zizkadb PASSWORD :'pw';
+SQL
+  printf '%s\n' "$PG_PASSWORD_HASH" | as_pg tee "$PASSWORD_MARKER" >/dev/null
+  if [ ! -f "$SCHEMA_MARKER" ]; then
+    as_pg psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
 SELECT 'CREATE DATABASE zizkadb OWNER zizkadb'
  WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'zizkadb') \gexec
 SQL
-  # One transaction: a failed schema load leaves nothing behind to retry over.
-  as_pg psql -q -1 -v ON_ERROR_STOP=1 -U zizkadb -d zizkadb -f /opt/zizkadb/schema.sql >/dev/null
-  as_pg touch "$SCHEMA_MARKER"
+    # One transaction: a failed schema load leaves nothing behind to retry over.
+    as_pg psql -q -1 -v ON_ERROR_STOP=1 -U zizkadb -d zizkadb -f /opt/zizkadb/schema.sql >/dev/null
+    as_pg touch "$SCHEMA_MARKER"
+  fi
   as_pg pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null
 fi
+unset PG_PASSWORD PG_PASSWORD_HASH
 
 # ── Run everything ───────────────────────────────────────────────────────────
 PIDS=()
@@ -118,19 +216,25 @@ done
 
 log "Starting API and dashboard..."
 ( cd /app/api && exec "${APP_USER[@]}" \
-    uvicorn main:app --host 0.0.0.0 --port 8000 --log-level warning ) &
+    uvicorn main:app --host 0.0.0.0 --port "${API_INTERNAL_PORT:-8000}" --log-level warning ) &
 PIDS+=($!)
 
-( cd /app/dashboard && PORT=3001 HOSTNAME=0.0.0.0 NODE_ENV=production \
+# The dashboard listens inside the container only; the front proxy owns the
+# public port 3001 and routes /v1, /health and /swagger to the API.
+# front-proxy.js reads the same API_INTERNAL_PORT / DASHBOARD_INTERNAL_PORT.
+( cd /app/dashboard && PORT="${DASHBOARD_INTERNAL_PORT:-3002}" HOSTNAME=127.0.0.1 NODE_ENV=production \
     exec "${APP_USER[@]}" node server.js >/dev/null ) &
+PIDS+=($!)
+
+( exec "${APP_USER[@]}" node /opt/zizkadb/front-proxy.js ) &
 PIDS+=($!)
 
 # Seed the demo and print the banner without blocking signal handling.
 (
   ready=0
   for _ in $(seq 1 240); do
-    if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1 \
-       && curl -fsS -o /dev/null http://127.0.0.1:3001/login 2>/dev/null; then
+    if curl -fsS "http://127.0.0.1:${API_INTERNAL_PORT:-8000}/health" >/dev/null 2>&1 \
+       && curl -fsS -o /dev/null "http://127.0.0.1:${FRONT_PORT}/login" 2>/dev/null; then
       ready=1
       break
     fi
@@ -141,9 +245,9 @@ PIDS+=($!)
     exit 0
   fi
 
-  if [ "$DEV_MODE" -eq 1 ] \
+  if is_dev \
      && [ "${ZIZKADB_SEED_DEMO:-true}" != "false" ] && [ ! -f "$DEMO_MARKER" ]; then
-    if as_app python /opt/zizkadb/seed_demo.py > "$DATA/demo-chain.txt" 2>"$DATA/demo-seed.err"; then
+    if ZIZKADB_SEED_API="http://127.0.0.1:${API_INTERNAL_PORT:-8000}" as_app python /opt/zizkadb/seed_demo.py > "$DATA/demo-chain.txt" 2>"$DATA/demo-seed.err"; then
       touch "$DEMO_MARKER"
     else
       log "Demo seed skipped: $(tail -n 1 "$DATA/demo-seed.err" 2>/dev/null || true)"
@@ -161,18 +265,22 @@ PIDS+=($!)
     sed 's/^/    /' "$DATA/demo-chain.txt"
   fi
   echo ""
-  if [ "$DEV_MODE" -eq 1 ]; then
-    echo "  Dashboard:  http://localhost:3001/dashboard/activity?agent=support-bot"
-    echo "  API:        http://localhost:8000   (key: ${DEV_API_KEY})"
+  if is_dev; then
+    echo "  Dashboard:  ${DASHBOARD_ADDRESS}/dashboard/activity?agent=support-bot"
+    echo "  API:        ${PUBLIC_API_URL}   (key: ${DEV_API_KEY})"
   else
-    echo "  Dashboard:  http://localhost:3001"
-    echo "  Admin token (dashboard sign-in): ${SELFHOST_ADMIN_TOKEN}"
-    echo "  API:        http://localhost:8000   (create an API key in the dashboard)"
+    # Never print the token itself: platform log viewers show container output.
+    echo "  Dashboard:  ${DASHBOARD_ADDRESS}   (sign in with the admin token)"
+    echo "  API:        ${PUBLIC_API_URL:-$DASHBOARD_ADDRESS} (same address, under /v1)"
     echo ""
-    echo "  For the one-click local setup instead, run with -e ENV=development"
-    echo "  and publish the ports on 127.0.0.1 only."
+    if [ "$ADMIN_TOKEN_FROM_ENV" = true ]; then
+      echo "  Admin token: the SELFHOST_ADMIN_TOKEN you set"
+    else
+      echo "  Admin token: docker exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env"
+    fi
+    echo "  Local one-click mode instead: start the container with -e ENV=development"
   fi
-  echo "  Swagger:    http://localhost:8000/swagger"
+  echo "  Swagger:    ${PUBLIC_API_URL:-$DASHBOARD_ADDRESS}/swagger"
   echo ""
 ) &
 BANNER_PID=$!

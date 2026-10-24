@@ -182,6 +182,9 @@ _SIGNUP_ALREADY_REGISTERED = (
 )
 _SIGNUP_GDPR_REQUIRED = "GDPR consent is required to create an account."
 
+# Wrong guesses allowed per OTP before it is burned.
+OTP_MAX_ATTEMPTS = 5
+
 
 async def verify_otp(
     email: str,
@@ -208,6 +211,21 @@ async def verify_otp(
 
     valid = bcrypt.checkpw(otp.encode(), row["otp_hash"].encode())
     if not valid:
+        # Single atomic increment: concurrent wrong guesses serialise on the
+        # row lock, so the lockout holds against a parallel brute force.
+        counted = await pool.fetchrow(
+            """
+            UPDATE auth_otps
+               SET attempts = attempts + 1,
+                   used     = (attempts + 1 >= $2)
+             WHERE otp_id = $1 AND used = FALSE
+            RETURNING attempts, used
+            """,
+            row["otp_id"], OTP_MAX_ATTEMPTS,
+        )
+        # No row: a concurrent request already burned (or consumed) the code.
+        if counted is None or counted["used"]:
+            raise ValueError("Too many failed attempts. Please request a new code.")
         raise ValueError("Invalid OTP")
 
     user_exists = await email_exists(email)

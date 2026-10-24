@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to publish (e.g. 0.4.1), built from the ref you run on. Leaves latest alone. Empty = latest only."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -15,26 +20,30 @@ env:
   DASHBOARD_IMAGE: ghcr.io/zizka-ai-sl/zizkadb-dashboard
   # Single-container image used by scripts/quickstart-remote.sh.
   ALLINONE_IMAGE: ghcr.io/zizka-ai-sl/zizkadb
-  # arm64 so Apple Silicon and ARM servers run natively instead of emulated.
-  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  # Each platform builds on a native runner: building the Next.js dashboard
+  # for arm64 under QEMU emulation ran into the 6-hour job limit.
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Docker meta
-        id: meta
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="latest"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Publishing tag: ${TAG}"
+      - name: Platform slug
+        id: plat
+        run: echo "slug=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM: ${{ matrix.platform }}
 
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -43,40 +52,101 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Each image is pushed by digest only; the merge job tags the
+      # multi-platform manifest once every platform has built.
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        name: Build and push API
+        id: api
+        name: Build API
         with:
           context: core
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          tags: |
-            ${{ env.API_IMAGE }}:latest
-            ${{ env.API_IMAGE }}:${{ steps.meta.outputs.tag }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.API_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        name: Build and push dashboard
+        id: dashboard
+        name: Build dashboard
         with:
           context: dashboard
-          platforms: ${{ env.PLATFORMS }}
-          push: true
+          platforms: ${{ matrix.platform }}
           build-args: |
             NEXT_PUBLIC_API_URL=http://localhost:8000
             NEXT_PUBLIC_DEV_MODE=false
             NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted
-          tags: |
-            ${{ env.DASHBOARD_IMAGE }}:latest
-            ${{ env.DASHBOARD_IMAGE }}:${{ steps.meta.outputs.tag }}
+          outputs: type=image,name=${{ env.DASHBOARD_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        name: Build and push single-container image
+        id: allinone
+        name: Build single-container image
         with:
           context: .
           file: infra/allinone/Dockerfile
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          tags: |
-            ${{ env.ALLINONE_IMAGE }}:latest
-            ${{ env.ALLINONE_IMAGE }}:${{ steps.meta.outputs.tag }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.ALLINONE_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Record digests
+        run: |
+          mkdir -p digests
+          echo "${{ steps.api.outputs.digest }}" > "digests/api"
+          echo "${{ steps.dashboard.outputs.digest }}" > "digests/dashboard"
+          echo "${{ steps.allinone.outputs.digest }}" > "digests/allinone"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ steps.plat.outputs.slug }}
+          path: digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Docker meta
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          # A tag push publishes that version and moves latest. A manual run
+          # publishes only the version it is given (re-publishing an old version
+          # must not move latest), or only latest when given none.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_TAG#v}"
+            if [ -n "$VERSION" ]; then TAGS="$VERSION"; else TAGS="latest"; fi
+          else
+            TAGS="${GITHUB_REF_NAME#v} latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Publishing tags: ${TAGS}"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-*
+          path: digests
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-platform tags
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          publish() {
+            local key="$1" image="$2" refs=() flags=()
+            for f in digests/*/"$key"; do refs+=("${image}@$(cat "$f")"); done
+            [ "${#refs[@]}" -eq 2 ] || { echo "expected 2 platform digests for ${image}, got ${#refs[@]}"; exit 1; }
+            for t in $TAGS; do flags+=(-t "${image}:${t}"); done
+            docker buildx imagetools create "${flags[@]}" "${refs[@]}"
+            docker buildx imagetools inspect "${image}:${TAGS%% *}"
+          }
+          publish api "$API_IMAGE"
+          publish dashboard "$DASHBOARD_IMAGE"
+          publish allinone "$ALLINONE_IMAGE"
 
       - name: Make GHCR packages public (required for curl quickstart)
         env:

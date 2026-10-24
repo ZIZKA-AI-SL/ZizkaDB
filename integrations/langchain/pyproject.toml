@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zizkadb-langchain"
-version = "0.1.3"
+version = "0.1.4"
 description = "LangChain callbacks for ZizkaDB — causal agent logging with parent_id lineage"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -26,7 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "zizkadb-sdk>=0.2.8",
+    "zizkadb-sdk>=0.4.1",
     "langchain-core>=0.3.0",
 ]
 

@@ -8,6 +8,8 @@ import redis.asyncio as redis
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, VectorParams
 
+from services.runtime_env import is_dev_mode
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------
@@ -86,6 +88,27 @@ def qdrant_api_key() -> str | None:
     return (os.getenv("QDRANT_API_KEY") or "").strip() or None
 
 
+# Passwords published in .env.example and the docs.
+_WELL_KNOWN_DB_PASSWORDS = {"zizkadb", "postgres", "password"}
+
+
+def default_db_password_warning() -> str | None:
+    """A warning when production connects to Postgres with a well-known password."""
+    if is_dev_mode():
+        return None
+    try:
+        password = urlsplit(os.getenv("DATABASE_URL") or "").password
+    except ValueError:
+        return None
+    if password not in _WELL_KNOWN_DB_PASSWORDS:
+        return None
+    return (
+        "Postgres uses a well-known password. Keep its port private, and set a "
+        "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
+        "see wiki/Self-Hosting.md."
+    )
+
+
 async def init_db():
     global _pg_pool, _redis, _qdrant
 
@@ -98,6 +121,9 @@ async def init_db():
     )
 
     logger.info("Postgres connected")
+    db_password_warn = default_db_password_warning()
+    if db_password_warn:
+        logger.warning(db_password_warn)
     workers, assumed = uvicorn_worker_count()
     pool_warn = warn_if_pool_near_pg_limit(
         PG_POOL_MAX_SIZE, workers, assumed=assumed
@@ -140,6 +166,8 @@ async def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS gdpr_consent_at TIMESTAMPTZ;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent_at TIMESTAMPTZ;
+
+        ALTER TABLE auth_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
     """)
 
     await _pg_pool.execute("""
@@ -228,6 +256,13 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_events_index_status
         ON events (index_status)
         WHERE index_status IN ('pending', 'failed');
+        -- Embed worker retry state (workers/embed_worker.py): failed events back
+        -- off, and become 'dead' after EMBED_MAX_ATTEMPTS. Constant default, so
+        -- no table rewrite.
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_retry_at TIMESTAMPTZ;
     """)
 
     # Event checksum v2 (services/checksum.py). The first start on v2 code

@@ -1,6 +1,6 @@
 # zizkadb-sdk
 
-**npm:** [zizkadb-sdk 0.3.0](https://www.npmjs.com/package/zizkadb-sdk)
+**npm:** [zizkadb-sdk 0.4.1](https://www.npmjs.com/package/zizkadb-sdk)
 
 TypeScript SDK for [ZizkaDB](https://db.zizka.ai) — causal lineage, time travel, and semantic search for AI agents.
 
@@ -60,7 +60,7 @@ If your app logs to **different agent ids** per user (e.g. `conv-alice`, `conv-b
 |----------|---------|
 | `ZIZKADB_API_KEY` | Your cloud API key (preferred) |
 | `AGENTDB_API_KEY` | Legacy alias for `ZIZKADB_API_KEY` |
-| `ZIZKADB_HOST` | Self-hosted API URL |
+| `ZIZKADB_HOST` | Self-hosted API URL. Used when the client gets no `host` argument, so with an API key it sends requests here instead of ZizkaDB Cloud (legacy alias `AGENTDB_HOST`) |
 | `ZIZKADB_TELEMETRY` | Set `false` to opt out (anonymous ping on client construct) |
 
 Core HTTP client only — LangChain, CrewAI, and LiveKit adapters are Python packages (`zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`).

@@ -130,12 +130,12 @@ if [ "$PRODUCTION_MODE" -eq 1 ]; then
   # Data services: infra/docker-compose.yml keeps their ports on 127.0.0.1;
   # passwords are a second layer, optional so existing installs keep working.
   case "${POSTGRES_PASSWORD:-zizkadb}" in
-    zizkadb) warn "POSTGRES_PASSWORD is the default — fine while port 5432 stays on 127.0.0.1; set a random one on new installs (before first start)" ;;
+    zizkadb) warn "POSTGRES_PASSWORD is the default — fine while port 5432 stays on 127.0.0.1; run: bash scripts/init-secrets.sh (new installs) or see wiki/Self-Hosting.md" ;;
     *) ok "POSTGRES_PASSWORD set" ;;
   esac
   for var in REDIS_PASSWORD QDRANT_API_KEY; do
     if [ -z "${!var:-}" ]; then
-      warn "$var unset — set one (openssl rand -hex 24) for defence in depth"
+      warn "$var unset — run: bash scripts/init-secrets.sh"
     else
       ok "$var set"
     fi

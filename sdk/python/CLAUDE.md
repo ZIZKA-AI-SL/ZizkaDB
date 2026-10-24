@@ -84,7 +84,7 @@ Same duplication for CrewAI. When editing integration logic, update both.
 | Variable | Purpose |
 |---|---|
 | `ZIZKADB_API_KEY` | API key for Zizka Cloud |
-| `ZIZKADB_HOST` | URL for self-hosted or local instance |
+| `ZIZKADB_HOST` | URL for self-hosted or local instance; used when no `host` is passed, so it wins over Cloud for an API key |
 | `ZIZKADB_AGENT` | Default agent name (used in templates) |
 | `ZIZKADB_TELEMETRY` | Set `false` to opt out of anonymous usage pings |
 

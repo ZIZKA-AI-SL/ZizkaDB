@@ -6,19 +6,93 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Security hardening
+### Security hardening, without extra setup
 
-The quickstart is unchanged: one command, one-click dashboard, demo agent.
+- **New installs get random secrets.** `scripts/setup-local.sh` runs the new `scripts/init-secrets.sh` when it creates `infra/.env`. The script replaces the defaults with a random Postgres password, Redis password, Qdrant API key and JWT secrets, and prints only the names it changed. It never changes the Postgres password of an existing database volume. Servers can run it by hand.
+- **Optional Redis password and Qdrant API key** in `infra/docker-compose.yml`. Set `REDIS_PASSWORD` / `QDRANT_API_KEY` in `infra/.env` and the containers and the API use them. Empty keeps the old behaviour. `scripts/restart-native-stack.sh` ignores both, because the native Redis and Qdrant run without auth.
+- **The API warns at start-up in production when Postgres uses a well-known password.** `scripts/validate-selfhost-config.sh` warns about the same thing, and also when the Redis password or Qdrant API key is missing. `wiki/Self-Hosting.md` shows how to change the password of an existing install.
+- **Self-host admin login has a global attempt limit:** 60 per minute across all IPs, checked before the token is compared, on top of the per-IP limit.
+- **Anonymous telemetry pings are rate-limited** to 120 per IP per hour. Pings over the limit are dropped, still with a 200, so SDKs never see an error.
+- **Dashboard security headers:** `X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`, `nosniff`, a referrer policy and a permissions policy.
+- Community image links use the request's `Host` header only when it is a plain hostname. Otherwise they use the default; set `PUBLIC_API_URL` to pin it.
+- `infra/docker-compose.dashboard.yml` builds the dashboard with `NEXT_PUBLIC_DEV_MODE=false` by default. Local one-click sign-in still works through `ENV=development`.
 
-- **Server compose no longer exposes the databases.** `infra/docker-compose.yml` publishes Postgres, Redis and Qdrant on `127.0.0.1` only. The API reaches them over the compose network, so nothing changes for it. Only direct access from another machine (BI tools, `psql` from a laptop) is affected: use `ssh -L 5432:127.0.0.1:5432 you@server`.
-- **Optional Redis password and Qdrant API key.** Set `REDIS_PASSWORD` / `QDRANT_API_KEY` in `infra/.env` to turn them on for the containers and the API. Empty keeps the old behaviour. `scripts/validate-selfhost-config.sh --production` warns when they are unset or when `POSTGRES_PASSWORD` is the default. Set a random `POSTGRES_PASSWORD` before the first start of a new install; existing databases keep the password they were created with.
-- **The one-container image runs in production mode by default.** A plain `docker run -p 8000:8000 -p 3001:3001 ghcr.io/zizka-ai-sl/zizkadb` on a server is no longer open: the dashboard asks for an admin token, generated on first start, kept in the volume and printed in `docker logs`, and dev keys are refused. The quickstart script passes `ENV=development`, so its one-click experience is unchanged. Pass `-e ENV=development` yourself for the old behaviour, with the ports on `127.0.0.1`.
-- **Rate limits use the real client IP.** `X-Forwarded-For` is now only read when the request comes from a trusted proxy (loopback or private networks: nginx on the host, the Docker bridge), and from the right, so a client can no longer pick the IP its limits are counted against. A proxy on another machine (load balancer, Cloudflare) needs its addresses in `TRUSTED_PROXIES`; without it, rate limits count all its traffic as one client.
-- **Self-host admin login has a global attempt limit** (60 per minute across all IPs, checked before the token is compared), on top of the per-IP limit, so rotating IPs does not help guessing `SELFHOST_ADMIN_TOKEN`. One-click mode is not limited this way.
-- **Anonymous telemetry pings are rate-limited** (120 per IP per hour). Pings over the limit are dropped, still with a 200, so SDKs never see an error.
-- **Dashboard security headers:** `X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`, `nosniff`, a referrer policy and a permissions policy. The dashboard can no longer be framed by other sites. Community images are served with `nosniff`.
-- Community image links only use the request's `Host` header when it is a plain hostname; otherwise they fall back to the default. Set `PUBLIC_API_URL` to pin them.
-- `infra/docker-compose.dashboard.yml` builds the dashboard with `NEXT_PUBLIC_DEV_MODE=false` by default, like the published images. Local one-click sign-in still works through `ENV=development`.
+### Python integrations and MCP republished for SDK 0.4.1
+
+- `zizkadb-langchain` 0.1.4, `zizkadb-crewai` 0.1.4, `zizkadb-langgraph` 0.1.1 and `zizkadb-livekit` 0.2.2 require `zizkadb-sdk>=0.4.1`, so installing any of them brings the current SDK.
+- `zizkadb-mcp` 0.1.9: the `log_event` tool states the agent name rule.
+
+### Agent names on write follow the agent-route rule
+
+- **Breaking:** a new agent can no longer be created under a name no `/v1/agents/{agent_id}` route accepts. `POST /v1/events`, and the first use of an unassigned API key, return a 400 that states the rule: 1–255 characters of letters, numbers, dots, dashes and underscores, starting with a letter or number. Before, names such as `my bot` or `team/bot` were stored but could not be opened, analysed or deleted, and an unassigned key could be bound to a new one on its first use, from any route that takes an `agent`. Leading or trailing spaces are rejected, not trimmed. Agents already stored under such names keep accepting events.
+
+## [0.4.1] - 2026-10-24
+
+### Single image: front proxy hardening
+
+- The front proxy handles any redirect value from the upstreams safely; redirects it cannot parse are passed through untouched.
+- Local mode (`ENV=development`) answers only on `localhost`, `127.0.0.1`, `[::1]` and the host of `ZIZKADB_PUBLIC_URL`.
+- `TRUSTED_PROXIES` entries the proxy cannot parse are skipped with a warning, as the API does.
+- The proxy keeps idle connections for 65 s, longer than common platform proxies pool them, so reused connections are not cut.
+- `/api-explorer/...` subpaths are left to the dashboard's redirect again.
+- Image publishing: a manual run with a version publishes only that version and no longer moves `latest`.
+- Docs: the dashboard docs page no longer suggests exporting `ZIZKADB_HOST` together with a Cloud key; the README covers `TRUSTED_PROXIES` behind a reverse proxy; `docs/telemetry.md` lists the `/swagger` page's CDN requests.
+
+### Single image: review fixes; README for every reader
+
+- A production container started with a well-known `DEV_API_KEY` (`zizkadb_dev_local`) now ignores it with a warning instead of refusing to start in a loop. An operator's own unique key is left alone.
+- Without `ZIZKADB_PUBLIC_URL`, production builds links from each request's own address instead of `http://localhost:8000`; the banner shows the dashboard port (3001), which serves the API too. `ZIZKADB_PUBLIC_URL` also applies in local mode.
+- Browsers may call the API only from the dashboard's own address (set `CORS_ALLOWED_ORIGINS` to allow others), in both modes; in local mode this keeps other websites away from the well-known dev key.
+- `/api-explorer` reaches the API through port 3001. A custom `FRONT_PORT` keeps the health check and banner correct; an invalid one, or one already used inside the container, stops with a clear message.
+- TypeScript SDK: every environment read is guarded, so a `process` shim without `env` no longer breaks construction or `log()`.
+- `scripts/publish-packages.sh` stops if the Python SDK version is already on PyPI, unless `PUBLISH_RESUME=1` (to finish a release whose npm step failed). An unchanged MCP version is always skipped, and the Python and TypeScript SDK versions must match before anything uploads. It runs on macOS bash 3.2.
+- README: a plain-language summary, a "Start here" guide for each kind of reader, a server command for the single image, and FAQ answers about the admin token and where data goes.
+
+## [0.4.0] - 2026-10-24
+
+### Dashboard fonts ship with the app
+
+- Inter and JetBrains Mono are bundled with the dashboard (`@fontsource`) instead of loaded from Google Fonts, so a visitor's browser no longer contacts Google for fonts. With that, a self-hosted dashboard makes no third-party requests. `docs/telemetry.md` is updated.
+
+### Fixed: single image redirected browsers to localhost:3002
+
+- On the single image (`infra/allinone/`), opening `/` or a protected page redirected to `http://localhost:3002/login`, the dashboard's internal address, so sign-in was unreachable from a browser on any public URL. The front proxy now turns redirects that point at an internal address into relative paths, so the browser stays on the address it used.
+
+### Docs: deploy on Redu Cloud, and what ZizkaDB sends
+
+- New `redu.md`: the recipe redu uses to deploy the open-source single container from this repository. README and wiki have a "Deploy on Redu Cloud" section.
+- New `docs/telemetry.md`: every network call ZizkaDB makes on its own (SDK and install pings, dashboard fonts, optional features) and how to turn each off.
+### Fixed: templates and examples ignored ZIZKADB_HOST when an API key was set
+
+- Python and TypeScript SDKs: when no host is passed, the client now uses `ZIZKADB_HOST` if it is set, so `ZizkaDB(api_key=...)` with a self-hosted key no longer goes to ZizkaDB Cloud and fails with "Invalid API key". An explicit host still wins, a key with no `ZIZKADB_HOST` still means Cloud, and the legacy `AGENTDB_HOST` is honoured too. **Behaviour change:** a Cloud API key used while `ZIZKADB_HOST` is exported now goes to that host; unset it to reach Cloud. The TypeScript constructor reads the environment only where a `process` global exists.
+  If your `.env` came from an older crewai or livekit `.env.example` and you use ZizkaDB Cloud, remove its `ZIZKADB_HOST=http://localhost:8000` line.
+- `zizkadb init` templates (basic, openai, langchain, crewai, langgraph, rag) and the examples (minimal-python, openai-agent, langchain-agent, crewai-agent, livekit-agent) follow the same rule with the current SDK too: `ZIZKADB_HOST` wins, a key alone means Cloud, and neither means the local stack. The langgraph and rag templates and the crewai example no longer send a Cloud key to localhost.
+- New `examples/anthropic-agent/`: the same causal-logging example with the Anthropic API (Claude).
+### Single-container image runs in production mode by default
+
+- **Breaking for plain `docker run` users:** `ghcr.io/zizka-ai-sl/zizkadb` now starts with `ENV=production`. Pass `-e ENV=development` to keep the one-click dashboard and the `zizkadb_dev_local` API key on your own machine. `scripts/quickstart-remote.sh` already does this, so the quickstart is unchanged.
+- In production mode the dashboard asks for an admin token, generated on first start and kept in the volume: `docker exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Setting `SELFHOST_ADMIN_TOKEN` yourself still takes precedence.
+- The database password is generated per install and kept in `/data/secrets.env`. Existing volumes are moved to a generated password on first start of the new image; data is untouched.
+- If `/data/secrets.env` changes, the database password is re-applied on the next start, and an interrupted first start can no longer leave an empty secret behind.
+- Port 3001 now serves the whole product: a small front proxy in the image sends `/v1`, `/health` and `/swagger` to the API and everything else to the dashboard, which calls the API on its own origin. One public port is enough behind a domain or a platform proxy; 8000 still serves the API alone. The proxy appends the connecting address to `X-Forwarded-For`, and the image trusts only that proxy (`TRUSTED_PROXIES=127.0.0.1,::1`). Behind another reverse proxy, add its address range to `TRUSTED_PROXIES`; otherwise every visitor shares that proxy's address for rate limits.
+- If an operator-supplied `DATABASE_URL` points at the container's own database, the role password follows the password in that URL.
+- New optional `ZIZKADB_PUBLIC_URL` sets the public address used for links. `CORS_ALLOWED_ORIGINS` now defaults to the dashboard's address (that URL, or `http://localhost:3001`) instead of allowing every origin; the dashboard itself is same-origin and needs no CORS.
+- Dashboard: after creating an API key, the usage snippet's `ZIZKADB_HOST` is the dashboard's own address when the API shares its origin, instead of `http://localhost:8000`.
+
+### Fixed: agent baseline with a time window returned 500
+
+- `GET /v1/agents/{id}/baseline?window=24h|7d|30d` failed for every window (a naive cutoff was compared with timezone-aware session times). It now splits sessions at the cutoff, using the database clock. The count-based split (`recent_window`) was not affected.
+- With a window and no session inside it, the response is `no_current_data` (the status `/behavior-change` already uses) instead of a drift report against an empty window, which would have shown `significant_drift` for an agent that simply did not run. Every baseline response now includes `window`, and the warming-up message explains that a session which ended before the window is needed. A session counts as recent when its last event falls in the window.
+- Dashboard: the behaviour panel names the time window in its labels, taken from the window the data was computed for.
+
+### Embed worker backs off and gives up on events that keep failing
+
+- A failed embedding is retried after 30 s, then 60 s, doubling up to 1 hour, instead of on every poll. After 10 attempts (about 3 hours) the event is marked `index_status = 'dead'` and no longer retried. Tunable with `EMBED_MAX_ATTEMPTS`, `EMBED_RETRY_BASE_SEC` and `EMBED_RETRY_MAX_SEC` on the worker.
+- Events waiting for a retry no longer fill the batch, so they cannot stop newer events from being indexed.
+- New columns `events.index_attempts` and `events.index_retry_at`, added on startup without rewriting the table. Existing `failed` events start again at attempt 0.
+- Re-queue `failed` and `dead` events, with a fresh retry budget, from inside the worker container: `docker exec zizkadb_embed_worker python workers/embed_worker.py --requeue` (or `scripts/reindex-events.py` from a checkout).
+- The worker keeps running when a whole batch fails (for example, Postgres briefly unreachable), backing off up to 60 s and logging the traceback once per outage.
+- With `EMBED_SYNC=true` the inline attempt at write time is not counted, so such an event gets one extra try.
 
 ## [0.3.0] - 2026-10-19
 
@@ -116,6 +190,15 @@ Fifteen-day self-host / OSS hardening pass. User-visible highlights:
 - `GET /v1/sessions/{id}/events` no longer binds the key to the first returned event's agent; it accepts an optional `?agent=` filter.
 - `GET /v1/sessions/{id}/why/{event_id}` and `GET /v1/events/{id}/why` no longer return other agents' ancestor events to an agent-scoped key.
 - `GET /v1/sessions?agent=X` with a key scoped to another agent now returns 403 (previously silently returned the key's own sessions).
+- Client IPs for rate limiting are taken from `X-Forwarded-For` only when the peer is a trusted proxy (new `TRUSTED_PROXIES` env var, default `127.0.0.1,::1,172.16.0.0/12` to cover nginx → Docker bridge). The header is walked from the right and the first untrusted hop is used, so a client-supplied left-most value can no longer spoof its rate-limit bucket.
+- OTP codes are burned after 5 wrong guesses. The attempt counter (`auth_otps.attempts`) is incremented atomically, so concurrent guesses cannot bypass the lockout.
+- Rate limits are checked and recorded atomically (Redis Lua script via EVALSHA; locked in memory), closing the check-then-record race under concurrent requests.
+- `GET /v1/memory/diff/{session_id}` with an agent-scoped key filters events by agent in SQL: other agents' events are never returned, a key whose agent was not first in the session can still diff it, and a session with none of the key's events returns 404 (was 403).
+- `POST /v1/auth/test-event` requires a dashboard session (API keys are rejected).
+- Community image uploads are checked against PNG/JPEG/GIF/WebP magic bytes; served uploads send `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'`. The community list `LIMIT` is now a bound parameter.
+- Malformed `parent_id` on event writes returns 400 instead of a 500.
+- Incoming `X-Request-ID` values must match `[A-Za-z0-9_.-]{1,64}`; anything else is replaced with a fresh UUID (prevents log injection).
+- `infra/docker-compose.yml` binds Postgres, Qdrant and Redis to `127.0.0.1` only.
 
 ### Fixed
 

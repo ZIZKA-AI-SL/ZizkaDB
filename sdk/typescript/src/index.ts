@@ -39,6 +39,7 @@ import type {
 } from './types'
 import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
 import { LineageContext, resolveLogLineage, recordLogResult } from './context'
+import { readEnv } from './env'
 import packageJson from '../package.json'
 
 export * from './types'
@@ -54,15 +55,16 @@ function isLocalHost(host: string): boolean {
   return h.includes('localhost') || h.includes('127.0.0.1') || h.includes('0.0.0.0')
 }
 
+
 /** ZIZKADB_API_KEY preferred; AGENTDB_API_KEY for legacy managed-cloud users. */
 function apiKeyFromEnv(): string | undefined {
-  return process.env.ZIZKADB_API_KEY ?? process.env.AGENTDB_API_KEY
+  return readEnv('ZIZKADB_API_KEY') ?? readEnv('AGENTDB_API_KEY')
 }
 
 function logHintsEnabled(baseUrl: string): boolean {
-  const quiet = (process.env.ZIZKADB_QUIET ?? '').toLowerCase()
+  const quiet = (readEnv('ZIZKADB_QUIET') ?? '').toLowerCase()
   if (['1', 'true', 'yes', 'on'].includes(quiet)) return false
-  if (['1', 'true', 'yes', 'on'].includes((process.env.ZIZKADB_LOG_HINTS ?? '').toLowerCase())) {
+  if (['1', 'true', 'yes', 'on'].includes((readEnv('ZIZKADB_LOG_HINTS') ?? '').toLowerCase())) {
     return true
   }
   return isLocalHost(baseUrl)
@@ -77,7 +79,7 @@ function emitLogHint(baseUrl: string, eventId: string): void {
 let _telemetrySent = false
 
 function _isLocalSelfHost(): boolean {
-  const host = process.env.ZIZKADB_HOST ?? ''
+  const host = readEnv('ZIZKADB_HOST') ?? ''
   return (
     host.startsWith('http://localhost') ||
     host.startsWith('http://127.0.0.1') ||
@@ -88,8 +90,7 @@ function _isLocalSelfHost(): boolean {
 function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
   if (_telemetrySent) return
   if (
-    typeof process !== 'undefined' &&
-    /^(false|0|no|off)$/i.test(process.env.ZIZKADB_TELEMETRY ?? '')
+    /^(false|0|no|off)$/i.test(readEnv('ZIZKADB_TELEMETRY') ?? '')
   ) return
 
   _telemetrySent = true
@@ -98,7 +99,7 @@ function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
     install_id:  _getInstallId(),
     sdk:         'typescript',
     sdk_version: SDK_VERSION,
-    node:        typeof process !== 'undefined' ? process.version : 'unknown',
+    node:        (typeof process !== 'undefined' && process.version) || 'unknown',
     os:          typeof process !== 'undefined' ? process.platform : 'unknown',
     mode,
   }
@@ -216,7 +217,16 @@ export class ZizkaDB {
   private readonly telemetryMode: 'cloud' | 'self-hosted'
 
   constructor(config: ZizkaDBConfig) {
-    if (!config.apiKey && !config.host) {
+    // When host is omitted, ZIZKADB_HOST (or legacy AGENTDB_HOST) is used if
+    // set, so a self-hosted key is never sent to Cloud. An explicit host
+    // always wins. Runtimes without `process` (browsers, edge) skip the env.
+    // A blank value counts as unset, and each variable is tried in turn.
+    const host =
+      config.host?.trim() ||
+      readEnv('ZIZKADB_HOST')?.trim() ||
+      readEnv('AGENTDB_HOST')?.trim() ||
+      undefined
+    if (!config.apiKey && !host) {
       throw new ZizkaDBError(
         'Provide an apiKey (cloud) or host (self-hosted).\n' +
         '  Cloud:       new ZizkaDB({ apiKey: "zizkadb_live_..." })\n' +
@@ -224,21 +234,21 @@ export class ZizkaDB {
       )
     }
 
-    this.baseUrl = config.host?.replace(/\/$/, '') ?? CLOUD_HOST
+    this.baseUrl = host?.replace(/\/$/, '') ?? CLOUD_HOST
     this.timeout = config.timeout ?? 10_000
 
     let apiKey = config.apiKey
-    if (!apiKey && config.host) {
-      if (isLocalHost(config.host)) {
+    if (!apiKey && host) {
+      if (isLocalHost(host)) {
         apiKey =
           apiKeyFromEnv() ??
-          process.env.DEV_API_KEY ??
+          readEnv('DEV_API_KEY') ??
           DEFAULT_DEV_API_KEY
       } else {
         apiKey = apiKeyFromEnv()
         if (!apiKey) {
           throw new ZizkaDBError(
-            `Cloud host requires an apiKey or ZIZKADB_API_KEY env var. Host: ${config.host}`,
+            `Cloud host requires an apiKey or ZIZKADB_API_KEY env var. Host: ${host}`,
           )
         }
       }
@@ -249,7 +259,7 @@ export class ZizkaDB {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     }
 
-    this.telemetryMode = config.host ? 'self-hosted' : 'cloud'
+    this.telemetryMode = host ? 'self-hosted' : 'cloud'
     _sendTelemetry(this.telemetryMode)
   }
 

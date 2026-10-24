@@ -316,10 +316,17 @@ bash scripts/quickstart.sh`}</Code>
       </Callout>
 
       <Callout type="tip">
-        <strong>Environment variables</strong> (self-host + cloud):
-        <Code lang="bash">{`export ZIZKADB_HOST=http://localhost:8000   # self-host only
-export ZIZKADB_API_KEY=zizkadb_live_...   # managed cloud only
-export ZIZKADB_AGENT=my-bot
+        <strong>Environment variables</strong>. Set <code style={codeMonoDark}>ZIZKADB_HOST</code> only for a self-hosted
+        server: when it is set, the SDK sends your key there instead of to ZizkaDB Cloud.
+        <Code lang="bash">{`# ZizkaDB Cloud: the key alone
+export ZIZKADB_API_KEY=zizkadb_live_...
+
+# Self-hosted server: its address and a key from its dashboard
+# (local dev stack: just the address, no key)
+export ZIZKADB_HOST=https://your-zizkadb.example.com
+export ZIZKADB_API_KEY=zizkadb_live_...
+
+export ZIZKADB_AGENT=my-bot               # optional
 export ZIZKADB_TELEMETRY=false            # optional`}</Code>
       </Callout>
 

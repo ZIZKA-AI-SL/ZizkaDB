@@ -243,12 +243,18 @@ function DriftHeadline({
   agentId,
   sessions,
   recentWindow,
+  win,
+  recentSessions,
   onRecompute,
 }: {
   drift: NonNullable<AgentBaseline['drift']>
   agentId: string
   sessions: number
   recentWindow: number
+  /** Time window of the split, when the comparison is by time instead of count. */
+  win?: '24h' | '7d' | '30d'
+  /** Sessions in the recent window (used for the label in time-window mode). */
+  recentSessions: number
   onRecompute: () => void
 }) {
   const m = VERDICT_META[drift.verdict]
@@ -308,7 +314,7 @@ function DriftHeadline({
         <SubStat
           label="Sessions analyzed"
           value={String(sessions)}
-          sub={`${recentWindow} recent vs ${sessions - recentWindow} prior`}
+          sub={win ? `${recentSessions} in the last ${win} vs ${sessions - recentSessions} earlier` : `${recentWindow} recent vs ${sessions - recentWindow} prior`}
         />
         <SubStat
           label="Error rate delta"
@@ -344,13 +350,15 @@ function DriftHeadline({
 }
 
 /**
- * Renders one of the three baseline states the backend can return:
- * `insufficient_data`, `warming_up`, or a full `ok` drift report.
+ * Renders one of the baseline states the backend can return:
+ * `insufficient_data`, `no_current_data`, `warming_up`, or a full `ok` drift report.
+ * Labels follow the window the data was computed for (`baseline.window`), not
+ * the selector, so they never describe a different window than the numbers.
  */
 export function BehaviorPanel({
   baseline,
   agentId,
-  window: win,
+  window: _selected,
   onRecompute,
 }: {
   baseline: AgentBaseline
@@ -358,6 +366,18 @@ export function BehaviorPanel({
   window: '24h' | '7d' | '30d' | undefined
   onRecompute: () => void
 }) {
+  const win = baseline.window ?? undefined
+
+  if (baseline.status === 'no_current_data') {
+    return (
+      <EmptyState
+        icon={<Activity size={22} style={{ color: colors.textFaint }} />}
+        title={win ? `No sessions in the last ${win}` : 'No recent sessions'}
+        description={baseline.message ?? 'There are no sessions in the selected window to compare.'}
+      />
+    )
+  }
+
   if (baseline.status === 'insufficient_data') {
     return (
       <EmptyState
@@ -385,9 +405,13 @@ export function BehaviorPanel({
             </h3>
           </div>
           <p className="text-sm" style={{ color: '#fdba74' }}>
-            {baseline.message} Drift detection kicks in once{' '}
-            <span className="font-mono">{agentId}</span> has more than {baseline.recent_window}{' '}
-            sessions.
+            {baseline.message}
+            {!win && (
+              <>
+                {' '}Drift detection kicks in once <span className="font-mono">{agentId}</span> has
+                more than {baseline.recent_window} sessions.
+              </>
+            )}
           </p>
         </div>
         {baseline.recent && (
@@ -421,6 +445,8 @@ export function BehaviorPanel({
         agentId={agentId}
         sessions={sessions}
         recentWindow={recent_window}
+        win={win}
+        recentSessions={recentW.sessions}
         onRecompute={onRecompute}
       />
 
@@ -462,7 +488,7 @@ export function BehaviorPanel({
         />
         <WindowCard
           title="Recent"
-          subtitle={`${recentW.sessions} sessions, ${recentW.events} events (newest ${recent_window})`}
+          subtitle={`${recentW.sessions} sessions, ${recentW.events} events (${win ? `last ${win}` : `newest ${recent_window}`})`}
           window={recentW}
           highlight
         />

@@ -30,6 +30,7 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(os.getenv("COMMUNITY_UPLOAD_DIR", "/data/community_uploads"))
+_MEDIA_NAME_RE = re.compile(r"[0-9a-f]{32}\.(?:png|jpe?g|gif|webp)")
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 CATEGORIES = {"question", "experience", "showcase"}
@@ -115,6 +116,9 @@ async def list_posts(
         where = "WHERE category = $1"
         params.append(category)
 
+    limit_idx = len(params) + 1
+    params.append(limit)
+
     rows = await pool.fetch(
         f"""
         SELECT post_id, author_name, category, title,
@@ -123,7 +127,7 @@ async def list_posts(
         FROM community_posts
         {where}
         ORDER BY created_at DESC
-        LIMIT {limit}
+        LIMIT ${limit_idx}
         """,
         *params,
     )
@@ -260,6 +264,20 @@ async def create_reply(post_id: str, body: CreateReplyBody, request: Request):
     return {"id": str(row["reply_id"]), "created_at": row["created_at"].isoformat()}
 
 
+def _is_valid_image(data: bytes, ext: str) -> bool:
+    if len(data) < 12:
+        return False
+    if ext == ".png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext in (".jpg", ".jpeg"):
+        return data.startswith(b"\xff\xd8\xff")
+    if ext == ".gif":
+        return data.startswith((b"GIF87a", b"GIF89a"))
+    if ext == ".webp":
+        return data.startswith(b"RIFF") and data[8:12] == b"WEBP"
+    return False
+
+
 @router.post("/upload")
 async def upload_image(request: Request, file: UploadFile = File(...)):
     await _check_community_rate(client_ip(request) + ":upload")
@@ -274,6 +292,8 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise bad_request("Image must be under 3MB")
+    if not _is_valid_image(data, ext):
+        raise bad_request("Invalid image file format")
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     name = f"{uuid.uuid4().hex}{ext}"
@@ -285,17 +305,12 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
 
 @router.get("/media/{filename}")
 async def serve_media(filename: str):
-    safe = re.sub(r"[^a-zA-Z0-9._-]", "", filename)
-    if not safe or safe != filename:
+    # Uploads are always named <uuid4 hex><ext>; reject anything else outright.
+    if not _MEDIA_NAME_RE.fullmatch(filename):
         raise not_found("Not found")
-    # Normalise and require the file to sit inside the upload dir, so no name
-    # (e.g. "..") can reach outside it.
     root = os.path.realpath(UPLOAD_DIR)
-    full = os.path.normpath(os.path.join(root, safe))
-    if not full.startswith(root + os.sep):
-        raise not_found("Not found")
-    path = Path(full)
-    if not path.is_file():
+    path = os.path.realpath(os.path.join(root, filename))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
         raise not_found("Not found")
     media = {
         ".png": "image/png",
@@ -304,10 +319,14 @@ async def serve_media(filename: str):
         ".webp": "image/webp",
         ".gif": "image/gif",
     }
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'",
+    }
     return FileResponse(
         path,
-        media_type=media.get(path.suffix.lower(), "application/octet-stream"),
-        headers={"X-Content-Type-Options": "nosniff"},
+        media_type=media.get(os.path.splitext(path)[1].lower(), "application/octet-stream"),
+        headers=headers,
     )
 
 

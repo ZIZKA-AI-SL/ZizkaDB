@@ -89,12 +89,13 @@ run_single_container() {
   check_port "${DASHBOARD_PORT}" "dashboard" "Or pick another: ZIZKADB_DASHBOARD_PORT=3005"
 
   echo "→ [2/3] Starting..."
-  # 127.0.0.1 only: local mode has a one-click dashboard and a well-known API key.
+  # Local mode (the image defaults to production): one-click dashboard and a
+  # well-known API key, so the ports stay on 127.0.0.1 only.
   docker run -d --name "${CONTAINER}" --restart unless-stopped \
+    -e ENV=development \
     -p "127.0.0.1:${API_PORT}:8000" \
     -p "127.0.0.1:${DASHBOARD_PORT}:3001" \
     -v "${VOLUME}:/data" \
-    -e ENV=development \
     ${OPENAI_API_KEY:+-e OPENAI_API_KEY} \
     ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY} \
     "${IMAGE}" >/dev/null || { echo "ERROR: could not start the ZizkaDB container." >&2; exit 1; }

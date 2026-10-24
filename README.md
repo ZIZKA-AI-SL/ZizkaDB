@@ -15,7 +15,7 @@ Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
 [![CI](https://github.com/Zizka-ai/ZizkaDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Zizka-ai/ZizkaDB/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.3.0-f97316)](https://github.com/Zizka-ai/ZizkaDB/releases)
+[![Release](https://img.shields.io/badge/release-v0.4.1-f97316)](https://github.com/Zizka-ai/ZizkaDB/releases)
 [![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK)](https://pypi.org/project/zizkadb-sdk/)
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/Zizka-ai/ZizkaDB?style=flat)](https://github.com/Zizka-ai/ZizkaDB/stargazers)
@@ -34,6 +34,17 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 - **Drift detection.** See when an agent's behavior shifts from its baseline.
 - **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure. Self-hosted runs **one agent with one API key**; multiple agents, agent fleets and agent-to-agent messaging are on Cloud.
 
+**In plain words:** ZizkaDB is a flight recorder for AI agents. It records every step an agent takes and which step led to it, so when an agent does something unexpected, you can see exactly why.
+
+### Start here
+
+| You are… | Go to |
+| --- | --- |
+| New to ZizkaDB, or not technical | [ZizkaDB Cloud](https://db.zizka.ai): nothing to install |
+| A developer trying it on your laptop | [Quickstart](#quickstart-60-seconds): one command, about a minute |
+| Adding it to an agent you already have | [Connect your agent](#connect-your-agent) |
+| Running it for your team on a server | [Self-host on a server](#self-host-on-a-server) or [Deploy on Redu Cloud](#deploy-on-redu-cloud) |
+
 <p align="center">
   <a href="#quickstart-60-seconds"><img src="docs/assets/why-chain.svg" alt="Animated: db.why() walks from a tool_call back through llm_response to the root-cause user_message" width="900"/></a>
 </p>
@@ -41,6 +52,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 ## Contents
 
 - [Quickstart (60 seconds)](#quickstart-60-seconds)
+  - [Self-host on a server](#self-host-on-a-server) · [Deploy on Redu Cloud](#deploy-on-redu-cloud)
 - [Integrations](#integrations)
 - [Connect your agent](#connect-your-agent)
 - [What it does](#what-it-does)
@@ -87,11 +99,10 @@ Now log your own agent: `pip install zizkadb-sdk`, then see [CONNECT.md](CONNECT
 The script is a wrapper around this:
 
 ```bash
-docker run -d --name zizkadb -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
-  -e ENV=development -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
+docker run -d --name zizkadb -e ENV=development \
+  -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
+  -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
 ```
-
-`ENV=development` is what gives the one-click dashboard and the `zizkadb_dev_local` key, so keep the ports on `127.0.0.1`. Without it the image runs in production mode: the dashboard asks for an admin token, printed in `docker logs zizkadb`.
 
 | Do this | Command |
 |---------|---------|
@@ -103,7 +114,19 @@ docker run -d --name zizkadb -p 127.0.0.1:8000:8000 -p 127.0.0.1:3001:3001 \
 
 </details>
 
-The single container is for your own machine: it keeps the ports on `127.0.0.1`, signs you in with one click and accepts a well-known API key. It runs without Qdrant, so semantic search and embeddings need the full stack below. For a server other people can reach, use [Self-host on a server](#self-host-on-a-server).
+The single container has two modes:
+
+- **On your own machine** (`-e ENV=development`, what the quickstart uses): one-click sign-in and a well-known API key, with the ports bound to `127.0.0.1` only.
+- **On a server** (the default, production mode): the container generates its own secrets on first start, and the dashboard and API share port 3001. Sign in with the admin token:
+
+  ```bash
+  docker run -d --name zizkadb -p 3001:3001 -v zizkadb_data:/data ghcr.io/zizka-ai-sl/zizkadb
+  docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env   # your admin token
+  ```
+
+  Put it behind HTTPS, and set `ZIZKADB_PUBLIC_URL=https://your-domain` so the links it generates are correct. If a reverse proxy on the same host forwards to it, add `-e TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12` so sign-in rate limits see each visitor.
+
+The single container runs without Qdrant, so semantic search and embeddings need the full stack below.
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
@@ -134,16 +157,17 @@ DEV_API_KEY=<random>                # must not be the default, or the API refuse
 JWT_SECRET=<random>                 # openssl rand -hex 32 (also JWT_REFRESH_SECRET)
 DEPLOYMENT_MODE=self_hosted
 SELFHOST_ADMIN_TOKEN=<long-random>  # python -c "import secrets; print(secrets.token_urlsafe(32))"
-POSTGRES_PASSWORD=<random>          # new installs only: Postgres keeps the password it was created with
-REDIS_PASSWORD=<random>             # openssl rand -hex 24
-QDRANT_API_KEY=<random>             # openssl rand -hex 24
 ```
-
-Postgres, Redis and Qdrant only listen on `127.0.0.1` on the server; the API reaches them over the Docker network. To open the database from your laptop, use an SSH tunnel: `ssh -L 5432:127.0.0.1:5432 you@server`.
 
 The dashboard then asks for the admin token instead of showing the one-click button. Without `SELFHOST_ADMIN_TOKEN`, dashboard login stays disabled. Everyone who has the token signs in to the same single owner workspace. Check your config with `bash scripts/validate-selfhost-config.sh --production`. Full steps: [wiki/Self-Hosting](https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting).
 
-Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troubleshooting.md](wiki/Troubleshooting.md)
+### Deploy on Redu Cloud
+
+[![Deploy on Redu Cloud](https://img.shields.io/badge/Deploy%20on-Redu%20Cloud-2563eb)](redu.md)
+
+[Redu Cloud](https://redu.cloud) is ZizkaDB's recommended cloud for the open-source edition. With the redu MCP added to your coding agent, ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The agent follows [redu.md](redu.md): the single container on one VM, the dashboard and API on one HTTPS URL, and your data kept in a volume. Then sign in with the admin token, create your API key in Settings, and set `ZIZKADB_HOST` and `ZIZKADB_API_KEY` in your agent.
+
+Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troubleshooting.md](wiki/Troubleshooting.md) · What ZizkaDB sends: [docs/telemetry.md](docs/telemetry.md)
 
 ---
 
@@ -340,6 +364,12 @@ No. The curl quickstart downloads config and Docker images only.
 **Do I need an API key locally?**  
 No. `http://localhost:8000` uses a built-in dev key.
 
+**My server's login page asks for an admin token. Where is it?**  
+A server install generates one on first start. Single container: `docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Full stack: the `SELFHOST_ADMIN_TOKEN` you set in `infra/.env`. After signing in, create your API key in **Settings**.
+
+**Where does my data go?**  
+When you self-host, everything stays on your machine. The server and dashboard make no outside requests; the SDKs send one anonymous install ping, which `ZIZKADB_TELEMETRY=false` turns off. Details: [docs/telemetry.md](docs/telemetry.md).
+
 **`zizkadb demo` says connection refused?**  
 The stack isn't running. Start it with the curl command above or `bash scripts/setup-local.sh`.
 
@@ -372,29 +402,33 @@ Thanks to everyone who has helped build ZizkaDB. Want to join? Read [CONTRIBUTIN
     <td align="center" width="25%"><a href="https://github.com/saadamjad"><img src="https://github.com/saadamjad.png?size=120" width="64" alt="saadamjad"/><br/><sub>saadamjad</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/Zizka-ai"><img src="https://github.com/Zizka-ai.png?size=120" width="64" alt="Zizka-ai"/><br/><sub>Zizka-ai</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/arshadgit23"><img src="https://github.com/arshadgit23.png?size=120" width="64" alt="arshadgit23"/><br/><sub>arshadgit23</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/Subhajitdas99"><img src="https://github.com/Subhajitdas99.png?size=120" width="64" alt="Subhajitdas99"/><br/><sub>Subhajitdas99</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/rajandevkota98"><img src="https://github.com/rajandevkota98.png?size=120" width="64" alt="rajandevkota98"/><br/><sub>rajandevkota98</sub></a></td>
   </tr>
   <tr>
+    <td align="center" width="25%"><a href="https://github.com/Subhajitdas99"><img src="https://github.com/Subhajitdas99.png?size=120" width="64" alt="Subhajitdas99"/><br/><sub>Subhajitdas99</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/saadwashmen"><img src="https://github.com/saadwashmen.png?size=120" width="64" alt="saadwashmen"/><br/><sub>saadwashmen</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/mikeaig4real"><img src="https://github.com/mikeaig4real.png?size=120" width="64" alt="mikeaig4real"/><br/><sub>mikeaig4real</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/aqilaziz"><img src="https://github.com/aqilaziz.png?size=120" width="64" alt="aqilaziz"/><br/><sub>aqilaziz</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/AIandI0x1"><img src="https://github.com/AIandI0x1.png?size=120" width="64" alt="AIandI0x1"/><br/><sub>AIandI0x1</sub></a></td>
   </tr>
   <tr>
+    <td align="center" width="25%"><a href="https://github.com/pingkui"><img src="https://github.com/pingkui.png?size=120" width="64" alt="pingkui"/><br/><sub>pingkui</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/AIandI0x1"><img src="https://github.com/AIandI0x1.png?size=120" width="64" alt="AIandI0x1"/><br/><sub>AIandI0x1</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/lamenting-hawthorn"><img src="https://github.com/lamenting-hawthorn.png?size=120" width="64" alt="lamenting-hawthorn"/><br/><sub>lamenting-hawthorn</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/nabeeltahirdeveloper"><img src="https://github.com/nabeeltahirdeveloper.png?size=120" width="64" alt="nabeeltahirdeveloper"/><br/><sub>nabeeltahirdeveloper</sub></a></td>
+  </tr>
+  <tr>
     <td align="center" width="25%"><a href="https://github.com/abdurrehman616"><img src="https://github.com/abdurrehman616.png?size=120" width="64" alt="abdurrehman616"/><br/><sub>abdurrehman616</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/danielhagever"><img src="https://github.com/danielhagever.png?size=120" width="64" alt="danielhagever"/><br/><sub>danielhagever</sub></a></td>
-  </tr>
-  <tr>
     <td align="center" width="25%"><a href="https://github.com/eaz1337"><img src="https://github.com/eaz1337.png?size=120" width="64" alt="eaz1337"/><br/><sub>eaz1337</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/HafizHamzaShahid"><img src="https://github.com/HafizHamzaShahid.png?size=120" width="64" alt="HafizHamzaShahid"/><br/><sub>HafizHamzaShahid</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/mbilalzeeshan"><img src="https://github.com/mbilalzeeshan.png?size=120" width="64" alt="mbilalzeeshan"/><br/><sub>mbilalzeeshan</sub></a></td>
-    <td align="center" width="25%"><a href="https://github.com/nabeeltahirpsy"><img src="https://github.com/nabeeltahirpsy.png?size=120" width="64" alt="nabeeltahirpsy"/><br/><sub>nabeeltahirpsy</sub></a></td>
   </tr>
   <tr>
+    <td align="center" width="25%"><a href="https://github.com/mbilalzeeshan"><img src="https://github.com/mbilalzeeshan.png?size=120" width="64" alt="mbilalzeeshan"/><br/><sub>mbilalzeeshan</sub></a></td>
+    <td align="center" width="25%"><a href="https://github.com/nabeeltahirpsy"><img src="https://github.com/nabeeltahirpsy.png?size=120" width="64" alt="nabeeltahirpsy"/><br/><sub>nabeeltahirpsy</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/AbdelazizBs"><img src="https://github.com/AbdelazizBs.png?size=120" width="64" alt="AbdelazizBs"/><br/><sub>AbdelazizBs</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/Mephistopheles9631"><img src="https://github.com/Mephistopheles9631.png?size=120" width="64" alt="Mephistopheles9631"/><br/><sub>Mephistopheles9631</sub></a></td>
+  </tr>
+  <tr>
     <td align="center" width="25%"><a href="https://github.com/Qalbeabbas-12"><img src="https://github.com/Qalbeabbas-12.png?size=120" width="64" alt="Qalbeabbas-12"/><br/><sub>Qalbeabbas-12</sub></a></td>
     <td align="center" width="25%"><a href="https://github.com/towfiq-ul"><img src="https://github.com/towfiq-ul.png?size=120" width="64" alt="towfiq-ul"/><br/><sub>towfiq-ul</sub></a></td>
   </tr>

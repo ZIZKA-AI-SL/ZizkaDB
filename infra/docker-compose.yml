@@ -137,9 +137,9 @@ services:
       EMBEDDINGS_ENABLED: ${EMBEDDINGS_ENABLED:-false}
       # Comma-separated browser origins allowed to call the API (empty = any).
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-      # Extra proxies (IPs/CIDRs) whose X-Forwarded-For is trusted for rate
-      # limits. Loopback and private networks are always trusted.
-      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      # Proxies whose X-Forwarded-For is trusted for client IPs (rate limiting).
+      # Default covers nginx on the host reaching the API via the Docker bridge.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
       # Email — optional; enables OTP login on self-hosted dashboard
       EMAIL_HOST: ${EMAIL_HOST}
       EMAIL_PORT: ${EMAIL_PORT:-465}
@@ -196,6 +196,10 @@ services:
       # Decrypts per-tenant BYOK embedding keys, which the API encrypts with it.
       JWT_SECRET: ${JWT_SECRET:-}
       EMBED_WORKER_POLL_SEC: ${EMBED_WORKER_POLL_SEC:-2}
+      # Retry policy for events whose embedding fails (workers/embed_worker.py).
+      EMBED_MAX_ATTEMPTS: ${EMBED_MAX_ATTEMPTS:-10}
+      EMBED_RETRY_BASE_SEC: ${EMBED_RETRY_BASE_SEC:-30}
+      EMBED_RETRY_MAX_SEC: ${EMBED_RETRY_MAX_SEC:-3600}
     depends_on:
       postgres:
         condition: service_healthy

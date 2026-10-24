@@ -1,12 +1,12 @@
 [project]
 name = "zizkadb-langgraph"
-version = "0.1.0"
+version = "0.1.1"
 description = "LangGraph middleware for ZizkaDB — automatic causal logging per graph node"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-or-later" }
 dependencies = [
-    "zizkadb-sdk>=0.3.0",
+    "zizkadb-sdk>=0.4.1",
 ]
 
 [project.optional-dependencies]

@@ -155,6 +155,69 @@ def test_localhost_auto_injects_dev_key(monkeypatch):
     assert db._headers()["Authorization"] == "Bearer zizkadb_dev_local"
 
 
+def test_api_key_with_zizkadb_host_env_uses_that_host(monkeypatch):
+    """A self-hosted key must not be sent to Cloud when ZIZKADB_HOST is set."""
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("ZIZKADB_HOST", " https://zizka.example.com/ ")
+
+    db = ZizkaDB(api_key="zizkadb_live_x")
+
+    assert db._base_url == "https://zizka.example.com"
+    assert db._api_key == "zizkadb_live_x"
+
+
+def test_explicit_host_wins_over_zizkadb_host_env(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("ZIZKADB_HOST", "https://env.example.com")
+
+    db = ZizkaDB(api_key="zizkadb_live_x", host="https://arg.example.com")
+
+    assert db._base_url == "https://arg.example.com"
+
+
+def test_api_key_alone_means_cloud(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.delenv("ZIZKADB_HOST", raising=False)
+
+    db = ZizkaDB(api_key="zizkadb_live_x")
+
+    assert db._base_url == "https://db.zizka.ai"
+
+
+def test_zizkadb_host_env_alone_is_enough_for_localhost(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    for var in ("ZIZKADB_API_KEY", "AGENTDB_API_KEY", "DEV_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ZIZKADB_HOST", "http://localhost:8000")
+
+    db = ZizkaDB()
+
+    assert db._base_url == "http://localhost:8000"
+    assert db._api_key == "zizkadb_dev_local"
+
+
+def test_legacy_agentdb_host_env_is_honoured(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("AGENTDB_HOST", "https://legacy.example.com")
+
+    assert ZizkaDB(api_key="zizkadb_live_x")._base_url == "https://legacy.example.com"
+
+
+def test_blank_zizkadb_host_falls_through_to_agentdb_host(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("ZIZKADB_HOST", "  ")
+    monkeypatch.setenv("AGENTDB_HOST", "https://legacy.example.com")
+
+    assert ZizkaDB(api_key="k")._base_url == "https://legacy.example.com"
+
+
+def test_explicit_host_is_trimmed_and_blank_means_unset(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+
+    assert ZizkaDB(api_key="k", host=" https://x.example.com/ ")._base_url == "https://x.example.com"
+    assert ZizkaDB(api_key="k", host="  ")._base_url == "https://db.zizka.ai"
+
+
 def test_log_sends_null_for_omitted_parent_and_session(monkeypatch):
     """The SDK sends parent_id: null and session_id: null when not provided."""
     captured = {}

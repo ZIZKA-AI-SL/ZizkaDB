@@ -175,7 +175,8 @@ async def log_event(
     that powers why(), search_memory(), and get_context().
 
     Args:
-        agent:      Unique identifier for your agent (e.g. "support-bot")
+        agent:      Unique identifier for your agent (e.g. "support-bot"): letters, numbers,
+                    dots, dashes and underscores, starting with a letter or number
         event:      What happened (e.g. "tool_call", "user_message", "decision")
         data:       Any dict of relevant data (tool name, query, result, etc.)
         session_id: Groups related events into a session (optional)

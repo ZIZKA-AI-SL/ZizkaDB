@@ -115,3 +115,34 @@ async def test_self_hosted_allows_one_active_api_key_without_any_env_switch(pg_d
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "api_key_limit_reached"
     assert (exc.value.detail["limit"], exc.value.detail["used"]) == (1, 1)
+
+
+async def test_failed_first_write_leaves_no_agent_row_and_keeps_the_slot(pg_db, monkeypatch):
+    """A first write whose event INSERT fails must not leave an agent behind:
+    on self-hosted that row would take the single agent slot and every later
+    agent would get a 409."""
+    tenant_id = await _tenant(pg_db)
+
+    # Input validation now rejects every value the columns cannot hold, so make
+    # the write fail after the agent upsert, inside the same transaction.
+    def boom(_row):
+        raise RuntimeError("write failed after the agent upsert")
+
+    with monkeypatch.context() as m:
+        m.setattr("services.event_write.compute_row_checksum_v2", boom)
+        with pytest.raises(RuntimeError, match="write failed"):
+            await write_event(
+                tenant_id=tenant_id,
+                agent="first-bot",
+                event="ping",
+                data={"ok": True},
+            )
+
+    assert await pg_db.fetchval(
+        "SELECT COUNT(*) FROM agents WHERE tenant_id = $1", tenant_id
+    ) == 0
+    assert await count_agents(pg_db, tenant_id) == 0
+
+    # The slot is still free: a real first agent can be created.
+    await _log(tenant_id, "real-bot")
+    assert await count_agents(pg_db, tenant_id) == 1

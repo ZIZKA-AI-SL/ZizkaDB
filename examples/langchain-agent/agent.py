@@ -15,8 +15,10 @@ HOST = os.getenv("ZIZKADB_HOST")
 
 
 async def main() -> None:
-    kwargs = {"api_key": API_KEY} if API_KEY else {"host": HOST or "http://localhost:8000"}
-    async with ZizkaDB(**kwargs) as db:
+    # An explicit ZIZKADB_HOST wins (self-hosted with an API key); a key alone
+    # means ZizkaDB Cloud; neither means the local dev stack.
+    host = HOST or (None if API_KEY else "http://localhost:8000")
+    async with ZizkaDB(api_key=API_KEY, host=host) as db:
         handler = ZizkaDBCallbackHandler(db=db, agent=AGENT)
         llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
         result = await llm.ainvoke(

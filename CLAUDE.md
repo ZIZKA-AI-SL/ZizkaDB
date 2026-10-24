@@ -17,7 +17,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 | TypeScript SDK | `zizkadb-sdk` (npm) | `sdk/typescript/src/index.ts` |
 | Integrations | `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit` | `integrations/` (standalone) + LangChain/CrewAI bundled in `sdk/python/zizkadb/integrations/` |
 | MCP server | `zizkadb-mcp` (PyPI, **MIT**) | `mcp/zizkadb_mcp/server.py` |
-| Infra | Docker Compose | `infra/docker-compose.yml` (prod) + `infra/docker-compose.dev.yml` (dev overlay) |
+| Infra | Docker Compose + single image | `infra/docker-compose.yml` (prod) + `infra/docker-compose.dev.yml` (dev overlay) · `infra/allinone/` (one container: Postgres, Redis, API, dashboard; used by the quickstart and Redu Cloud via `redu.md`) |
 | CI | GitHub Actions | `.github/workflows/ci.yml` (lint+tests+vitest) · `integration.yml` (weekly stack) · `publish-images.yml` (GHCR on `v*` tag) |
 
 ---
@@ -108,6 +108,10 @@ cd dashboard && npm run lint && npm test && npm run build
 
 **Rate limiting** — `core/services/rate_limiter.py` (`RateLimiter` + `RedisStorage`/`InMemoryStorage`). OTP login, the AI `/v1/agents/{id}/suggestions` throttle, community and demo-request routes use Redis-backed limits shared across workers, falling back to in-memory (per-worker) only if Redis is unavailable (`check_rate_fail_open`). OTP uses Redis when `ENV=production` or `OTP_RATE_LIMIT_STORAGE=redis`. Background: `docs/adr/005-in-process-rate-limiting.md`.
 
+**Single-container image** (`infra/allinone/`) — `ENV=production` by default; the quickstart passes `ENV=development`. The entrypoint generates the JWT secrets, `SELFHOST_ADMIN_TOKEN` and the Postgres password into `/data/secrets.env` (missing keys only, atomic write) and re-applies the role password when it changes. `front-proxy.js` owns port 3001: `/v1`, `/health`, `/swagger`, `/openapi.json` go to the API (:8000), the rest to the dashboard (127.0.0.1:3002, built with an empty `NEXT_PUBLIC_API_URL`). It appends the peer to `X-Forwarded-For`; the image trusts only loopback (`TRUSTED_PROXIES=127.0.0.1,::1`), so a platform proxy's range must be added per deployment. CORS defaults to the dashboard address in both modes (local mode also accepts the well-known dev key, so never widen it to `*`). Without `ZIZKADB_PUBLIC_URL`, production leaves `PUBLIC_API_URL` unset so links follow the request address. A well-known `DEV_API_KEY` is dropped in production with a warning; an operator's unique one is kept. Image checks live in CI as `node --test infra/allinone/`; run the full container verification before changing the entrypoint.
+
+**SDK host resolution** — explicit `host` → `ZIZKADB_HOST` → legacy `AGENTDB_HOST` → ZizkaDB Cloud when an API key is given (Python `client.py`, TypeScript `index.ts`; blank values count as unset). Templates and examples pass `host = HOST or (None if API_KEY else "http://localhost:8000")` so they also work with the SDK already on PyPI.
+
 **Health** — `/health` is liveness only (always 200). `/health/deep` returns 503 when Postgres, Redis, or (with embeddings enabled) Qdrant is down.
 
 **Schema migrations** — Fresh install: `core/db/schema.sql` (run by Docker on first boot). Running install: `ALTER TABLE IF EXISTS` in `core/db/connection.py::init_db()` (runs on every startup). Always write idempotent DDL.
@@ -161,7 +165,9 @@ cd dashboard && npm run lint && npm test && npm run build
 | Auth / billing / signup flow | `dashboard/DASHBOARD_KNOWLEDGE_BASE.md` §18 |
 | DB schema | `core/db/schema.sql` + `core/db/connection.py::init_db()` + KB §21 |
 | Plan entitlements | Only `core/services/entitlements.py::PLAN_ENTITLEMENTS` |
-| SDK version | Bump `sdk/python/pyproject.toml`, `sdk/typescript/package.json`, `mcp/pyproject.toml`, `core/main.py version=` together |
+| What any component sends by default (pings, third-party requests) | `docs/telemetry.md` + CHANGELOG, before it ships (Redu agreement §4) |
+| Single-container image (ports, env, secrets, proxy) | `redu.md` + README single-container section + `wiki/Self-Hosting.md` |
+| SDK version | Bump `sdk/python/pyproject.toml`, `sdk/typescript/package.json` and `core/main.py` `API_VERSION` together (`scripts/publish-packages.sh` refuses mismatched SDK versions). `mcp/pyproject.toml` has its own version line: bump it whenever `mcp/` changes |
 
 ---
 
@@ -180,3 +186,5 @@ cd dashboard && npm run lint && npm test && npm run build
 | Wiki (14 pages) | `wiki/` or https://github.com/Zizka-ai/ZizkaDB/wiki |
 | REST API explorer | http://localhost:8000/swagger |
 | Self-hosting guide | `wiki/Self-Hosting.md` |
+| Redu Cloud deploy recipe | `redu.md` |
+| What ZizkaDB sends by default | `docs/telemetry.md` |

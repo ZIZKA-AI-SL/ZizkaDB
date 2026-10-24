@@ -73,7 +73,7 @@ app/dashboard/layout.tsx
 **Feature flags (env):**
 - `NEXT_PUBLIC_DEV_MODE === 'true'` → legacy dev-token button on the managed login page, changes onboarding copy.
 - `NEXT_PUBLIC_DEPLOYMENT_MODE === 'self_hosted'` (`IS_SELF_HOSTED`, `lib/constants.ts`) → self-hosted build: `middleware.ts` redirects `/` and every website route (signup, pricing, docs, trust, community…) to `/dashboard` (signed in) or `/login`; `/login` renders `SelfHostLogin` (no OTP/signup); cookie banner + marketing popup hidden; robots disallow-all, empty sitemap. Unset or `managed` = full website (managed PM2 build never sets it).
-- `NEXT_PUBLIC_API_URL` → API base (default same-origin; login dev-token defaults to `http://localhost:8000`).
+- `NEXT_PUBLIC_API_URL` → API base (default same-origin). When it is empty, `CreateApiKeyCard` shows `window.location.origin` as `ZIZKADB_HOST` (the single-container image serves the API on the dashboard's port through `infra/allinone/front-proxy.js`).
 
 **Loading/error handling:** per-page. Suspense boundaries wrap pages using `useSearchParams` (`/signup`, `/signup/start`, `/signup/checkout`, `/signup/success`, `/login`) — required by Next for CSR bailout. Errors are local component state rendered inline.
 
@@ -468,7 +468,7 @@ Landing → (Pricing: Pro) → `/signup?plan=pro` → `/signup/start` (consent) 
 
 | Var | Where read | Default | Purpose |
 |-----|-----------|---------|---------|
-| `NEXT_PUBLIC_API_URL` | client (`lib/api.ts`, `lib/demo.ts`, `lib/community.ts`, `useConnectionHealth`, `login`) | `''` (same-origin; `login` falls back to `http://localhost:8000`) | API base URL |
+| `NEXT_PUBLIC_API_URL` | client (`lib/api.ts`, `lib/demo.ts`, `lib/community.ts`, `useConnectionHealth`, `login`) | `''` (same-origin) | API base URL |
 | `NEXT_PUBLIC_DEV_MODE` | client (`login`, onboarding copy) | unset | `'true'` = self-host: enables dev-token login, changes onboarding copy |
 | `API_REWRITE_TARGET` | build/server (`next.config.mjs`) | `http://127.0.0.1:8000` | upstream host for the `/swagger` + `/openapi.json` rewrites |
 
@@ -564,7 +564,7 @@ Router prefixes are mounted in `core/main.py:66-79`.
 | `revokeAgentApiKey` | DELETE `/v1/agents/{id}/api-keys/{keyId}` | `agents.py:224` |
 | `getAgentStats` | GET `/v1/agents/{id}/stats` (incl. `top_actions`: per-tool/API calls + error rate, `services/actions.py`) | `agents.py:239` |
 | `getAgentSessions` | GET `/v1/agents/{id}/sessions` | `agents.py:280` |
-| `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`) | `agents.py:453` |
+| `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`; `?window=24h\|7d\|30d` splits by time in SQL and every response echoes `window`; no session inside the window → `no_current_data` (as `/behavior-change`), no session that ended earlier → `warming_up`; labels in `BehaviorPanel` follow `baseline.window`) | `agents.py:804` |
 | `getAgentReport` | GET `/v1/agents/{id}/report?from=&to=&granularity=` (incl. `actions`, rendered by `components/dashboard/ActionsTable.tsx`) | `agents.py` → `services/reports.py` |
 | `getAgentTokenUsage` | GET `/v1/agents/{id}/token-usage?from=&to=&granularity=` | `agents.py` → `services/token_usage.py` + `services/pricing.py` |
 | `getAgentTokenOptimization` | GET `/v1/agents/{id}/token-optimization?from=&to=&granularity=` | `agents.py` → `services/token_optimization.py` |
@@ -636,7 +636,7 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 **Events / Search / Memory (dashboard read side):**
 | Dashboard fn | Method · Path | Backend |
 |---|---|---|
-| `getEvents` | GET `/v1/events` | `events.py:56` |
+| `getEvents` | GET `/v1/events` | `events.py:56` (each event has `index_status`: `skipped`/`pending`/`indexed`/`failed`/`dead`) |
 | `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:129` |
 | `getImpactTree` | GET `/v1/events/{id}/impact` | `events.py:222` |
 | `timeTravel` | GET `/v1/events/at` | `events.py:373` |
@@ -722,7 +722,8 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 - **JWT** (`auth.py:17-43`): access token 7 days, refresh 30 days; `JWT_SECRET`/`JWT_REFRESH_SECRET` **required** in production (else `dev-secret`). In production the API also **refuses to start** if either secret is empty or matches a published placeholder: `.env.example`, Compose defaults, or the `dev-secret` / `dev-refresh-secret` fallbacks in `auth.py`. Payload `{sub: user_id, email, tenant_id, exp, iat}`.
 - **API keys** (`auth.py:50-89`): format `zizkadb_live_{32 url-safe}`; stored as SHA-256 hash + 16-char prefix; legacy `agdb_live_*` still resolve by hash; valid use bumps `last_used`.
-- **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config.
+- **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config. Each wrong guess atomically increments `auth_otps.attempts` (`UPDATE … SET attempts = attempts + 1 … RETURNING`); the 5th (`OTP_MAX_ATTEMPTS`) burns the code and verify returns "Too many failed attempts. Please request a new code." — the user must request a new OTP.
+- **Client IP** (`core/api/utils.py::client_ip`): used for per-IP rate limits (verify-otp, selfhost-login, community, demo requests). `X-Forwarded-For` is honoured only when the peer is in `TRUSTED_PROXIES` (default `127.0.0.1,::1,172.16.0.0/12`), walked right-to-left to the first untrusted hop.
 - **request-otp** (`core/api/auth.py:58-77`): rate-limited 10/15min; `intent="signup"` + existing email → **409** "already registered".
 - **verify-otp** (`core/api/auth.py:80-121`): new users **must** pass `gdpr_consent=true` (else 401 ValueError); sets a **HttpOnly, Secure, SameSite=Lax refresh-token cookie** (30-day, `auth.py:104-112`); returns access token + billing routing flags. Consent fields persisted.
 - **dev-token** (`core/api/auth.py:151-164`): development only — 403 unless `ENV=development`; an unset `ENV` counts as production (`core/services/runtime_env.py::is_dev_mode`).
@@ -736,13 +737,13 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 ### 18.4 Events & memory
 
-- **`write_event`** (`core/services/event_write.py:16-109`): upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
+- **`write_event`** (`core/services/event_write.py:16-109`): a **new** agent name must match the agent-id rule (`core/services/agent_ids.py`, 400 otherwise; agents stored before the rule keep working; first use of an unassigned key applies the same rule in `claim_unassigned_api_key`); upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
 - **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /{id}/impact` walks downstream through children (`0≤depth≤50`, at most 500 nodes; `truncated` when the node cap was hit, `depth_truncated` when events lie below the depth limit) with the same agent scoping as `/why`; `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
 - **Memory** (`core/api/memory.py`): `POST /context` (recent + semantic search merged into a char-budgeted prompt block), `GET /diff/{session_id}` (session summary + new event types vs prior), `DELETE /forget` (deletes events by exact JSONB match; Qdrant vectors are deleted **first** — if that fails with embeddings on it returns 503 and deletes nothing; response has `vector_cleanup`; logs only a hash of the value; scoped key → own agent only, unbound key → 400, JWT → tenant-wide).
 
 ### 18.5 Agents & baseline (`core/api/agents.py`)
 
-- `agent_id` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$` (`agents.py:18-28`); `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
+- `agent_id` must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}` (`core/services/agent_ids.py`, full match). The same rule applies when `POST /v1/events` or key binding would create a new agent (400); agents stored before the rule keep working. `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
 - **Baseline / drift** (`agents.py:453-544`): splits sessions into recent N (default 50) vs older; computes event distribution, parent→child transitions, session shape, error rate; `drift_score = 0.5·L1(event_dist) + 0.5·L1(transitions)`; verdicts `stable | minor_drift | noticeable_drift | significant_drift`; status can be `insufficient_data`, `warming_up`, or `ok`.
 
 ### 18.6 Admin (`core/api/admin.py`) — managed-cloud only (not in OSS)
@@ -1001,8 +1002,8 @@ Schema sources: `core/db/schema.sql` (base DDL, Docker init) + named migrations 
 | `agents` | `(agent_id, tenant_id)` (PK), `first_seen`, `last_seen`, `event_count`, `metadata` | Registered agent identities; upserted on every event write |
 | `api_keys` | `key_id` (PK), `tenant_id`, `agent_id` (NULL = unassigned until first use, set = bound to one agent), `key_hash` (SHA-256, unique), `key_prefix`, `revoked`, `last_used` | API-key auth; hashed only, prefix for display |
 | `users` | `user_id` (PK), `email` (unique), `tenant_id`, **billing cols** (see §21.2), `gdpr_consent_at`, `marketing_consent`, `last_login` | Dashboard users (passwordless OTP). **All billing state lives here.** |
-| `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used` | Passwordless login OTPs (15-min expiry) |
-| `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256) | Append-only event log — source of truth. HNSW index on `embedding` (cosine); partial index `idx_events_state_writes` on `(tenant_id, agent_id, timestamp)` for `STATE_SET`/`STATE_DELETE` serves time travel |
+| `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used`, `attempts` | Passwordless login OTPs (15-min expiry); `attempts` counts wrong guesses, code burned at 5 (`OTP_MAX_ATTEMPTS`) |
+| `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256), `index_status` (`skipped`/`pending`/`indexed`/`failed`/`dead`), `index_attempts`, `index_retry_at` (embed worker retry state) | Append-only event log — source of truth. HNSW index on `embedding` (cosine); partial index `idx_events_state_writes` on `(tenant_id, agent_id, timestamp)` for `STATE_SET`/`STATE_DELETE` serves time travel |
 | `usage_daily` | `(tenant_id, date)` (PK), `events_written`, `queries_run`, `searches_run` | Daily metering (only `events_written` is incremented today) |
 | `community_posts` | `post_id` (PK), `author_name`, `category`, `title`, `body`, `image_urls` (JSONB), `reply_count` | Public community board |
 | `community_replies` | `reply_id` (PK), `post_id` (FK cascade), `author_name`, `body` | Replies; bumps parent `reply_count` |

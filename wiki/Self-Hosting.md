@@ -71,7 +71,7 @@ Notes for servers:
 - The token must be at least 16 characters — the API refuses to start otherwise. Use a long random value; sign-in attempts are rate-limited (10/min per IP), but the token itself is what keeps people out.
 - Anyone with the token gets full access to the one owner workspace. There are no per-user accounts on a self-hosted instance.
 - Sessions last 7 days. Changing `SELFHOST_ADMIN_TOKEN` stops new sign-ins with the old token. To also sign out existing sessions, rotate `JWT_SECRET` and restart the API.
-- Put the API behind a reverse proxy (nginx) that sets `X-Forwarded-For`, so rate limiting sees real client IPs.
+- Put the API behind a reverse proxy (nginx) that sets `X-Forwarded-For`, so rate limiting sees real client IPs. The API only trusts that header from addresses in `TRUSTED_PROXIES` (default `127.0.0.1,::1,172.16.0.0/12`, which covers nginx on the host reaching the container through the Docker bridge). If another proxy or load balancer sits in front of nginx, add its address, otherwise all users share one rate-limit bucket.
 
 > If you previously signed in to a production self-host with email OTP, that data belongs to your OTP account's tenant, not the owner tenant. Open an issue if you need help moving it.
 
@@ -104,6 +104,21 @@ Integration tests (stack must be running):
 ZIZKADB_RUN_INTEGRATION=1 .venv/bin/pytest -m integration core/tests/test_integration_selfhost.py -v
 ```
 
+## Deploy on Redu Cloud
+
+The single-container image deploys to [Redu Cloud](https://redu.cloud) from this repository, unchanged. Add the redu MCP to your coding agent and ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The recipe it follows is [`redu.md`](https://github.com/Zizka-ai/ZizkaDB/blob/main/redu.md):
+
+- one VM, building `infra/allinone/Dockerfile`
+- port 3001 public, serving the dashboard with the API under `/v1`
+- `/data` kept between deploys
+- `ZIZKADB_PUBLIC_URL` set to the deployment URL, and `TRUSTED_PROXIES` covering the platform proxy
+
+After it is live:
+
+1. Read the admin token over SSH: `sudo podman exec redu-app sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`.
+2. Sign in with the token and create the API key in Settings.
+3. Point your agent at the deployment with `ZIZKADB_HOST` and `ZIZKADB_API_KEY`.
+
 ## Production self-host
 
 Self-host deploy uses `infra/deploy-selfhost.sh` and Docker Compose.
@@ -135,13 +150,20 @@ Local laptop reset only:
 bash scripts/reset-local-db.sh
 ```
 
-Configure in `infra/.env`:
+Configure in `infra/.env`. Start with `bash scripts/init-secrets.sh`: it replaces the defaults from `.env.example` with random `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `QDRANT_API_KEY` and JWT secrets, and prints only the names it changed. `scripts/setup-local.sh` runs it when it creates `infra/.env`. It never changes the Postgres password of an existing database volume.
 
 - `DATABASE_URL`
 - `REDIS_URL`
 - `QDRANT_URL`
 - `JWT_SECRET` / `JWT_REFRESH_SECRET`
 - `POSTGRES_PASSWORD` — set a random value **before the first start** of a new install. Postgres keeps the password it was created with, so on an existing install leave it as is (or change it inside Postgres with `ALTER USER` first).
+  To move an existing install off the default (back up first):
+  ```bash
+  NEW=$(openssl rand -hex 24)
+  docker exec zizkadb_postgres psql -U zizkadb -d zizkadb -c "ALTER USER zizkadb PASSWORD '$NEW'"
+  sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$NEW/" infra/.env
+  docker compose -f infra/docker-compose.yml up -d --no-deps --force-recreate api embed-worker
+  ```
 - `REDIS_PASSWORD` / `QDRANT_API_KEY` — optional, recommended (`openssl rand -hex 24`). Empty keeps the old no-password behaviour.
 - `TRUSTED_PROXIES` — only if a proxy on **another machine** (load balancer, Cloudflare) sits in front of the API: its IPs/CIDRs, comma-separated, so rate limits see the real client IP. nginx on the same host or the Docker network needs nothing.
 - Postgres, Redis and Qdrant ports listen on `127.0.0.1` only. From another machine use an SSH tunnel: `ssh -L 5432:127.0.0.1:5432 you@server`.

@@ -1,6 +1,6 @@
 # Python SDK
 
-**Package:** `zizkadb-sdk` on PyPI (**0.3.0**)  
+**Package:** `zizkadb-sdk` on PyPI (**0.4.1**)  
 **Import:** `from zizkadb import ZizkaDB`
 
 ```bash
@@ -92,3 +92,5 @@ One call → one session in Activity. Guide: [docs/integrations/livekit.md](../d
 ```bash
 export ZIZKADB_TELEMETRY=false
 ```
+
+What the ping contains, and every other call ZizkaDB makes on its own: [docs/telemetry.md](https://github.com/Zizka-ai/ZizkaDB/blob/main/docs/telemetry.md).
