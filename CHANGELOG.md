@@ -9,10 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Single image: review fixes; README for every reader
 
 - A production container started with the old `DEV_API_KEY=zizkadb_dev_local` now ignores it with a warning instead of refusing to start in a loop.
-- Production links and the banner use the dashboard port (3001), which serves the API too, instead of port 8000. Cross-origin browser calls are limited to that address in production only; local mode (`ENV=development`) keeps the API's default.
-- `/api-explorer` reaches the API through port 3001, and a custom `FRONT_PORT` keeps the health check passing.
-- TypeScript SDK: the constructor tolerates a `process` shim without `env`.
-- `scripts/publish-packages.sh` stops if the Python SDK version is already on PyPI (only MCP is skipped when unchanged).
+- Production links and the banner use the dashboard port (3001), which serves the API too, instead of port 8000. `ZIZKADB_PUBLIC_URL` also applies in local mode.
+- Browsers may call the API only from the dashboard's own address (set `CORS_ALLOWED_ORIGINS` to allow others), in both modes; in local mode this keeps other websites away from the well-known dev key.
+- `/api-explorer` reaches the API through port 3001. A custom `FRONT_PORT` keeps the health check and banner correct, and one that clashes with an internal port stops with a clear message.
+- TypeScript SDK: every environment read is guarded, so a `process` shim without `env` no longer breaks construction or `log()`.
+- `scripts/publish-packages.sh` stops if the Python SDK version is already on PyPI, unless `PUBLISH_RESUME=1` (to finish a release whose npm step failed). An unchanged MCP version is always skipped. It runs on macOS bash 3.2.
 - README: a plain-language summary, a "Start here" guide for each kind of reader, a server command for the single image, and FAQ answers about the admin token and where data goes.
 
 ## [0.4.0] - 2026-10-24
