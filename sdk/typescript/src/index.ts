@@ -99,7 +99,7 @@ function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
     install_id:  _getInstallId(),
     sdk:         'typescript',
     sdk_version: SDK_VERSION,
-    node:        typeof process !== 'undefined' ? process.version : 'unknown',
+    node:        (typeof process !== 'undefined' && process.version) || 'unknown',
     os:          typeof process !== 'undefined' ? process.platform : 'unknown',
     mode,
   }

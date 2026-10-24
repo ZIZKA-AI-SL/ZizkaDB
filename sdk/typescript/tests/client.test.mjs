@@ -273,6 +273,7 @@ it('constructs without a process global (browsers, edge runtimes)', () => {
 
 it('constructs and logs with a process shim that has no env (bundler polyfills)', async () => {
   const realProcess = globalThis.process
+  const realFetch = globalThis.fetch
   globalThis.fetch = async () => jsonResponse({ event_id: 'e', timestamp: 't', sequence_no: 1, checksum: 'c' })
   try {
     globalThis.process = {}
@@ -281,6 +282,7 @@ it('constructs and logs with a process shim that has no env (bundler polyfills)'
     await expect(db.log({ agent: 'a', event: 'user_message', data: {} })).resolves.toBeTruthy()
   } finally {
     globalThis.process = realProcess
+    globalThis.fetch = realFetch
   }
 })
 
