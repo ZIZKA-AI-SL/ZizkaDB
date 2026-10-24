@@ -261,6 +261,9 @@ it('a blank host means unset, not a relative URL', () =>
 
 it('constructs without a process global (browsers, edge runtimes)', () => {
   const realProcess = globalThis.process
+  const realFetch = globalThis.fetch
+  // Without process the telemetry opt-out cannot be read: never hit the network.
+  globalThis.fetch = async () => jsonResponse({})
   try {
     globalThis.process = undefined
     // Key only (host lookup) and local host only (key and dev-key lookup).
@@ -268,6 +271,7 @@ it('constructs without a process global (browsers, edge runtimes)', () => {
     expect(() => new ZizkaDB({ host: 'http://localhost:8000' })).not.toThrow()
   } finally {
     globalThis.process = realProcess
+    globalThis.fetch = realFetch
   }
 })
 

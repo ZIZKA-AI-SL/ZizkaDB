@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Single image: front proxy hardening
+
+- The front proxy handles any redirect value from the upstreams safely; redirects it cannot parse are passed through untouched.
+- Local mode (`ENV=development`) answers only on `localhost`, `127.0.0.1`, `[::1]` and the host of `ZIZKADB_PUBLIC_URL`.
+- `TRUSTED_PROXIES` entries the proxy cannot parse are skipped with a warning, as the API does.
+- The proxy keeps idle connections for 65 s, longer than common platform proxies pool them, so reused connections are not cut.
+- `/api-explorer/...` subpaths are left to the dashboard's redirect again.
+- Image publishing: a manual run with a version publishes only that version and no longer moves `latest`.
+- Docs: the dashboard docs page no longer suggests exporting `ZIZKADB_HOST` together with a Cloud key; the README covers `TRUSTED_PROXIES` behind a reverse proxy; `docs/telemetry.md` lists the `/swagger` page's CDN requests.
+
 ### Single image: review fixes; README for every reader
 
 - A production container started with a well-known `DEV_API_KEY` (`zizkadb_dev_local`) now ignores it with a warning instead of refusing to start in a loop. An operator's own unique key is left alone.

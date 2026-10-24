@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Version tag to publish alongside latest (e.g. 0.4.0); empty = latest only"
+        description: "Version to publish (e.g. 0.4.1), built from the ref you run on. Leaves latest alone. Empty = latest only."
         required: false
         default: ""
 
@@ -106,12 +106,17 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          # A tag push publishes that version and moves latest. A manual run
+          # publishes only the version it is given (re-publishing an old version
+          # must not move latest), or only latest when given none.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${INPUT_TAG:-latest}"
+            VERSION="${INPUT_TAG#v}"
+            if [ -n "$VERSION" ]; then TAGS="$VERSION"; else TAGS="latest"; fi
+          else
+            TAGS="${GITHUB_REF_NAME#v} latest"
           fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Publishing tag: ${TAG}"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Publishing tags: ${TAGS}"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -128,15 +133,16 @@ jobs:
 
       - name: Create multi-platform tags
         env:
-          TAG: ${{ steps.meta.outputs.tag }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
           publish() {
-            local key="$1" image="$2" refs=()
+            local key="$1" image="$2" refs=() flags=()
             for f in digests/*/"$key"; do refs+=("${image}@$(cat "$f")"); done
             [ "${#refs[@]}" -eq 2 ] || { echo "expected 2 platform digests for ${image}, got ${#refs[@]}"; exit 1; }
-            docker buildx imagetools create -t "${image}:latest" -t "${image}:${TAG}" "${refs[@]}"
-            docker buildx imagetools inspect "${image}:${TAG}"
+            for t in $TAGS; do flags+=(-t "${image}:${t}"); done
+            docker buildx imagetools create "${flags[@]}" "${refs[@]}"
+            docker buildx imagetools inspect "${image}:${TAGS%% *}"
           }
           publish api "$API_IMAGE"
           publish dashboard "$DASHBOARD_IMAGE"
