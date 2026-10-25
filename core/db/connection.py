@@ -103,57 +103,11 @@ def uses_default_db_password() -> bool:
     return password in _WELL_KNOWN_DB_PASSWORDS
 
 
-async def init_db():
-    global _pg_pool, _redis, _qdrant
+# Any constant works; it only has to be the same in every worker.
+MIGRATION_LOCK_ID = 7_301_884_221
 
-    # ---------------- PostgreSQL ----------------
 
-    _pg_pool = await asyncpg.create_pool(
-        dsn=os.getenv("DATABASE_URL"),
-        min_size=2,
-        max_size=PG_POOL_MAX_SIZE,
-    )
-
-    logger.info("Postgres connected")
-    if uses_default_db_password():
-        # A literal message: nothing derived from DATABASE_URL is logged.
-        logger.warning(
-            "Postgres uses a well-known password. Keep its port private, and set a "
-            "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
-            "see wiki/Self-Hosting.md."
-        )
-    workers, assumed = uvicorn_worker_count()
-    pool_warn = warn_if_pool_near_pg_limit(
-        PG_POOL_MAX_SIZE, workers, assumed=assumed
-    )
-    if pool_warn:
-        logger.warning(pool_warn)
-
-    try:
-        user_count = await _pg_pool.fetchval(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema='public'
-            AND table_name='users'
-            """
-        )
-
-        if user_count:
-            n = await _pg_pool.fetchval("SELECT COUNT(*) FROM users")
-            logger.info("Postgres users table: %s rows", n)
-        else:
-            logger.warning(
-                "Users table missing."
-            )
-
-    except Exception as e:
-        logger.warning("Could not inspect users table: %s", e)
-
-    # -----------------------------------------------------------------
-    # Existing migrations (keep yours exactly as-is)
-    # -----------------------------------------------------------------
-
+async def _run_migrations():
     await _pg_pool.execute("""
         ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(50);
         ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(50);
@@ -399,9 +353,7 @@ async def init_db():
     """)
 
 
-    # ---------------- Redis ----------------
 
-    _redis = redis.from_url(redis_url())
 
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS demo_requests (
@@ -452,6 +404,76 @@ async def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS uq_email_suppressions_email
             ON email_suppressions (LOWER(email));
     """)
+
+    # Client-supplied idempotency key: a retried write returns the first event.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_events_idempotency
+            ON events (tenant_id, agent_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+    """)
+
+
+
+async def init_db():
+    global _pg_pool, _redis, _qdrant
+
+    # ---------------- PostgreSQL ----------------
+
+    _pg_pool = await asyncpg.create_pool(
+        dsn=os.getenv("DATABASE_URL"),
+        min_size=2,
+        max_size=PG_POOL_MAX_SIZE,
+    )
+
+    logger.info("Postgres connected")
+    if uses_default_db_password():
+        # A literal message: nothing derived from DATABASE_URL is logged.
+        logger.warning(
+            "Postgres uses a well-known password. Keep its port private, and set a "
+            "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
+            "see wiki/Self-Hosting.md."
+        )
+    workers, assumed = uvicorn_worker_count()
+    pool_warn = warn_if_pool_near_pg_limit(
+        PG_POOL_MAX_SIZE, workers, assumed=assumed
+    )
+    if pool_warn:
+        logger.warning(pool_warn)
+
+    try:
+        user_count = await _pg_pool.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema='public'
+            AND table_name='users'
+            """
+        )
+
+        if user_count:
+            n = await _pg_pool.fetchval("SELECT COUNT(*) FROM users")
+            logger.info("Postgres users table: %s rows", n)
+        else:
+            logger.warning(
+                "Users table missing."
+            )
+
+    except Exception as e:
+        logger.warning("Could not inspect users table: %s", e)
+
+    # -----------------------------------------------------------------
+    # Schema migrations: idempotent DDL, run on every start.
+    # -----------------------------------------------------------------
+    # Every uvicorn worker runs init_db at the same moment. The advisory lock
+    # lets one worker migrate while the others wait, instead of racing on the
+    # same DDL (which crashed a worker during start-up).
+    async with _pg_pool.acquire() as lock_conn:
+        await lock_conn.execute("SELECT pg_advisory_lock($1)", MIGRATION_LOCK_ID)
+        try:
+            await _run_migrations()
+        finally:
+            await lock_conn.execute("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID)
 
     _redis = redis.from_url(redis_url())
     logger.info("Redis connected")

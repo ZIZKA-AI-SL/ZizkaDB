@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Database safety: size limits, idempotent writes, migration lock, restore
+
+- **Event size limit.** One event's `data` + `metadata` may be up to `MAX_EVENT_BYTES` (default 256 KB). Larger events get a 413 with the limit in the message, before anything is written. Any request body over `MAX_REQUEST_BYTES` (default 10 MB) gets a 413 before it is read.
+- **Idempotent writes.** `POST /v1/events` accepts an optional `idempotency_key` (body field or `Idempotency-Key` header). A retry with the same key for the same agent returns the first event, with `"duplicate": true`. It is not stored twice and does not count twice; concurrent retries are safe too. Every response now has a `duplicate` field. Python `db.log(..., idempotency_key=)` and TypeScript `db.log({ idempotencyKey })` send it.
+- **Start-up migrations take a Postgres advisory lock**, so several uvicorn workers starting together no longer race on the same DDL. That race could crash a worker on start.
+- **New `infra/restore-postgres.sh`** restores a `backup-postgres.sh` file. It backs up the current database first, asks for confirmation (`--yes` skips it), stops and restarts the API, and checks health.
+
 ### Security hardening, without extra setup
 
 - **New installs get random secrets.** `scripts/setup-local.sh` runs the new `scripts/init-secrets.sh` when it creates `infra/.env`. The script replaces the defaults with a random Postgres password, Redis password, Qdrant API key and JWT secrets, and prints only the names it changed. It never changes the Postgres password of an existing database volume. Servers can run it by hand.

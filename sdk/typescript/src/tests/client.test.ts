@@ -122,6 +122,18 @@ describe('log()', () => {
     expect(body.session_id).toBeNull()
   })
 
+  it('sends idempotency_key only when given', async () => {
+    mockFetch(201, { event_id: 'evt-003', timestamp: '2026-06-01T00:00:00Z', sequence_no: 3, checksum: 'ghi' })
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.log({ agent: 'my-bot', event: 'e', data: {}, idempotencyKey: 'req-1' })
+    await db.log({ agent: 'my-bot', event: 'e', data: {} })
+
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit][]
+    expect(JSON.parse(calls[0][1].body as string).idempotency_key).toBe('req-1')
+    expect('idempotency_key' in JSON.parse(calls[1][1].body as string)).toBe(false)
+  })
+
   it('forwards parentId and sessionId', async () => {
     mockFetch(201, { event_id: 'evt-002', timestamp: '2026-06-01T00:00:00Z', sequence_no: 2, checksum: 'def' })
 

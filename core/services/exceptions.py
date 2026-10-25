@@ -57,6 +57,10 @@ def conflict(detail: Any = "Conflict", headers: Optional[Dict[str, str]] = None,
     """Return a 409 Conflict HTTPException."""
     return make_exception(status.HTTP_409_CONFLICT, detail, headers, **kwargs)
 
+def payload_too_large(detail: Any = "Payload Too Large", headers: Optional[Dict[str, str]] = None, **kwargs: Any) -> HTTPException:
+    """Return a 413 Content Too Large HTTPException."""
+    return make_exception(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail, headers, **kwargs)
+
 def rate_limit_exceeded(detail: Any = "Rate limit exceeded", headers: Optional[Dict[str, str]] = None, **kwargs: Any) -> HTTPException:
     """Return a 429 Too Many Requests HTTPException."""
     return make_exception(status.HTTP_429_TOO_MANY_REQUESTS, detail, headers, **kwargs)

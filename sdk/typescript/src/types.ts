@@ -11,6 +11,8 @@ export interface LogOptions {
   parentId?: string
   sessionId?: string
   metadata?: Record<string, unknown>
+  /** Send the same key when retrying a write: the server stores it once. */
+  idempotencyKey?: string
 }
 
 interface LineageOptions {

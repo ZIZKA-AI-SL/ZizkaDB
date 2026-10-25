@@ -30,7 +30,7 @@ asyncio.run(main())
 
 | Method | What it does | Requires OpenAI key? |
 |---|---|---|
-| `db.log(agent, event, data, parent_id?, session_id?)` | Log an event | No |
+| `db.log(agent, event, data, parent_id?, session_id?, idempotency_key?)` | Log an event (same key on retry = stored once) | No |
 | `db.why(event_id)` | Causal chain backward from an event | No |
 | `db.at(agent, timestamp)` | Time-travel — agent state at a point in time | No |
 | `db.query(agent, ...)` | Fetch events with filters | No |

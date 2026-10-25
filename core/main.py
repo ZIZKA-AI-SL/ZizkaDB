@@ -22,6 +22,7 @@ from api.account import router as account_router
 from api.demo_requests import router as demo_requests_router
 from api.community import router as community_router
 from api.marketing_subscriptions import router as marketing_subscriptions_router
+from middleware.body_limit import BodyLimitMiddleware
 from middleware.request_id import RequestIdMiddleware
 from services.runtime_env import env_name, is_dev_mode
 
@@ -202,6 +203,7 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(BodyLimitMiddleware)
 
 app.include_router(auth_router,      prefix="/v1/auth",      tags=["auth"])
 app.include_router(events_router,    prefix="/v1/events",    tags=["events"])

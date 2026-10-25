@@ -205,6 +205,7 @@ class ZizkaDB:
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         token_usage: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> LogResult:
         """
         Log an event.
@@ -216,6 +217,8 @@ class ZizkaDB:
             parent_id:  ID of the causing event (enables causal lineage)
             session_id: Group related events into a session
             metadata:   Optional extra metadata
+            idempotency_key: Send the same key when retrying a write; the
+                        server stores the event once and returns it again
 
         Returns:
             LogResult with event_id, timestamp, sequence_no, checksum
@@ -231,17 +234,17 @@ class ZizkaDB:
         payload_data = dict(data)
         if token_usage is not None:
             payload_data["token_usage"] = token_usage
-        response = await self._post(
-            "/v1/events",
-            {
-                "agent": agent,
-                "event": event,
-                "data": payload_data,
-                "parent_id": parent_id,
-                "session_id": session_id,
-                "metadata": metadata,
-            },
-        )
+        body = {
+            "agent": agent,
+            "event": event,
+            "data": payload_data,
+            "parent_id": parent_id,
+            "session_id": session_id,
+            "metadata": metadata,
+        }
+        if idempotency_key is not None:
+            body["idempotency_key"] = idempotency_key
+        response = await self._post("/v1/events", body)
         result = LogResult.from_dict(response)
         record_log_result(agent, result)
         _emit_log_hint(self._base_url, result.event_id)
