@@ -640,7 +640,7 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 | `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:129` |
 | `getImpactTree` | GET `/v1/events/{id}/impact` | `events.py:222` |
 | `timeTravel` | GET `/v1/events/at` | `events.py:373` |
-| `searchEvents` | POST `/v1/search` | `search.py:18` |
+| `searchEvents` | POST `/v1/search` (`mode` auto: hybrid with embeddings, keyword without; response has `mode`) | `search.py` |
 | `getMemoryDiff` | GET `/v1/memory/diff/{sessionId}` | `memory.py:190` |
 
 **Billing (`core/api/billing_checkout.py`, prefix `/v1/billing`):**

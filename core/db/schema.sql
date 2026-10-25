@@ -140,6 +140,10 @@ CREATE UNIQUE INDEX uq_events_idempotency
     ON events (tenant_id, agent_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+-- Keyword search (services/keyword_search.py FTS_DOCUMENT; keep identical).
+CREATE INDEX idx_events_fts
+    ON events USING gin ((to_tsvector('simple', event_type) || jsonb_to_tsvector('simple', data, '["string", "numeric"]')));
+
 -- Chain links of deleted events (GDPR forget, retention): the hash, never the content.
 CREATE TABLE event_tombstones (
     tenant_id   UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,

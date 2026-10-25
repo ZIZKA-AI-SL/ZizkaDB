@@ -103,6 +103,32 @@ def uses_default_db_password() -> bool:
     return password in _WELL_KNOWN_DB_PASSWORDS
 
 
+async def _ensure_fts_index() -> None:
+    """Full-text index for keyword search (services/keyword_search.py).
+
+    Built CONCURRENTLY so a large events table keeps accepting writes while it
+    builds. A build that was interrupted leaves an INVALID index, which
+    IF NOT EXISTS would skip forever, so drop and rebuild that one.
+    """
+    from services.keyword_search import FTS_DOCUMENT
+
+    valid = await _pg_pool.fetchval(
+        """
+        SELECT i.indisvalid FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'idx_events_fts'
+        """
+    )
+    if valid:
+        return
+    if valid is False:
+        await _pg_pool.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_events_fts")
+    logger.info("Building the keyword search index (idx_events_fts)")
+    await _pg_pool.execute(
+        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_events_fts ON events USING gin ({FTS_DOCUMENT})"
+    )
+
+
 # Any constant works; it only has to be the same in every worker.
 MIGRATION_LOCK_ID = 7_301_884_221
 
@@ -429,6 +455,8 @@ async def _run_migrations():
         CREATE INDEX IF NOT EXISTS idx_event_tombstones_agent_seq
             ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
     """)
+
+    await _ensure_fts_index()
 
 
 

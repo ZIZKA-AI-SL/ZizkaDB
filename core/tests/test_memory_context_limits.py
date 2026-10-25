@@ -97,18 +97,14 @@ async def test_valid_recent_limit_is_forwarded_to_the_query(monkeypatch):
     pool = AsyncMock()
     pool.fetch.return_value = []
     monkeypatch.setattr("api.memory.get_pool", lambda: pool)
-    # Embedding generation is stubbed to fail, so get_context stops with a
-    # 400 after the recent-events fetch — the fetch itself must have run
-    # with the requested limit as its last argument.
-    monkeypatch.setattr(
-        "api.memory.generate_embedding", AsyncMock(return_value=None)
-    )
-    from fastapi import HTTPException
+    # No vectors, no keyword hits: only the recent-events fetch runs, and it
+    # must carry the requested limit as its last argument.
+    monkeypatch.setattr("api.memory.vector_search", AsyncMock(return_value=None))
+    monkeypatch.setattr("api.memory.keyword_search", AsyncMock(return_value=[]))
 
     body = ContextRequest(agent="agent1", task="anything", recent_limit=7)
-    with pytest.raises(HTTPException):
-        await get_context(body, tenant=_TENANT)
-    assert pool.fetch.await_args.args[-1] == 7
+    await get_context(body, tenant=_TENANT)
+    assert pool.fetch.await_args_list[0].args[-1] == 7
 
 
 # ── Route level ───────────────────────────────────────────────────────────────

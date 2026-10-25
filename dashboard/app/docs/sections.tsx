@@ -225,7 +225,7 @@ const SDK_METHODS = [
   },
   {
     method: "search(query)",
-    desc: "Semantic search over agent history in plain English.",
+    desc: "Search agent history in plain English (keyword, or hybrid with embeddings).",
   },
   {
     method: "at(agent, timestamp)",
@@ -483,8 +483,8 @@ await db.log(agent="my-bot", event="started", data={})`}</Code>
       <Step n={2} title="Configure embeddings (managed)">
         <p style={S.p}>
           In Settings → <strong>Embeddings</strong>, pick your OpenAI model
-          (platform-hosted or your own key). Required for semantic search and{" "}
-          <code style={codeMonoDark}>context_for()</code>.
+          (platform-hosted or your own key) to add vector results to search and{" "}
+          <code style={codeMonoDark}>context_for()</code>; without embeddings both use keyword search.
           Logging and <code style={codeMonoDark}>why()</code>{" "}
           work without embeddings.
         </p>
@@ -1030,7 +1030,7 @@ curl -X DELETE https://db.zizka.ai/v1/memory/forget \\
               ["GET", "/v1/events", "Query events"],
               ["GET", "/v1/events/{id}/why", "Causal chain"],
               ["GET", "/v1/events/at", "State at timestamp"],
-              ["POST", "/v1/search", "Semantic search"],
+              ["POST", "/v1/search", "Search (keyword, semantic or hybrid)"],
               ["POST", "/v1/memory/context", "Prompt context"],
               ["GET", "/v1/memory/diff/{session_id}", "Session diff"],
               ["DELETE", "/v1/memory/forget", "GDPR erasure"],
