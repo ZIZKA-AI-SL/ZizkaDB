@@ -405,6 +405,59 @@ export class ZizkaDB {
   }
 
   /**
+   * Stream every event of an agent, oldest first (the server's NDJSON export).
+   * Pass the objects to `importEvents()` on another instance, or save them.
+   */
+  async *exportEvents(agent: string): AsyncGenerator<Record<string, unknown>> {
+    const url = `${this.baseUrl}/v1/events/export?${new URLSearchParams({ agent })}`
+    const res = await fetch(url, { method: 'GET', headers: this.headers })
+    if (!res.ok || !res.body) {
+      await this.handle(res)
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      let newline = buffer.indexOf('\n')
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim()
+        buffer = buffer.slice(newline + 1)
+        if (line) yield JSON.parse(line) as Record<string, unknown>
+        newline = buffer.indexOf('\n')
+      }
+      if (done) break
+    }
+    if (buffer.trim()) yield JSON.parse(buffer) as Record<string, unknown>
+  }
+
+  /**
+   * Import events from `exportEvents()` (oldest first), 1000 per request.
+   * Original timestamps are kept, parents remapped; re-running is safe.
+   */
+  async importEvents(
+    events: Record<string, unknown>[],
+    options: { agent?: string, chunkSize?: number } = {},
+  ): Promise<{ imported: number, duplicates: number, failed: number, parentsDropped: number, errors: unknown[] }> {
+    const size = options.chunkSize ?? 1000
+    const totals = { imported: 0, duplicates: 0, failed: 0, parentsDropped: 0, errors: [] as unknown[] }
+    for (let start = 0; start < events.length; start += size) {
+      const res = await this.post('/v1/events/import', {
+        events: events.slice(start, start + size),
+        ...(options.agent ? { agent: options.agent } : {}),
+      }) as { imported: number, duplicates: number, failed: number, parents_dropped: number, errors: unknown[] }
+      totals.imported += res.imported
+      totals.duplicates += res.duplicates
+      totals.failed += res.failed
+      totals.parentsDropped += res.parents_dropped
+      totals.errors.push(...res.errors)
+    }
+    return totals
+  }
+
+  /**
    * Write up to 500 events in one request, in order. One bad event does not
    * reject the others: check `results[i].ok`.
    */

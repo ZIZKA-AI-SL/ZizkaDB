@@ -258,6 +258,56 @@ async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> None:
         )
 
 
+class RetentionBody(BaseModel):
+    # Days to keep events; null = use EVENT_RETENTION_DAYS (or keep forever).
+    days: int | None = Field(default=None, ge=1, le=36500)
+
+
+@router.get("/{agent_id}/retention")
+async def get_agent_retention(
+    agent_id: str,
+    tenant: dict = Depends(require_dashboard_session),
+):
+    from services.retention import default_retention_days
+
+    agent_id = _validate_agent_id(agent_id)
+    row = await get_pool().fetchrow(
+        "SELECT retention_days FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+        tenant["tenant_id"], agent_id,
+    )
+    if not row:
+        raise not_found("Agent not found")
+    default = default_retention_days()
+    return {
+        "agent": agent_id,
+        "days": row["retention_days"],
+        "default_days": default,
+        "effective_days": row["retention_days"] or default,
+    }
+
+
+@router.put("/{agent_id}/retention")
+async def set_agent_retention(
+    agent_id: str,
+    body: RetentionBody,
+    tenant: dict = Depends(require_dashboard_session),
+):
+    """Keep this agent's events for ``days`` (older ones are deleted hourly,
+    leaving audit-chain tombstones). ``null`` falls back to the server default."""
+    agent_id = _validate_agent_id(agent_id)
+    updated = await get_pool().fetchval(
+        """
+        UPDATE agents SET retention_days = $3
+        WHERE tenant_id = $1 AND agent_id = $2
+        RETURNING 1
+        """,
+        tenant["tenant_id"], agent_id, body.days,
+    )
+    if not updated:
+        raise not_found("Agent not found")
+    return await get_agent_retention(agent_id, tenant=tenant)
+
+
 @router.delete("/{agent_id}")
 async def delete_agent(
     agent_id: str,

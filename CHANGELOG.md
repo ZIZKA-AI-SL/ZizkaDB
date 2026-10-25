@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Retention, export/import, redaction
+
+- **Retention.** `EVENT_RETENTION_DAYS` (unset by default, meaning keep forever), or a per-agent setting via `GET/PUT /v1/agents/{id}/retention`. Events past the limit are deleted every hour (`RETENTION_INTERVAL_SECONDS`) by one worker at a time. Their vectors are removed and each leaves an audit-chain tombstone with reason `retention`.
+- **Export / import.** `GET /v1/events/export?agent=` streams an agent's events as NDJSON, oldest first. `POST /v1/events/import` loads them, up to 1000 per request. Original timestamps are kept, parent links are remapped to the new ids (also across requests), and every event gets fresh checksums and chain links. Re-running an import returns duplicates instead of copies. SDKs: `export_events` / `import_events`, `exportEvents` / `importEvents`.
+- **Redaction before storage.** Values under secret-named keys (`password`, `api_key`, `authorization`, `access_token` and similar) are now stored as `[REDACTED]`; extend the list with `REDACT_KEYS`, or turn it off with `REDACT_KEYS=off`. Optional `REDACT_PATTERNS=email,phone,card,iban,ipv4` redacts matches inside strings (cards must pass the Luhn check). Write responses include `redacted` with a count when anything was replaced.
+- `parent_event_id` is now a soft link (the foreign key is dropped). This fixes a 500 when `forget` deleted an event that had children, and lets retention delete old parents without changing their children's checksums. The write path still requires the parent to exist in the same tenant.
+
 ### Batch writes, cursor paging, metrics
 
 - **New `POST /v1/events/batch`** writes up to 500 events in one request, in order. Each event is checked, chained and deduplicated like a single write. One bad event does not reject the others: every result is `ok` or carries its own `status` and `error`. `parent_index` links to an earlier event in the same batch. SDKs: Python `db.log_batch(events)`, TypeScript `db.logBatch(events)`.

@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from contextlib import asynccontextmanager
+import asyncio
+import contextlib
 import logging
 import os
 
@@ -130,8 +132,14 @@ async def lifespan(app: FastAPI):
             "Never use ENV=development on a reachable deployment."
         )
         await _ensure_dev_tenant(get_pool())
+    from services.retention import retention_loop
+
+    retention_task = asyncio.create_task(retention_loop(get_pool))
     logger.info("ZizkaDB started")
     yield
+    retention_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await retention_task
     await close_db()
     logger.info("ZizkaDB stopped")
 

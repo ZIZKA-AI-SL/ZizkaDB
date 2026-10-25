@@ -583,3 +583,26 @@ describe('iterEvents() and logBatch()', () => {
     expect(body.events[1].parent_index).toBe(0)
   })
 })
+
+describe('exportEvents() and importEvents()', () => {
+  it('splits streamed NDJSON across chunk boundaries', async () => {
+    const enc = new TextEncoder()
+    const chunks = ['{"event_id":"a"}\n{"event_', 'id":"b"}\n']
+    const body = new ReadableStream({
+      start(c) { for (const ch of chunks) c.enqueue(enc.encode(ch)); c.close() },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, body }))
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ids: unknown[] = []
+    for await (const line of db.exportEvents('bot')) ids.push(line.event_id)
+    expect(ids).toEqual(['a', 'b'])
+  })
+
+  it('imports in chunks and sums the totals', async () => {
+    mockFetch(200, { imported: 1, duplicates: 0, failed: 0, parents_dropped: 0, errors: [] })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const totals = await db.importEvents([{ event_id: 'a' }, { event_id: 'b' }], { chunkSize: 1, agent: 'n' })
+    expect(totals.imported).toBe(2)
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+  })
+})

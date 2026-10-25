@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from services.exceptions import not_found, bad_request
 from typing import Any
@@ -119,6 +120,146 @@ async def log_events_batch(
         "failed": sum(not r["ok"] for r in results),
         "results": results,
     }
+
+
+# ─────────────────────────────────────────
+# EXPORT / IMPORT — portable NDJSON
+# ─────────────────────────────────────────
+
+EXPORT_PAGE = 1000
+IMPORT_MAX_EVENTS = 1000
+
+
+def _export_line(r) -> str:
+    def _json(v):
+        return json.loads(v) if isinstance(v, str) else v
+
+    return json.dumps({
+        "event_id": str(r["event_id"]),
+        "agent": r["agent_id"],
+        "event": r["event_type"],
+        "data": _json(r["data"]),
+        "metadata": _json(r["metadata"]),
+        "parent_id": str(r["parent_event_id"]) if r["parent_event_id"] else None,
+        "session_id": r["session_id"],
+        "timestamp": r["timestamp"].isoformat(),
+        "sequence_no": r["sequence_no"],
+        "checksum": r["checksum"],
+        "chain_hash": r["chain_hash"],
+    }) + "\n"
+
+
+@router.get("/export")
+async def export_events(
+    agent: str,
+    after_seq: int = Query(default=0, ge=0),
+    tenant: dict = Depends(get_tenant),
+):
+    """Every event of an agent as NDJSON (one JSON object per line), oldest
+    first, streamed. Feed the lines to POST /v1/events/import to move an
+    agent between installs (self-hosted ↔ Cloud) or keep an offline copy."""
+    await assert_agent_allowed(tenant, agent)
+    pool = get_pool()
+    tenant_id = tenant["tenant_id"]
+
+    async def lines():
+        cursor = after_seq
+        while True:
+            rows = await pool.fetch(
+                """
+                SELECT event_id, agent_id, event_type, data, metadata, parent_event_id,
+                       session_id, timestamp, sequence_no, checksum, chain_hash
+                FROM events
+                WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no > $3
+                ORDER BY sequence_no
+                LIMIT $4
+                """,
+                tenant_id, agent, cursor, EXPORT_PAGE,
+            )
+            for r in rows:
+                yield _export_line(r)
+            if len(rows) < EXPORT_PAGE:
+                return
+            cursor = rows[-1]["sequence_no"]
+
+    return StreamingResponse(
+        lines(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{agent}.ndjson"'},
+    )
+
+
+class ImportEvent(BaseModel):
+    event_id: str
+    agent: str = Field(..., min_length=1, max_length=255)
+    event: str = Field(..., min_length=1, max_length=255)
+    data: dict[str, Any]
+    metadata: dict[str, Any] | None = None
+    parent_id: str | None = None
+    session_id: str | None = None
+    timestamp: datetime | None = None
+
+
+class ImportRequest(BaseModel):
+    events: list[ImportEvent] = Field(..., min_length=1, max_length=IMPORT_MAX_EVENTS)
+    # Store everything under this agent instead of each line's own.
+    agent: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+@router.post("/import")
+async def import_events(
+    body: ImportRequest,
+    tenant: dict = Depends(get_tenant),
+):
+    """Import lines from GET /v1/events/export (send them oldest first, up to
+    1000 per request). Original timestamps are kept; events get new ids,
+    checksums and chain links here. Parent links are remapped to the new ids.
+    Re-running an import is safe: each line is keyed on its original event_id,
+    so lines already imported come back as duplicates."""
+    tenant_id = tenant["tenant_id"]
+    agents = dict.fromkeys(body.agent or e.agent for e in body.events)
+    for agent in agents:
+        await assert_agent_allowed(tenant, agent)
+
+    pool = get_pool()
+    new_ids: dict[str, str] = {}
+    summary = {"imported": 0, "duplicates": 0, "failed": 0, "parents_dropped": 0}
+    errors: list[dict] = []
+
+    for index, item in enumerate(body.events):
+        agent = body.agent or item.agent
+        parent_id = None
+        if item.parent_id:
+            parent_id = new_ids.get(item.parent_id) or await pool.fetchval(
+                """
+                SELECT event_id::text FROM events
+                WHERE tenant_id = $1 AND agent_id = $2 AND idempotency_key = $3
+                """,
+                tenant_id, agent, f"import:{item.parent_id}",
+            )
+            if parent_id is None:
+                summary["parents_dropped"] += 1
+        try:
+            result = await write_event(
+                tenant_id=tenant_id,
+                agent=agent,
+                event=item.event,
+                data=item.data,
+                parent_id=parent_id,
+                session_id=item.session_id,
+                metadata=item.metadata,
+                idempotency_key=f"import:{item.event_id}",
+                occurred_at=item.timestamp,
+            )
+        except HTTPException as exc:
+            summary["failed"] += 1
+            errors.append({"index": index, "event_id": item.event_id,
+                           "status": exc.status_code, "error": exc.detail})
+            continue
+        new_ids[item.event_id] = result["event_id"]
+        summary["duplicates" if result["duplicate"] else "imported"] += 1
+
+    return {**summary, "errors": errors[:100]}
 
 
 # ─────────────────────────────────────────

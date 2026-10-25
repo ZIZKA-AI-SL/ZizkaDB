@@ -458,6 +458,15 @@ async def _run_migrations():
 
     await _ensure_fts_index()
 
+    # parent_event_id is a soft reference: the write path checks the parent
+    # exists in the same tenant, and retention / forget may later delete an
+    # old parent. A foreign key would block that, and nulling the child's
+    # link would change its checksum.
+    await _pg_pool.execute("""
+        ALTER TABLE events DROP CONSTRAINT IF EXISTS events_parent_event_id_fkey;
+        ALTER TABLE agents ADD COLUMN IF NOT EXISTS retention_days INTEGER;
+    """)
+
 
 
 async def init_db():

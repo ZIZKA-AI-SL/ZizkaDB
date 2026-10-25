@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from services.audit_chain import compute_chain_hash, previous_link
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request, payload_too_large
+from services.redaction import redact
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,10 @@ async def write_event(
     session_id: str | None = None,
     metadata: dict | None = None,
     idempotency_key: str | None = None,
+    occurred_at: datetime | None = None,
 ) -> dict:
+    """Write one event. ``occurred_at`` is for imports only: it keeps the
+    original timestamp instead of the database clock."""
     validate_event_payload(
         agent=agent,
         event=event,
@@ -120,6 +125,12 @@ async def write_event(
         metadata=metadata,
         idempotency_key=idempotency_key,
     )
+
+    # Before the size check and the checksum: the original never gets stored.
+    data, redacted = redact(data)
+    if metadata:
+        metadata, redacted_meta = redact(metadata)
+        redacted += redacted_meta
 
     data_json = json.dumps(data)
     metadata_json = json.dumps(metadata) if metadata else None
@@ -153,6 +164,7 @@ async def write_event(
             session_id=session_id,
             initial_status=initial_status,
             idempotency_key=idempotency_key,
+            occurred_at=occurred_at,
         )
     except asyncpg.UniqueViolationError:
         # A concurrent retry with the same key won the race; answer with its event.
@@ -161,7 +173,7 @@ async def write_event(
             return existing
         raise
 
-    return await _after_insert(
+    result = await _after_insert(
         pool,
         row=row,
         checksum=checksum,
@@ -172,6 +184,9 @@ async def write_event(
         embed_on=embed_on,
         initial_status=initial_status,
     )
+    if redacted:
+        result["redacted"] = redacted
+    return result
 
 
 async def _find_idempotent(pool, tenant_id: str, agent: str, key: str | None) -> dict | None:
@@ -213,6 +228,7 @@ async def _insert_event(
     session_id: str | None,
     initial_status: str,
     idempotency_key: str | None,
+    occurred_at: datetime | None = None,
 ):
 
     # The agent counter and the event row commit together: if the INSERT
@@ -264,7 +280,7 @@ async def _insert_event(
             canonical = await conn.fetchrow(
                 """
                 SELECT nextval(pg_get_serial_sequence('events', 'sequence_no')) AS sequence_no,
-                       now() AS timestamp,
+                       COALESCE($4::timestamptz, now()) AS timestamp,
                        $1::jsonb AS data,
                        $2::jsonb AS metadata,
                        $3::uuid AS parent_event_id
@@ -272,6 +288,7 @@ async def _insert_event(
                 data_json,
                 metadata_json,
                 parent_id,
+                occurred_at,
             )
             checksum = compute_row_checksum_v2({
                 "tenant_id": tenant_id,
