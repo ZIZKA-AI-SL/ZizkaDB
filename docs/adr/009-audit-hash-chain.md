@@ -47,13 +47,19 @@ audit_chain_heads (
 - **Appending.** Inside the existing write transaction, the writer locks its tenant's head row (`INSERT … ON CONFLICT DO NOTHING`, then `SELECT … FOR UPDATE`). It takes `head_index + 1`, inserts the event with its `chain_hash`, and updates the head in the same transaction.
 - **Why a contiguous index.** Contiguity makes a deleted row visible as a gap even before any hash is checked. Ordering by the global `sequence_no` would need `nextval` to run under the lock; the chain index needs nothing else.
 - **Why a head row.** A row lock replaces a hashed advisory key, so there are no key collisions with the existing advisory locks. It also stores the head, which the verifier compares against the last entry to catch a deleted tail.
-- **Lock order rule.** The head lock is the **last application lock a transaction takes**: after the `agents` row lock and any advisory lock. No network call (Qdrant, embeddings) runs while it is held. A write follows this already. Only the foreign-key share locks that its `INSERT` takes on `tenants` come later; see the account-delete note below.
+- **Lock order rule.** The head lock is the **last application lock a transaction takes**: after the `agents` row lock and any advisory lock. No network call (Qdrant, embeddings) runs while it is held. A write already takes its locks in that order. Its `INSERT` still takes foreign-key share locks after the head:
+  - on `tenants` (see the account-delete note below);
+  - on the parent event, while `parent_event_id` still has a foreign key.
+- **The parent foreign key must go first (#223).** While it exists, a write of a child holds the head and waits for a share lock on the parent row. A forget or agent delete of that parent holds the row and waits for the head to write its receipt. That is a deadlock (see the prototype results); with #223's dropped key it doesn't happen.
 - **Agent delete** must start with `SELECT … FROM agents … FOR UPDATE` and only then delete events and take the head. Two things follow:
   - Locked in the other order, it deadlocks against a write (see the prototype results).
-  - Today's delete (`core/api/agents.py`) deletes events first and touches the `agents` row last. A write that commits in between leaves an event that blocks the final `DELETE FROM agents` with a foreign-key error, a race that already exists on `main` (#305). Locking the agent first closes it.
+  - Today's delete (`core/api/agents.py`) deletes events first and touches the `agents` row last. A write that commits in between leaves an event that blocks the final `DELETE FROM agents` with a foreign-key error, a race that already exists on `main` (#305). Locking the agent first removes that error.
+  - A write that was waiting on the row then runs after the delete and creates the agent again, as any later write would. It skipped the plan's agent-slot check because the agent existed when it looked, so #305's fix should repeat that check when its upsert inserts rather than updates.
   - Its `UPDATE events SET parent_event_id = NULL` on rows that are about to be deleted is dropped.
 - **Account delete** (`DELETE FROM tenants`) already deadlocks with a concurrent write on `main`. The write holds the `agents` row and waits for a share lock on `tenants`; the delete holds `tenants` and cascades into `agents`. Postgres aborts one side (#306).
-- **New tables take no foreign key to `tenants`.** The chain must not add new paths into that deadlock, and a tombstone or receipt `INSERT` with such a key would take a share lock on `tenants` while forget holds event row locks. So the new tables carry `tenant_id` without a foreign key, and `delete_managed_account` deletes their rows explicitly before `DELETE FROM tenants`, in the same transaction. The write path then takes the same locks as today, plus the head row.
+- **New tables take no foreign key to `tenants`.** The chain must not add new paths into that deadlock, and a tombstone or receipt `INSERT` with such a key would take a share lock on `tenants` while forget holds event row locks. So the new tables carry `tenant_id` without a foreign key, and `delete_managed_account` deletes their rows explicitly **after** `DELETE FROM tenants`, in the same transaction. The write path then takes the same locks as today, plus the head row. Two reasons for that order:
+  - Deleting `audit_chain_heads` first would take the head lock before the `agents` rows, which breaks the lock order rule.
+  - By the time the cascade from `tenants` has finished, it has waited out any in-flight write or erasure, so their committed chain rows are visible and get deleted too.
 
 ### 2. The link hashes the v2 checksum, recomputed
 
@@ -65,15 +71,17 @@ chain_hash = H( "zizkadb-chain-v1" \n tenant_id \n chain_index \n prev_hash \n e
   - `entry_kind` is `event`;
   - `entry_id` is the `event_id`, generated in the canonical `SELECT` with `gen_random_uuid()` so it is known before the insert;
   - `entry_digest` is the row's v2 checksum.
-- **The digest is recomputed, never read back.** The verifier recomputes `entry_digest` from the row's columns, not from the stored `checksum`. An edit therefore breaks the chain even if the attacker also rewrites the stored checksum.
+- **For live events, the digest is recomputed, never read back.** The verifier recomputes `entry_digest` from the row's columns, not from the stored `checksum`. An edit therefore breaks the chain even if the attacker also rewrites the stored checksum.
 - **Genesis.** For each tenant's first entry, `prev_hash` is `genesis:<legacy_until_seq>` (see 5). This binds the chain's start into the first hash, so the cutoff can't be moved without breaking it.
 - **No second canonical form.** The chain reuses checksum v2's canonicalisation, so the two can never disagree about what an event's content is. Changing v2's preimage now also changes the chain, which is intended: v2 already promises stability.
-- **Excluded columns.** `embedding` and `index_status` stay outside both hashes, so the embed worker's updates never affect verification.
+- **Excluded columns.** The embedding pipeline's columns (`embedding`, `index_status`, `index_attempts`, `index_retry_at`) stay outside both hashes, so the embed worker's updates never affect verification.
 
 ### 3. Optional key held outside the database
 
 - **`H` per entry.** `H` is SHA-256, or HMAC-SHA256 when `AUDIT_CHAIN_KEY` is set.
-- **Recording which key was used.** Each entry stores `chain_alg`: `sha256` or `hmac-sha256:<key_id>`, where `key_id` is the first 8 hex characters of SHA-256(key). The verifier uses it only to pick which key to check with.
+- **Recording which key was used.** Each entry stores `chain_alg`: `sha256` or `hmac-sha256:<key_id>`. The verifier uses it only to pick which key to check with.
+  - `key_id` is the first 8 hex characters of HMAC-SHA256(key, `"zizkadb-chain-key-id"`), not a plain hash of the key, so database readers can't test guesses against it offline.
+  - The API refuses to start with a key shorter than 32 random bytes (64 hex characters).
 - **No downgrade.** When the verifier has a key configured, **every** chained entry must be keyed; an unkeyed one is reported as `unkeyed_entry`. Otherwise a database writer could recompute a tail with plain SHA-256, label it `sha256` and pass. (This is the same downgrade that `checksum_v2_cutoff` blocks for v1 checksums.)
 - **Choosing a key.** A deployment therefore chooses keyed or unkeyed before its chain starts. Turning a key on for a chain that already has unkeyed entries needs a switch point recorded outside the database, and is deferred.
 - **Rotation.** Keyed to keyed rotation is supported. `AUDIT_CHAIN_KEYS_OLD` lists retired keys, oldest first, used for verification only.
@@ -89,15 +97,18 @@ chain_hash = H( "zizkadb-chain-v1" \n tenant_id \n chain_index \n prev_hash \n e
 Forget, agent delete and any future retention purge must, in the same transaction:
 
 - **Tombstones from what was actually deleted.** Generate a `receipt_id` (UUID) up front, then delete with `DELETE … RETURNING` and insert the tombstones from that result: `tenant_id`, `chain_index`, `event_id`, `entry_digest`, `chain_alg`, `chain_hash`, `receipt_id`.
-  - `entry_digest` is the deleted row's v2 checksum, computed with `compute_row_checksum_v2` over the columns the `DELETE … RETURNING` hands back, not copied from its stored `checksum`. With it, the verifier can recompute the tombstone's link exactly like a live event's.
-  - Without it, every erasure would reset the chain: an edit just before a tombstone would only need to be recomputed up to that tombstone. `event_id` is covered by that hash too.
+  - `entry_digest` is the deleted row's stored v2 `checksum`, copied in SQL (`INSERT … SELECT … FROM (DELETE … RETURNING …)`), so no payload is sent to the API. With it, the verifier can recompute the tombstone's link exactly like a live event's.
+  - A tampered stored checksum is still caught, because the tombstone's link would no longer match the `chain_hash` written at insert. Content edited while its checksum was left alone is not caught after the erasure, but that content is gone anyway.
+  - Without a digest, every erasure would reset the chain: an edit just before a tombstone would only need to be recomputed up to that tombstone. `event_id` is covered by that hash too.
+  - Recomputing the digest from the payload in Python would instead pull every erased row, up to a whole agent's history, into one result set while the agent's writers are blocked.
   - No content is kept. The digest allows the same guess confirmation as `chain_hash`; see below.
   - Taking tombstones from the `DELETE` itself, not from an earlier `SELECT`, means two overlapping erasures can't both tombstone the same row. Today, forget builds its id list from an unlocked `SELECT`.
   - Linking by `receipt_id` instead of the receipt's chain index lets the bulk move happen before the head lock, so a large agent delete doesn't block writers.
 - **Receipt.** Then take the head lock and append one **erasure receipt** to the chain, stored in `audit_chain_receipts` (`receipt_id`, `chain_index`, `reason`, `erased_count`, `erased_digest`, `chain_hash`, `chain_alg`):
   - `entry_kind` is `erasure`;
   - `entry_id` is `receipt_id`;
-  - `entry_digest`, stored as `erased_digest`, is SHA-256 over `reason`, `erased_count`, and the sorted list of `(chain_index, chain_hash)` taken from the tombstones it inserted.
+  - `entry_digest`, stored as `erased_digest`, is SHA-256 of the UTF-8 text `"<chain_index>:<chain_hash>\n"` for each tombstone in ascending `chain_index` order, followed by `"<reason>\n<erased_count>"`.
+  - The list comes first so the verifier can hash tombstones as it walks past them, keeping one running hash per open receipt instead of buffering the list. Postgres computes the same bytes with `sha256(convert_to(string_agg(chain_index || ':' || chain_hash || E'\n', '' ORDER BY chain_index) || reason || E'\n' || count, 'UTF8'))`.
   - `erased_count` counts **chained rows only**, the tombstones. Unchained rows deleted by the same erasure are not counted here; the API response still reports the total, as today.
 - **No content in the reason.** `reason` is a fixed value: `forget`, `agent_delete` or `retention`. It never contains the forget filter or its value, which are usually personal data and would otherwise be locked into the chain for good.
 - **Unchained rows.** An erasure that deletes only unchained rows (see 5) writes no tombstone and no receipt: there is nothing in the chain to account for.
@@ -108,21 +119,27 @@ The verifier accepts a tombstone only if a later receipt in the chain covers it,
 
 Further rules:
 - **Agent delete** writes one receipt with a digest, not one row per event, so even an agent with a million events costs one chain entry.
-- **Account delete** removes the tenant, its head and its whole chain: `delete_managed_account` deletes the chain tables' rows before the tenant (Decision 1). Nothing is left to verify, and nothing is claimed.
-- **Erased parents** rely on #223: a child keeps the erased parent's id, so its checksum and link stay valid. #223 must merge before the write path ships.
+- **Account delete** removes the tenant, its head and its whole chain: `delete_managed_account` deletes the chain tables' rows right after the tenant, in the same transaction (Decision 1). Nothing is left to verify, and nothing is claimed.
+- **Erased parents** rely on #223: a child keeps the erased parent's id, so its checksum and link stay valid. #223 must merge before the write path ships, for this reason and for the lock order (Decision 1).
 - **Guess confirmation.** A tombstone's `entry_digest` (an unkeyed checksum) lets someone with database access who already knows an erased event's exact content confirm that it existed. Its `chain_hash` does the same when there is no key. The content itself is gone. This is noted in the erasure docs.
 
 ### 5. Events from before the chain stay unchained
 
 - **No backfill.** Rows written before the upgrade keep `chain_index = NULL` and are reported as `unchained` by count. Each tenant's chain starts at its first event after the upgrade.
-- **The chain's start is recorded.** `init_db()` writes `audit_chain_cutoff.legacy_until_seq` once. A row with `chain_index = NULL` above that `sequence_no` is reported as `unchained_after_start`, not counted. Otherwise a row inserted directly into `events` after the upgrade would pass as old.
-  - The value is the sequence's `last_value`, not `MAX(sequence_no)`, so writes in flight at upgrade time stay below it. `checksum_v2_cutoff` uses `MAX` and has that gap (#307).
-  - Old-code writers must be stopped before the new version starts. The supported deployments restart every worker together.
+- **The chain's start is recorded.** `audit_chain_cutoff.legacy_until_seq` is written once, by the **first chained write** (`INSERT … ON CONFLICT DO NOTHING` inside that write's transaction), not by `init_db()`.
+  - The statement must run **before** that write takes its own `sequence_no`. Concurrent first writes then serialise on the singleton row, and every chained row lands above the cutoff. Run after `nextval`, every concurrent first write lands at or below it (see the prototype results).
+  - Once a process has seen the row, it can skip the statement. The embed worker also runs `init_db()`, and in `infra/docker-compose.yml` it can start on the new image while the old API is still writing. A row with `chain_index = NULL` above that `sequence_no` is reported as `unchained_after_start`, not counted. Otherwise a row inserted directly into `events` after the upgrade would pass as old.
+  - The value comes from the sequence, not `MAX(sequence_no)`, so writes in flight at upgrade time stay below it. `checksum_v2_cutoff` uses `MAX` and has that gap (#307).
+  - Exactly: `CASE WHEN is_called THEN last_value ELSE last_value - 1 END`. On a sequence that has never been used, `last_value` is already its start value (1). Taking it as is would put a fresh install's first event at the cutoff instead of above it, and every new install would fail.
+  - This relies on the sequence's `CACHE 1` (the `BIGSERIAL` default). With a larger cache, another session could still hand out lower cached values after the cutoff.
+  - Old-code API processes must be stopped before new ones start writing. Recording the cutoff at the first chained write means only the API's own restart matters, not the embed worker's.
   - The cutoff is bound into each tenant's genesis hash (see 2), and the verifier also requires every chained row's `sequence_no` to be above it. Editing the cutoff row therefore breaks the chain.
-- **Seed scripts.** `scripts/seed-*.py` insert backdated rows into `events` directly, and `seed-demo-data.py --reset` deletes them directly. `write_event` stamps `now()`, so routing the seeds through it would break their purpose. They stay development tools, and the docs say that a seeded tenant fails the chain check (`unchained_after_start`, then `gap` after a reset).
+- **Seed scripts.**
+  - `seed-demo-data.py` (`COPY`) and `seed-token-usage-events.py` (a raw `INSERT` path) write backdated rows into `events` directly. `write_event` stamps `now()`, so routing them through it would break their purpose. They stay development tools, and the docs say that a tenant seeded this way reports `unchained_after_start`. `seed-demo-data.py --reset` removes those unchained rows, after which the chain verifies again.
+  - `seed-support-bot-events.py` and `seed-token-optimization-deterministic.py` log through the SDK, so their events are chained normally. So is the single image's first-boot demo (`infra/allinone/seed_demo.py`, through the HTTP API).
 - **Limit.** The region before the chain is not protected. A database writer can still insert a backdated row with an old `sequence_no`, as they always could.
 - **Why not backfill.** A backfill would attest history as of the backfill date while looking like it was attested at write time, which is misleading.
-- **Effect on the plan.** The plan's "backfill script" becomes the one-time cutoff in `init_db()`.
+- **Effect on the plan.** The plan's "backfill script" becomes the one-time cutoff written by the first chained write.
 
 ### 6. Verify endpoint
 
@@ -133,7 +150,7 @@ Further rules:
 
 Behaviour:
 - **Consistent read.** Reads in a `REPEATABLE READ READ ONLY` transaction, so concurrent writes and erasures are seen consistently.
-- **Merged walk.** Streams events, tombstones and receipts merged by `chain_index`, in key-set pages of 1,000. Memory stays flat on large tenants.
+- **Merged walk.** Streams events, tombstones and receipts merged by `chain_index`, in key-set pages of 1,000. Memory stays flat on large tenants: receipt digests are hashed incrementally (Decision 4).
 - **Optional receipt check.** `expected_head_index` and `expected_head_hash` let a caller check a receipt they stored earlier. A write returns `chain_index` and `chain_hash` for that purpose, and both SDKs' log results must carry them. Today they copy only known fields, so a receipt would be dropped.
 
 Response:
@@ -153,6 +170,7 @@ Response:
 |---|---|
 | `hash_mismatch` | The entry's recomputed hash doesn't match. Its content changed, or it was moved: the index is part of the hash, so a swap shows up here. `prev_hash` is not stored, so a changed link and changed content look the same. |
 | `gap` | A missing index with no tombstone |
+| `duplicate_index` | The same `chain_index` in more than one table, for example an erased event restored next to its tombstone. `(tenant_id, chain_index)` is unique only within each table, so the verifier checks across all three. |
 | `unkeyed_entry` | An unkeyed entry while the verifier has a key configured |
 | `unknown_key` | An entry keyed with a key the verifier doesn't have |
 | `retired_key` | An entry keyed with an older key after a newer key already appeared |
@@ -180,6 +198,11 @@ A throwaway prototype (simplified tables, the same lock and hash scheme, local P
 | Model: forged receipt appended at the tail | Passes without key; `unkeyed_entry` with key |
 | Model: edited row, tail recomputed unkeyed | Passes without key; `unkeyed_entry` with key |
 | Model: newest event deleted, head rolled back | Passes with and without key (only a stored receipt catches it) |
+| Forget of a parent vs a concurrent write of its child, under this lock order, parent foreign key present (`main`'s schema) | `DeadlockDetectedError` |
+| The same, parent foreign key dropped as in #223 | No error |
+| Fresh install: `last_value` vs the first event's `sequence_no` | Both 1 (`is_called` false), so the cutoff must use `is_called` |
+| Receipt digest: the Postgres expression in Decision 4 vs a streaming Python hash | Identical, with unsorted input and a `chain_index` above 2³¹ |
+| Cutoff written by the first chained write, 20 rounds of 30 concurrent first writes | Written after the write's own `nextval`: 600 of 600 rows at or below the cutoff. Written before: 0 |
 | Today's agent delete vs a concurrent write (`main`'s schema) | `ForeignKeyViolationError` on `fk_agent` |
 | Today's account delete vs a concurrent write (`main`'s schema) | `DeadlockDetectedError` |
 | Throughput, one tenant, 20 concurrent writers | ~3,950 writes/s without chain → ~1,130 with chain |
@@ -197,11 +220,13 @@ These figures come from simplified tables, so they only show the shape of the co
 | Change by a DB writer | Without key | With key held outside the DB |
 |---|---|---|
 | Edit to any audited field of a chained event | ✔, unless every later link and the head are recomputed | ✔ |
-| Reordered events, or an event inserted into the chain | ✔, unless the tail is recomputed | ✔ |
+| Reordered events, or an event inserted into the middle of the chain | ✔, unless the tail is recomputed | ✔ |
+| Fabricated event appended at the end (one new hash, head updated) | ✘ nothing earlier changes; a receipt can't tell it from normal growth | ✔ |
 | Deleted event in the middle | ✔ `gap`, unless dressed up as an erasure (next row) | ✔ |
 | Deletion dressed up as a lawful erasure (fake tombstone and receipt) | ✘ the verifier can't tell it apart | ✔ |
 | Deleted newest events | ✔ if the head was left alone; otherwise only against a receipt | same as without key: the head is not keyed |
 | Row added outside the chain after it started | ✔ `unchained_after_start` | ✔ |
+| Erased event restored from a backup next to its tombstone | ✔ `duplicate_index` | ✔ |
 | Backdated row added among events from before the chain | ✘ | ✘ |
 | Entries rewritten as unkeyed | n/a | ✔ `unkeyed_entry` |
 | Tail rewritten with a leaked, since-retired key | n/a | ✔ after the rotation point (`retired_key`); a rewrite from before it only against a receipt |
@@ -222,7 +247,7 @@ Without a key, the chain protects against accidental and partial changes, and ag
 - **The key is a liability.** Losing `AUDIT_CHAIN_KEY` makes keyed entries unverifiable.
 
 **Accepted limitations:**
-- Without a key, a deliberate database writer is not detected: they can recompute the chain or forge an erasure.
+- Without a key, a deliberate database writer is not detected: they can recompute the chain, append fabricated events or forge an erasure.
 - With or without a key, deleting the newest events and rolling the head back is caught only against a receipt stored outside the database. External anchoring is the general fix (deferred).
 - Events written before the upgrade are counted, not verified, and that region accepts backdated inserts.
 
@@ -251,16 +276,23 @@ Without a key, the chain protects against accidental and partial changes, and ag
 
 ## Implementation plan (hardening plan Days 10–12)
 
-1. **Day 10, schema and write path.**
+1. **Day 10, schema and write path** (after #223 has merged; see Decision 1).
    - Columns `chain_index`, `chain_hash` and `chain_alg` on `events`. A unique `(tenant_id, chain_index)` on `events`, `audit_chain_tombstones` and `audit_chain_receipts`.
+   - On `events`, make the index partial (`WHERE chain_index IS NOT NULL`). Even so, building it in `init_db()` scans the whole table and blocks writes until it finishes, and `init_db()` runs in every API worker and the embed worker. Measure it on a large table.
+   - `CREATE INDEX CONCURRENTLY` can't go in `init_db()`: it is rejected inside a multi-statement execute, and parallel builds can leave an INVALID index that `IF NOT EXISTS` then skips for good. If the plain build is too slow, offer `CONCURRENTLY` as a documented manual step before upgrading, and have `init_db()` fail loudly on an INVALID copy.
+   - If `AUDIT_CHAIN_KEY` is wired into the single image (`infra/allinone/`), update `redu.md`, the README single-container section and `wiki/Self-Hosting.md` in the same PR (CLAUDE.md rule). Keep in mind that a key generated into `/data/secrets.env` sits next to the database, so it doesn't protect against someone who holds the whole volume.
    - The four new tables (`audit_chain_heads`, `audit_chain_tombstones`, `audit_chain_receipts`, `audit_chain_cutoff`), in both `schema.sql` and `init_db()`.
-   - Docs: seeded tenants fail the chain check.
-   - Append in `write_event`; the write response gains `chain_index` and `chain_hash`. Python and TypeScript SDK log results carry them, with the SDK version-bump rule.
+   - Docs: tenants seeded by the two raw-insert scripts report `unchained_after_start`.
+   - Append in `write_event`; the write response gains `chain_index` and `chain_hash`. Every route that returns a `write_event` result passes them on: `POST /v1/events`, A2A, the agent test event and the dashboard connection test. Python and TypeScript SDK log results carry them, with the SDK version-bump rule.
    - Same PR, per CLAUDE.md: `dashboard/lib/api.ts` types, KB §17.3 (response shape) and KB §21 (schema).
+   - Real-Postgres tests:
+     - concurrent first writes across tenants all land above the cutoff (fails if the cutoff is recorded after `nextval`);
+     - a fresh install's first event verifies;
+     - concurrent writers in one tenant give a gap-free chain.
    - Latency measured before and after.
 2. **Day 11, erasure and verify.**
    - Tombstones and receipts in forget and agent delete, under the lock order rule, with agent delete locking its `agents` row first.
-   - `GET /v1/events/verify/chain`, registered and tested so `/{event_id}/verify` can't capture it; `delete_managed_account` deletes the chain tables first. KB and `api.ts` in the same PR.
+   - `GET /v1/events/verify/chain`, registered and tested so `/{event_id}/verify` can't capture it; `delete_managed_account` deletes the chain tables' rows right after `DELETE FROM tenants`. KB and `api.ts` in the same PR.
    - Real-Postgres tests for each `kind`, concurrent writers, a concurrent forget during verify, and the agent-delete lock order (a test that deadlocks if the head is locked first).
 3. **Day 12, surface.**
    - A dashboard view of the verify result (no SDK method; see Decision 6).
