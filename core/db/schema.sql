@@ -106,6 +106,7 @@ CREATE TABLE events (
     index_status    VARCHAR(16) NOT NULL DEFAULT 'skipped',
     index_attempts  INTEGER NOT NULL DEFAULT 0,
     index_retry_at  TIMESTAMPTZ,
+    idempotency_key VARCHAR(255),                       -- retried writes return the first event
 
     CONSTRAINT fk_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id)
@@ -133,6 +134,10 @@ CREATE INDEX IF NOT EXISTS idx_events_state_writes
 
 CREATE INDEX idx_events_data
     ON events USING gin (data);
+
+CREATE UNIQUE INDEX uq_events_idempotency
+    ON events (tenant_id, agent_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 -- Checksum verification pages an agent's events by sequence_no.
 CREATE INDEX idx_events_agent_seq

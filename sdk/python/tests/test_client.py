@@ -76,6 +76,29 @@ def test_log_posts_expected_event_payload(monkeypatch):
     assert result.sequence_no == 1
 
 
+def test_log_sends_idempotency_key_only_when_given(monkeypatch):
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={
+            "event_id": "00000000-0000-0000-0000-000000000001",
+            "timestamp": "2026-06-19T00:00:00Z",
+            "sequence_no": 1,
+            "checksum": "abc123",
+        })
+
+    db = _client(monkeypatch, handler)
+    try:
+        asyncio.run(db.log(agent="a", event="e", data={}, idempotency_key="req-1"))
+        asyncio.run(db.log(agent="a", event="e", data={}))
+    finally:
+        asyncio.run(_close(db))
+
+    assert bodies[0]["idempotency_key"] == "req-1"
+    assert "idempotency_key" not in bodies[1]
+
+
 def test_log_prints_why_hint_on_localhost(monkeypatch, capsys):
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

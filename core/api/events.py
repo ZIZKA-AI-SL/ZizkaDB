@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
 from services.exceptions import not_found, bad_request
 from typing import Any
@@ -26,6 +26,8 @@ class LogEventRequest(BaseModel):
     parent_id: str | None = None
     session_id: str | None = None
     metadata: dict[str, Any] | None = None
+    # Same key again (per agent) returns the first event instead of a duplicate.
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
 
 # ─────────────────────────────────────────
@@ -36,6 +38,7 @@ class LogEventRequest(BaseModel):
 async def log_event(
     body: LogEventRequest,
     tenant: dict = Depends(get_tenant),
+    idempotency_key: str | None = Header(default=None, max_length=255),
 ):
     await assert_agent_allowed(tenant, body.agent)
     return await write_event(
@@ -46,6 +49,7 @@ async def log_event(
         parent_id=body.parent_id,
         session_id=body.session_id,
         metadata=body.metadata,
+        idempotency_key=body.idempotency_key or idempotency_key,
     )
 
 

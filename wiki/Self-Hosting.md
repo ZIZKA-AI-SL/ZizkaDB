@@ -209,4 +209,16 @@ bash infra/backup-postgres.sh
 bash infra/backup-qdrant.sh
 ```
 
-See [Production-Deployment.md](Production-Deployment.md) for restore steps.
+Restore a Postgres backup (it takes a safety backup of the current database first, then asks you to type `RESTORE`):
+
+```bash
+bash infra/restore-postgres.sh infra/backups/zizkadb_<stamp>.sql.gz
+```
+
+Qdrant vectors are not in the Postgres dump. With embeddings on, rebuild them with `scripts/reindex-events.py`. See [Production-Deployment.md](Production-Deployment.md) for more.
+
+## Limits
+
+- `MAX_EVENT_BYTES` (default 262144 = 256 KB): one event's `data` + `metadata` as JSON. Larger events get a 413; store big blobs elsewhere and log a reference.
+- `MAX_REQUEST_BYTES` (default 10 MB): any request body. Larger requests get a 413 before they are read.
+- Retries: send the same `idempotency_key` (body field or `Idempotency-Key` header) and the event is stored once; the retry gets the first event back with `"duplicate": true`.

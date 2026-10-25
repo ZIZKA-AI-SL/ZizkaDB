@@ -287,6 +287,7 @@ export class ZizkaDB {
       parent_id: parentId,
       session_id: sessionId,
       metadata: options.metadata ?? null,
+      ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
     }) as {
       event_id: string
       timestamp: string
