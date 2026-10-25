@@ -28,7 +28,7 @@ import os
 import sys
 import httpx
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from .session_scope import SessionScope
@@ -428,6 +428,50 @@ class ZizkaDB:
 
         response = await self._get("/v1/events", params)
         return [Event.from_dict(e) for e in response]
+
+    async def iter_events(
+        self,
+        agent: str,
+        page_size: int = 500,
+        event_type: str | None = None,
+        session_id: str | None = None,
+    ) -> AsyncIterator[Event]:
+        """
+        Every event of an agent, newest first, fetched page by page with a
+        cursor (fast at any depth, no duplicates or gaps while you read).
+
+        Example:
+            async for event in db.iter_events("my-bot"):
+                ...
+        """
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"agent": agent, "limit": page_size}
+            if event_type:
+                params["event_type"] = event_type
+            if session_id:
+                params["session_id"] = session_id
+            if cursor:
+                params["cursor"] = cursor
+            page = await self._get("/v1/events", params)
+            for item in page:
+                yield Event.from_dict(item)
+            if len(page) < page_size:
+                return
+            last = page[-1]
+            cursor = f"{last['timestamp']}|{last['sequence_no']}"
+
+    async def log_batch(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """
+        Write up to 500 events in one request, in order. Each item takes the
+        log() fields (agent, event, data, parent_id, session_id, metadata,
+        idempotency_key) plus parent_index: the position of an earlier item
+        in the same batch to use as parent.
+
+        Returns {"written", "failed", "results"}; one bad event does not
+        reject the others, so check results[i]["ok"].
+        """
+        return await self._post("/v1/events/batch", {"events": events})
 
     # ─────────────────────────────────────────
     # WHY — causal chain for an event

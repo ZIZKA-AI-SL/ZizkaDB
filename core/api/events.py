@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from services.exceptions import not_found, bad_request
 from typing import Any
@@ -55,8 +55,83 @@ async def log_event(
 
 
 # ─────────────────────────────────────────
+# BATCH — POST /v1/events/batch
+# ─────────────────────────────────────────
+
+BATCH_MAX_EVENTS = 500
+
+
+class BatchEventItem(LogEventRequest):
+    # Parent written earlier in the same batch, by its position (0-based).
+    parent_index: int | None = Field(default=None, ge=0)
+
+
+class LogBatchRequest(BaseModel):
+    events: list[BatchEventItem] = Field(..., min_length=1, max_length=BATCH_MAX_EVENTS)
+
+
+@router.post("/batch")
+async def log_events_batch(
+    body: LogBatchRequest,
+    tenant: dict = Depends(get_tenant),
+):
+    """Write up to 500 events in one request, in order.
+
+    Each event is written like POST /v1/events (own checks, chain link and
+    idempotency key), so one bad event does not reject the others: every
+    result is ``{"index", "ok": true, ...event}`` or ``{"index", "ok": false,
+    "status", "error"}``. ``parent_index`` links to an earlier event of the batch.
+    """
+    for agent in dict.fromkeys(e.agent for e in body.events):
+        await assert_agent_allowed(tenant, agent)
+
+    results: list[dict] = []
+    written: dict[int, str] = {}
+    for index, item in enumerate(body.events):
+        parent_id = item.parent_id
+        if item.parent_index is not None:
+            if item.parent_index >= index or item.parent_index not in written:
+                results.append({
+                    "index": index, "ok": False, "status": 400,
+                    "error": "parent_index must point to an earlier event of this batch that was written",
+                })
+                continue
+            parent_id = written[item.parent_index]
+        try:
+            result = await write_event(
+                tenant_id=tenant["tenant_id"],
+                agent=item.agent,
+                event=item.event,
+                data=item.data,
+                parent_id=parent_id,
+                session_id=item.session_id,
+                metadata=item.metadata,
+                idempotency_key=item.idempotency_key,
+            )
+        except HTTPException as exc:
+            results.append({"index": index, "ok": False, "status": exc.status_code, "error": exc.detail})
+            continue
+        written[index] = result["event_id"]
+        results.append({"index": index, "ok": True, **result})
+
+    return {
+        "written": sum(r["ok"] for r in results),
+        "failed": sum(not r["ok"] for r in results),
+        "results": results,
+    }
+
+
+# ─────────────────────────────────────────
 # QUERY EVENTS — GET /v1/events
 # ─────────────────────────────────────────
+
+
+def _parse_cursor(cursor: str) -> tuple[datetime, int]:
+    try:
+        ts, seq = cursor.rsplit("|", 1)
+        return datetime.fromisoformat(ts), int(seq)
+    except (ValueError, TypeError):
+        raise bad_request("cursor must be '<timestamp>|<sequence_no>' from X-Next-Cursor")
 
 @router.get("")
 async def query_events(
@@ -67,8 +142,12 @@ async def query_events(
     after: datetime | None = None,
     event_type: str | None = None,
     session_id: str | None = None,
+    cursor: str | None = None,
+    response: Response = None,
     tenant: dict = Depends(get_tenant),
 ):
+    """Newest first. For deep paging use ``cursor`` (from the ``X-Next-Cursor``
+    response header) instead of ``offset``: it stays fast on any page."""
     await assert_agent_allowed(tenant, agent)
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
@@ -76,6 +155,12 @@ async def query_events(
     conditions = ["tenant_id = $1", "agent_id = $2"]
     params: list[Any] = [tenant_id, agent]
     i = 3
+
+    if cursor:
+        cursor_ts, cursor_seq = _parse_cursor(cursor)
+        conditions.append(f"(timestamp, sequence_no) < (${i}, ${i + 1})")
+        params.extend([cursor_ts, cursor_seq])
+        i += 2
 
     if before:
         conditions.append(f"timestamp < ${i}")
@@ -103,12 +188,15 @@ async def query_events(
                data, parent_event_id, session_id, sequence_no, metadata, index_status
         FROM events
         WHERE {where}
-        ORDER BY timestamp DESC
+        ORDER BY timestamp DESC, sequence_no DESC
         LIMIT ${i} OFFSET ${i + 1}
         """,
         *params,
     )
 
+    if response is not None and len(rows) == limit:
+        last = rows[-1]
+        response.headers["X-Next-Cursor"] = f"{last['timestamp'].isoformat()}|{last['sequence_no']}"
     return [_format_event(r) for r in rows]
 
 

@@ -170,3 +170,24 @@ export class RateLimitError extends ZizkaDBError {
     this.name = 'RateLimitError'
   }
 }
+
+export interface BatchEvent extends LogOptions {
+  /** Position of an earlier event in the same batch to use as parent. */
+  parentIndex?: number
+}
+
+export interface BatchResultItem {
+  index: number
+  ok: boolean
+  eventId?: string
+  sequenceNo?: number
+  duplicate?: boolean
+  status?: number
+  error?: unknown
+}
+
+export interface BatchResult {
+  written: number
+  failed: number
+  results: BatchResultItem[]
+}

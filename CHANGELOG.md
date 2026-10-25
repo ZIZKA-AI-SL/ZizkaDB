@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Batch writes, cursor paging, metrics
+
+- **New `POST /v1/events/batch`** writes up to 500 events in one request, in order. Each event is checked, chained and deduplicated like a single write. One bad event does not reject the others: every result is `ok` or carries its own `status` and `error`. `parent_index` links to an earlier event in the same batch. SDKs: Python `db.log_batch(events)`, TypeScript `db.logBatch(events)`.
+- **Cursor paging on `GET /v1/events`.** A full page returns an `X-Next-Cursor` header; pass it back as `cursor` for the next page. It stays fast at any depth and never repeats or skips events, unlike `offset`, which still works. Results are now ordered by `timestamp, sequence_no`, so ties are stable. SDKs: Python `async for e in db.iter_events(agent)`, TypeScript `for await (const e of db.iterEvents(agent))`.
+- **New `GET /metrics`** (Prometheus text format), off unless `METRICS_TOKEN` is set. It reports Postgres/Redis up, estimated events, agents, the embedding queue, tombstones, database size and per-worker pool connections.
+
 ### Search works without OpenAI
 
 - **Keyword search.** `POST /v1/search` and `context_for()` now work with embeddings off, which is the self-hosted default; they used to return a 400. Search uses Postgres full-text search over the event type and every string and number in `data`. Any word may match, prefixes count ("refund" finds "refunded"), it works the same in any language, and an index keeps it fast. On existing installs the index is built `CONCURRENTLY` on first start, so writes keep flowing.

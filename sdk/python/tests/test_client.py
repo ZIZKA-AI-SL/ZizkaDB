@@ -347,3 +347,46 @@ def test_verify_chain_passes_anchor(monkeypatch):
         asyncio.run(_close(db))
     assert result["intact"] is True
     assert "/v1/events/chain?agent=a&after_seq=5&anchor=h5" in seen["url"]
+
+
+def test_iter_events_follows_cursor(monkeypatch):
+    urls = []
+    pages = [
+        [{"event_id": "a", "agent": "b", "timestamp": "2026-06-01T00:00:00.123456+00:00",
+          "event": "e", "data": {}, "sequence_no": 9}],
+        [],
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        return httpx.Response(200, json=pages[len(urls) - 1])
+
+    db = _client(monkeypatch, handler)
+
+    async def collect():
+        return [e.event_id async for e in db.iter_events("b", page_size=1)]
+
+    try:
+        ids = asyncio.run(collect())
+    finally:
+        asyncio.run(_close(db))
+    assert ids == ["a"]
+    assert "cursor=2026-06-01T00%3A00%3A00.123456%2B00%3A00%7C9" in urls[1]
+
+
+def test_log_batch_posts_events(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.read().decode())
+        return httpx.Response(200, json={"written": 1, "failed": 0, "results": []})
+
+    db = _client(monkeypatch, handler)
+    try:
+        result = asyncio.run(db.log_batch([{"agent": "a", "event": "e", "data": {}}]))
+    finally:
+        asyncio.run(_close(db))
+    assert seen["url"].endswith("/v1/events/batch")
+    assert seen["body"]["events"][0]["agent"] == "a"
+    assert result["written"] == 1

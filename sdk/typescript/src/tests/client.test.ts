@@ -547,3 +547,39 @@ describe('verifyChain()', () => {
     expect(url).toContain('/v1/events/chain?agent=a&after_seq=5&anchor=h5')
   })
 })
+
+describe('iterEvents() and logBatch()', () => {
+  it('follows the cursor with the raw timestamp until a short page', async () => {
+    const page1 = [
+      { event_id: 'a', agent: 'b', timestamp: '2026-06-01T00:00:00.123456+00:00', event: 'e', data: {}, sequence_no: 9 },
+      { event_id: 'c', agent: 'b', timestamp: '2026-06-01T00:00:00.000001+00:00', event: 'e', data: {}, sequence_no: 8 },
+    ]
+    const page2 = [{ event_id: 'd', agent: 'b', timestamp: '2026-05-01T00:00:00+00:00', event: 'e', data: {}, sequence_no: 1 }]
+    const fn = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 })
+    vi.stubGlobal('fetch', fn)
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ids: string[] = []
+    for await (const e of db.iterEvents('b', { pageSize: 2 })) ids.push(e.eventId)
+    expect(ids).toEqual(['a', 'c', 'd'])
+    const secondUrl = fn.mock.calls[1][0] as string
+    expect(decodeURIComponent(secondUrl)).toContain('cursor=2026-06-01T00:00:00.000001+00:00|8')
+  })
+
+  it('maps batch results', async () => {
+    mockFetch(200, { written: 1, failed: 1, results: [
+      { index: 0, ok: true, event_id: 'e1', sequence_no: 1 },
+      { index: 1, ok: false, status: 400, error: 'bad' },
+    ] })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const r = await db.logBatch([
+      { agent: 'a', event: 'x', data: {} },
+      { agent: 'a', event: 'y', data: {}, parentIndex: 0 },
+    ])
+    expect(r.results[0]).toEqual({ index: 0, ok: true, eventId: 'e1', sequenceNo: 1, duplicate: false })
+    expect(r.results[1]).toEqual({ index: 1, ok: false, status: 400, error: 'bad' })
+    const body = JSON.parse(((fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit])[1].body as string)
+    expect(body.events[1].parent_index).toBe(0)
+  })
+})
