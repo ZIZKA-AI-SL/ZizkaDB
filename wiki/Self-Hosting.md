@@ -171,7 +171,7 @@ Configure in `infra/.env`. Start with `bash scripts/init-secrets.sh`: it replace
 - `ENV=production` (disables dev key bypass). `infra/docker-compose.yml` requires `ENV` and stops with an error if it is missing; never use `ENV=development` on a server
 - `DEV_API_KEY` — set a unique random value (`openssl rand -hex 24`) — the API refuses to start in production if it is empty or the default, and never accepts it as auth there
 - `DEPLOYMENT_MODE=self_hosted` — keep this set even in production. `ENV=production` alone doesn't distinguish a self-hosted install from managed cloud (both use it), so this separate flag is what makes plan-based entitlement checks (e.g. API key limits) resolve to the Self-Hosted plan instead of whatever is in `users.plan`.
-- `EMBEDDINGS_ENABLED=false` — default for self-host. Set to `true` only when you want semantic search / vector indexing; then configure `OPENAI_API_KEY` (or your provider key in Dashboard → Settings).
+- `EMBEDDINGS_ENABLED=false` — default for self-host. Search and memory context still work with keyword search (Postgres full-text). Set to `true` for hybrid keyword + vector search; then configure `OPENAI_API_KEY` (or your provider key in Dashboard → Settings), or embed locally with `EMBEDDINGS_PROVIDER=local`, `LOCAL_EMBEDDINGS_URL` (any OpenAI-compatible endpoint: Ollama, LM Studio, vLLM) and `LOCAL_EMBEDDINGS_MODEL` (up to 1536 dims).
 - **One agent, one API key.** A self-hosted install runs a single agent with a single active API key; this is always enforced and cannot be changed by env vars. The first agent name you log with takes the slot (the `support-bot` demo agent does not count). Agents that already existed before upgrading keep working, but no new ones can be added. Multiple agents, agent fleets and agent-to-agent messaging are on [ZizkaDB Cloud](https://db.zizka.ai).
 
 Validate production config before deploy:
@@ -182,7 +182,7 @@ bash scripts/validate-selfhost-config.sh --production
 
 ## Embeddings
 
-Set `OPENAI_API_KEY` in `infra/.env` for semantic search, memory context, and drift embeddings. Logging and `why()` work without it.
+Set `OPENAI_API_KEY` in `infra/.env` (or use local embeddings, above) for vector search and drift embeddings. Logging, `why()`, keyword search and memory context work without it.
 
 Dashboard → Settings → choose embedding model (OpenAI platform key or bring your own).
 

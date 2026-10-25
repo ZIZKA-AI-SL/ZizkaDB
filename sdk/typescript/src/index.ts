@@ -441,6 +441,7 @@ export class ZizkaDB {
       query: options.query,
       agent: options.agent ?? null,
       limit: options.limit ?? 10,
+      ...(options.mode ? { mode: options.mode } : {}),
     }) as { results: Record<string, unknown>[] }
     return res.results.map(parseEvent)
   }

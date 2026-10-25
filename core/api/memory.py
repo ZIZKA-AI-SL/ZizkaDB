@@ -19,7 +19,9 @@ import logging
 from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from db.connection import get_pool, get_qdrant
 from services.audit_chain import tombstone_events
+from api.search import vector_search
 from services.embeddings import generate_embedding
+from services.keyword_search import keyword_search
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
 
 router = APIRouter()
@@ -84,60 +86,40 @@ async def get_context(
         tenant_id, body.agent, body.session_id, body.recent_limit,
     )
 
-    # 2. Semantically relevant events via Qdrant
+    # 2. Relevant events: vector search when embeddings are on, keyword search
+    # (Postgres full-text) when they are off or no embedding could be made.
     semantic_rows = []
-    if not embeddings_enabled():
-        if is_self_hosted_deployment():
-            raise bad_request(
-                detail=(
-                    "Semantic memory is disabled on this self-hosted install. "
-                    "Set EMBEDDINGS_ENABLED=true in infra/.env, restart the API, "
-                    "then add your embedding API key in Dashboard → Settings."
-                ),
+    relevant_source = "semantic"
+    vector_hits = None
+    if embeddings_enabled():
+        try:
+            vector_hits = await vector_search(
+                tenant_id, body.task, agent=body.agent, limit=body.semantic_limit
             )
-        raise bad_request(detail="Semantic memory is disabled for this deployment.")
-    embedding = await generate_embedding(body.task, tenant_id)
-    if not embedding:
-        raise bad_request(
-            detail=(
-                "Embedding generation failed. Configure embeddings in Dashboard → Settings "
-                "(platform key or your OpenAI API key)."
-            ),
+        except Exception as e:
+            log.warning("Semantic search failed for context: %s", e)
+    if vector_hits:
+        score_map = {eid: round(score, 3) for eid, score in vector_hits}
+        sem_rows = await pool.fetch(
+            """
+            SELECT event_id, agent_id, timestamp, event_type, data, session_id
+            FROM events
+            WHERE event_id = ANY($1::uuid[]) AND tenant_id = $2
+              AND ($3::text IS NULL OR session_id::text != $3)
+            """,
+            list(score_map), tenant_id, body.session_id,
         )
-    try:
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-        qdrant = get_qdrant()
-
-        must = [
-            FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-            FieldCondition(key="agent_id", match=MatchValue(value=body.agent)),
+        for row in sem_rows:
+            semantic_rows.append((row, score_map.get(str(row["event_id"]), 0.0)))
+    else:
+        relevant_source = "keyword"
+        semantic_rows = [
+            (row, round(score, 3))
+            for row, score in await keyword_search(
+                pool, tenant_id, body.task, agent=body.agent,
+                limit=body.semantic_limit, exclude_session=body.session_id,
+            )
         ]
-        results = await qdrant.search(
-            collection_name="agent_events",
-            query_vector=embedding,
-            query_filter=Filter(must=must),
-            limit=body.semantic_limit,
-            with_payload=True,
-        )
-
-        if results:
-            sem_ids = [r.id for r in results]
-            score_map = {str(r.id): round(r.score, 3) for r in results}
-
-            sem_rows = await pool.fetch(
-                """
-                SELECT event_id, agent_id, timestamp, event_type, data, session_id
-                FROM events
-                WHERE event_id = ANY($1::uuid[]) AND tenant_id = $2
-                  AND ($3::text IS NULL OR session_id::text != $3)
-                """,
-                sem_ids, tenant_id, body.session_id,
-            )
-
-            for row in sem_rows:
-                semantic_rows.append((row, score_map.get(str(row["event_id"]), 0.0)))
-    except Exception as e:
-        log.warning(f"Semantic search failed for context: {e}")
 
     # 3. Merge — deduplicate, recent first then semantic fills gaps
     # Recent events take priority: they provide temporal grounding. Semantic
@@ -155,7 +137,7 @@ async def get_context(
         eid = str(row["event_id"])
         if eid not in seen_ids:
             seen_ids.add(eid)
-            merged.append({"row": row, "source": "semantic", "score": score})
+            merged.append({"row": row, "source": relevant_source, "score": score})
 
     # 4. Format as a prompt-ready string within token budget
     # Rough estimate: 1 token ≈ 4 chars
@@ -177,7 +159,7 @@ async def get_context(
                 pass
 
         ts = row["timestamp"].strftime("%Y-%m-%d %H:%M")
-        source_label = "Relevant" if item["source"] == "semantic" else "Recent"
+        source_label = "Recent" if item["source"] == "recent" else "Relevant"
         data_str = _format_data(data)
         line = f"[{source_label} · {ts}] {row['event_type']}: {data_str}\n"
 

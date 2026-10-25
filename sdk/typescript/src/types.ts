@@ -62,6 +62,8 @@ export interface SearchOptions {
   query: string
   agent?: string
   limit?: number
+  /** 'auto' (server default: hybrid with embeddings, keyword without), 'keyword', 'semantic' or 'hybrid'. */
+  mode?: 'auto' | 'keyword' | 'semantic' | 'hybrid'
 }
 
 export interface AtOptions {

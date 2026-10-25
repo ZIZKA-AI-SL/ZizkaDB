@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Search works without OpenAI
+
+- **Keyword search.** `POST /v1/search` and `context_for()` now work with embeddings off, which is the self-hosted default; they used to return a 400. Search uses Postgres full-text search over the event type and every string and number in `data`. Any word may match, prefixes count ("refund" finds "refunded"), it works the same in any language, and an index keeps it fast. On existing installs the index is built `CONCURRENTLY` on first start, so writes keep flowing.
+- **Hybrid search.** With embeddings on, `mode: "auto"` (the default) combines vector and keyword results by reciprocal rank fusion. `mode` can also be `keyword`, `semantic` (the old behaviour) or `hybrid`. If an embedding cannot be made, `auto` still answers from keywords and adds a `warning`. Responses include `mode`. The SDKs accept `mode` in `search()`.
+- **Local embeddings.** Setting `EMBEDDINGS_PROVIDER=local` with `LOCAL_EMBEDDINGS_URL` / `LOCAL_EMBEDDINGS_MODEL` uses any OpenAI-compatible `/embeddings` endpoint (Ollama, LM Studio, vLLM), so no data leaves the machine. Models of up to 1536 dimensions are supported; shorter vectors are zero-padded, which leaves cosine similarity unchanged.
+
 ### Tamper-evident audit chain
 
 - Every new event stores a `chain_hash` that links it to the agent's previous event (SHA-256 of the previous link and the event's checksum). Deleting, inserting, reordering or editing a row now breaks the chain. The per-event checksum could not show a deleted row.

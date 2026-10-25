@@ -473,6 +473,7 @@ class ZizkaDB:
         query: str,
         agent: str | None = None,
         limit: int = 10,
+        mode: str | None = None,
     ) -> list[Event]:
         """
         Search agent history using natural language.
@@ -481,6 +482,8 @@ class ZizkaDB:
             query: Natural language query
             agent: Limit search to a specific agent (optional)
             limit: Number of results (default 10)
+            mode:  "auto" (server default: hybrid with embeddings, keyword
+                   without), "keyword", "semantic" or "hybrid"
 
         Returns:
             List of Events sorted by relevance score
@@ -488,10 +491,10 @@ class ZizkaDB:
         Example:
             results = await db.search("what happened with billing refunds")
         """
-        response = await self._post(
-            "/v1/search",
-            {"query": query, "agent": agent, "limit": limit},
-        )
+        body: dict[str, Any] = {"query": query, "agent": agent, "limit": limit}
+        if mode is not None:
+            body["mode"] = mode
+        response = await self._post("/v1/search", body)
         return [Event.from_dict(e) for e in response["results"]]
 
     # ─────────────────────────────────────────
