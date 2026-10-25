@@ -19,7 +19,7 @@ pip install "zizkadb-livekit>=0.2.2"
 Start ZizkaDB (Docker quickstart):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 ## Usage

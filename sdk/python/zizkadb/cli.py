@@ -63,7 +63,7 @@ def cmd_demo(args: argparse.Namespace) -> None:
         print(f"ERROR: {e}", file=sys.stderr)
         print(
             "\nStart the OSS stack first:\n"
-            "  git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB\n"
+            "  git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB\n"
             "  bash scripts/quickstart.sh\n",
             file=sys.stderr,
         )

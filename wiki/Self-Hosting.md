@@ -7,7 +7,7 @@ Run ZizkaDB on your laptop or VPS with Docker or a native fallback when Docker i
 ### Docker (recommended — matches production)
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/quickstart.sh
 ```
 
@@ -19,7 +19,7 @@ Stack only:
 bash scripts/setup-local.sh
 ```
 
-Connect your agent: [CONNECT.md](https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md)
+Connect your agent: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md)
 
 Requires Docker Desktop or OrbStack running in a **native arm64 Terminal** (not Rosetta on Apple Silicon).
 
@@ -106,7 +106,7 @@ ZIZKADB_RUN_INTEGRATION=1 .venv/bin/pytest -m integration core/tests/test_integr
 
 ## Deploy on Redu Cloud
 
-The single-container image deploys to [Redu Cloud](https://redu.cloud) from this repository, unchanged. Add the redu MCP to your coding agent and ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The recipe it follows is [`redu.md`](https://github.com/Zizka-ai/ZizkaDB/blob/main/redu.md):
+The single-container image deploys to [Redu Cloud](https://redu.cloud) from this repository, unchanged. Add the redu MCP to your coding agent and ask it to "Deploy https://github.com/ZIZKA-AI-SL/ZizkaDB to redu". The recipe it follows is [`redu.md`](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/redu.md):
 
 - one VM, building `infra/allinone/Dockerfile`
 - port 3001 public, serving the dashboard with the API under `/v1`

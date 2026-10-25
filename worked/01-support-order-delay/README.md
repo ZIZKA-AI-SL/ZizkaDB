@@ -18,7 +18,7 @@ zizkadb demo
 **From a git clone:**
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/quickstart.sh
 # or step by step:
 bash scripts/setup-local.sh

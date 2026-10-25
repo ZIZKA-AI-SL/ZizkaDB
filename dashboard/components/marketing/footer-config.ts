@@ -9,8 +9,8 @@ export type FooterColumn = {
   links: FooterLink[]
 }
 
-const GITHUB = 'https://github.com/Zizka-ai/ZizkaDB'
-const WIKI = 'https://github.com/Zizka-ai/ZizkaDB/wiki'
+const GITHUB = 'https://github.com/ZIZKA-AI-SL/ZizkaDB'
+const WIKI = 'https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki'
 const ZIZKA_AI = 'https://zizka.ai'
 
 export const ZIZKADB_FOOTER_COLUMNS: FooterColumn[] = [

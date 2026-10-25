@@ -147,6 +147,6 @@ Need more sessions with `session_id` on events. Keep logging.
 
 ## Get help
 
-- [GitHub Issues](https://github.com/Zizka-ai/ZizkaDB/issues)
+- [GitHub Issues](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues)
 - [db.zizka.ai/docs](https://db.zizka.ai/docs)
 - Community: db.zizka.ai/community

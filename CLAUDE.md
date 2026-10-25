@@ -44,7 +44,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 ## Local dev setup
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/setup-local.sh
 ```
 
@@ -187,7 +187,7 @@ cd dashboard && npm run lint && npm test && npm run build
 | Cursor rules (per-area conventions) | `.cursor/rules/` — **`coding-standards.mdc` and `ai-knowledge-base.mdc` always apply** |
 | Agent entry (all tools) | `AGENTS.md` |
 | Release workflow | `.cursor/skills/zizkadb-release/SKILL.md` |
-| Wiki (14 pages) | `wiki/` or https://github.com/Zizka-ai/ZizkaDB/wiki |
+| Wiki (14 pages) | `wiki/` or https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki |
 | REST API explorer | http://localhost:8000/swagger |
 | Self-hosting guide | `wiki/Self-Hosting.md` |
 | Redu Cloud deploy recipe | `redu.md` |

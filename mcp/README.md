@@ -2,7 +2,7 @@
 
 **PyPI:** [zizkadb-mcp 0.1.8](https://pypi.org/project/zizkadb-mcp/0.1.8/)
 
-MCP server for [ZizkaDB](https://db.zizka.ai). Gives any MCP-compatible AI agent persistent memory, semantic search, causal debugging, and time travel.
+MCP server for [ZizkaDB](https://db.zizka.ai). Gives any MCP-compatible AI agent persistent memory, keyword and semantic search, causal debugging, time travel, and proof that its history is untouched (`verify_chain`).
 
 ## Setup (managed cloud)
 
@@ -80,4 +80,4 @@ If `ZIZKADB_API_KEY` is missing on cloud, MCP tools return a clear error instead
 ## Links
 
 - [Docs](https://db.zizka.ai/docs)
-- [GitHub](https://github.com/Zizka-ai/ZizkaDB)
+- [GitHub](https://github.com/ZIZKA-AI-SL/ZizkaDB)

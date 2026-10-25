@@ -1,6 +1,6 @@
 ---
 redu_schema: 2
-repo: github.com/Zizka-ai/ZizkaDB
+repo: github.com/ZIZKA-AI-SL/ZizkaDB
 plan:
   route: app
   dockerfile: infra/allinone/Dockerfile
@@ -22,13 +22,13 @@ quirks:
 
 # ZizkaDB on Redu Cloud
 
-Deploy the open-source edition of [ZizkaDB](https://github.com/Zizka-ai/ZizkaDB) on [Redu Cloud](https://redu.cloud) straight from this repository. ZizkaDB records what your AI agent does and why, so you can trace any decision back to its cause.
+Deploy the open-source edition of [ZizkaDB](https://github.com/ZIZKA-AI-SL/ZizkaDB) on [Redu Cloud](https://redu.cloud) straight from this repository. ZizkaDB records what your AI agent does and why, so you can trace any decision back to its cause.
 
 ## 1. Deploy
 
 Add the redu MCP to your coding agent and ask:
 
-> Deploy https://github.com/Zizka-ai/ZizkaDB to redu
+> Deploy https://github.com/ZIZKA-AI-SL/ZizkaDB to redu
 
 The agent reads this file and sets up:
 

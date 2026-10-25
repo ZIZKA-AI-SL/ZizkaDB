@@ -288,7 +288,7 @@ function LoginForm() {
           }}
         >
           Self-hosting?{" "}
-          <a href="https://github.com/Zizka-ai/ZizkaDB/wiki" style={{ color: "#aaa", textDecoration: "none" }}>
+          <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki" style={{ color: "#aaa", textDecoration: "none" }}>
             View setup guide →
           </a>
         </p>

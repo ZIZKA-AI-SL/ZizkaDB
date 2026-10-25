@@ -48,7 +48,7 @@
   "homepage": "https://db.zizka.ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Zizka-ai/ZizkaDB.git"
+    "url": "git+https://github.com/ZIZKA-AI-SL/ZizkaDB.git"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

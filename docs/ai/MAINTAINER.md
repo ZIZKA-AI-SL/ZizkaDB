@@ -26,7 +26,7 @@ Set sidebar fields in the **same** `gh pr create` when you are a maintainer with
 gh pr create \
   --label enhancement \
   --assignee saadamjad \
-  --reviewer Zizka-ai \
+  --reviewer ZIZKA-AI-SL \
   --body "..."
 ```
 
