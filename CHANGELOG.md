@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Python integrations republished for SDK 0.5.0
+
+- `zizkadb-langchain` 0.1.5, `zizkadb-crewai` 0.1.5, `zizkadb-langgraph` 0.1.2 and `zizkadb-livekit` 0.2.3 require `zizkadb-sdk>=0.5.0`, so installing any of them brings the new SDK methods.
+
 ## [0.5.0] - 2026-10-25
 
 ### Docs and project page
