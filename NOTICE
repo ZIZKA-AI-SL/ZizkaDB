@@ -1,0 +1,8 @@
+ZizkaDB
+Copyright (C) 2026 Zizka AI
+
+The ZizkaDB core API (core/), dashboard (dashboard/), Python and TypeScript
+SDKs (sdk/) and integrations (integrations/) are licensed under the GNU Affero
+General Public License v3.0: see LICENSE.
+
+The MCP server (mcp/) is licensed under the MIT License: see mcp/LICENSE.

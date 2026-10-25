@@ -6,6 +6,65 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Python integrations republished for SDK 0.5.0
+
+- `zizkadb-langchain` 0.1.5, `zizkadb-crewai` 0.1.5, `zizkadb-langgraph` 0.1.2 and `zizkadb-livekit` 0.2.3 require `zizkadb-sdk>=0.5.0`, so installing any of them brings the new SDK methods.
+
+## [0.5.0] - 2026-10-25
+
+### Docs and project page
+
+- `LICENSE` is now the plain AGPL-3.0 text, so GitHub and licence scanners recognise it. The MCP server's MIT licence is noted in the new `NOTICE` file.
+- Every link uses the organisation's current name, `ZIZKA-AI-SL/ZizkaDB`, including the `curl` quickstart. Before, links relied on GitHub's rename redirect.
+- The README describes the product as it is now: memory and audit database, hash-chained history, search without OpenAI, database operations (retention, export, read-only keys, metrics), `init-secrets.sh` for servers, and new FAQ answers. CONNECT.md and the SDK READMEs show the new methods.
+- MCP server: new `verify_chain` tool; `search_memory` accepts `mode`.
+
+### Read-only and expiring API keys
+
+- `POST /v1/agents/{id}/api-keys` accepts `scope: "read_only"`. A read-only key can query, search, build context, export and verify, but every write or delete route (`/v1/events`, `/batch`, `/import`, `/v1/memory/forget`, A2A, test events) refuses it with 403. This suits dashboards, evaluation tools and auditors. Read-only keys always belong to one agent.
+- `expires_in_days` (1–3650) on both key-creation routes makes a key stop working after that many days. Expired keys get a 401 and no longer count towards the plan's key limit. Key lists show `scope` and `expires_at`.
+
+### Memory quality: superseded facts, importance, recency, duplicates
+
+- **`supersedes`.** `POST /v1/events` (and the batch route) accepts `supersedes: <event_id>` for an earlier event of the same agent. The old fact stays in the log but leaves `context_for()` and search, so "the user moved to Berlin" replaces the old address instead of competing with it. Search can still include it with `include_superseded: true`.
+- **`STATE_SET` supersedes automatically.** A `STATE_SET` whose keys were all set again, or deleted, by later state events leaves memory, following the same rule as time travel.
+- **`importance` (0–1)** and recency now rank the relevant part of `context_for()`: score = relevance × (0.5 + importance) × recency, where recency halves every `CONTEXT_RECENCY_HALF_LIFE_DAYS` (default 30). An unset importance counts as 0.5.
+- **Exact duplicates** (same type and data) appear once in `context_for()`, leaving room in the token budget.
+- Both fields are stored in `metadata`, so the checksum and chain cover them. SDKs: `log(..., supersedes=, importance=)`, `search(..., include_superseded=)`, and the camelCase equivalents.
+
+### Retention, export/import, redaction
+
+- **Retention.** `EVENT_RETENTION_DAYS` (unset by default, meaning keep forever), or a per-agent setting via `GET/PUT /v1/agents/{id}/retention`. Events past the limit are deleted every hour (`RETENTION_INTERVAL_SECONDS`) by one worker at a time. Their vectors are removed and each leaves an audit-chain tombstone with reason `retention`.
+- **Export / import.** `GET /v1/events/export?agent=` streams an agent's events as NDJSON, oldest first. `POST /v1/events/import` loads them, up to 1000 per request. Original timestamps are kept, parent links are remapped to the new ids (also across requests), and every event gets fresh checksums and chain links. Re-running an import returns duplicates instead of copies. SDKs: `export_events` / `import_events`, `exportEvents` / `importEvents`.
+- **Redaction before storage.** Values under secret-named keys (`password`, `api_key`, `authorization`, `access_token` and similar) are now stored as `[REDACTED]`; extend the list with `REDACT_KEYS`, or turn it off with `REDACT_KEYS=off`. Optional `REDACT_PATTERNS=email,phone,card,iban,ipv4` redacts matches inside strings (cards must pass the Luhn check). Write responses include `redacted` with a count when anything was replaced.
+- `parent_event_id` is now a soft link (the foreign key is dropped). This fixes a 500 when `forget` deleted an event that had children, and lets retention delete old parents without changing their children's checksums. The write path still requires the parent to exist in the same tenant.
+
+### Batch writes, cursor paging, metrics
+
+- **New `POST /v1/events/batch`** writes up to 500 events in one request, in order. Each event is checked, chained and deduplicated like a single write. One bad event does not reject the others: every result is `ok` or carries its own `status` and `error`. `parent_index` links to an earlier event in the same batch. SDKs: Python `db.log_batch(events)`, TypeScript `db.logBatch(events)`.
+- **Cursor paging on `GET /v1/events`.** A full page returns an `X-Next-Cursor` header; pass it back as `cursor` for the next page. It stays fast at any depth and never repeats or skips events, unlike `offset`, which still works. Results are now ordered by `timestamp, sequence_no`, so ties are stable. SDKs: Python `async for e in db.iter_events(agent)`, TypeScript `for await (const e of db.iterEvents(agent))`.
+- **New `GET /metrics`** (Prometheus text format), off unless `METRICS_TOKEN` is set. It reports Postgres/Redis up, estimated events, agents, the embedding queue, tombstones, database size and per-worker pool connections.
+
+### Search works without OpenAI
+
+- **Keyword search.** `POST /v1/search` and `context_for()` now work with embeddings off, which is the self-hosted default; they used to return a 400. Search uses Postgres full-text search over the event type and every string and number in `data`. Any word may match, prefixes count ("refund" finds "refunded"), it works the same in any language, and an index keeps it fast. On existing installs the index is built `CONCURRENTLY` on first start, so writes keep flowing.
+- **Hybrid search.** With embeddings on, `mode: "auto"` (the default) combines vector and keyword results by reciprocal rank fusion. `mode` can also be `keyword`, `semantic` (the old behaviour) or `hybrid`. If an embedding cannot be made, `auto` still answers from keywords and adds a `warning`. Responses include `mode`. The SDKs accept `mode` in `search()`.
+- **Local embeddings.** Setting `EMBEDDINGS_PROVIDER=local` with `LOCAL_EMBEDDINGS_URL` / `LOCAL_EMBEDDINGS_MODEL` uses any OpenAI-compatible `/embeddings` endpoint (Ollama, LM Studio, vLLM), so no data leaves the machine. Models of up to 1536 dimensions are supported; shorter vectors are zero-padded, which leaves cosine similarity unchanged.
+
+### Tamper-evident audit chain
+
+- Every new event stores a `chain_hash` that links it to the agent's previous event (SHA-256 of the previous link and the event's checksum). Deleting, inserting, reordering or editing a row now breaks the chain. The per-event checksum could not show a deleted row.
+- **New `GET /v1/events/chain?agent=`** checks the whole chain and every checksum. It returns `intact`, a summary, the problems found, and `chain_head`. Keep the head outside ZizkaDB, then pass it back as `after_seq` + `anchor` to check only newer events and prove the older ones were not rewritten. SDKs: Python `db.verify_chain(agent, after_seq=, anchor=)`, TypeScript `db.verifyChain(agent, after?)`.
+- **GDPR `forget` leaves a tombstone** per deleted event, holding its link and the reason but none of its content, so the chain still verifies and shows where data was removed. Events written before this release have no link and are reported as `unchained_legacy`.
+- Write responses (and the SDK `LogResult`) include `chain_hash`.
+
+### Database safety: size limits, idempotent writes, migration lock, restore
+
+- **Event size limit.** One event's `data` + `metadata` may be up to `MAX_EVENT_BYTES` (default 256 KB). Larger events get a 413 with the limit in the message, before anything is written. Any request body over `MAX_REQUEST_BYTES` (default 10 MB) gets a 413 before it is read.
+- **Idempotent writes.** `POST /v1/events` accepts an optional `idempotency_key` (body field or `Idempotency-Key` header). A retry with the same key for the same agent returns the first event, with `"duplicate": true`. It is not stored twice and does not count twice; concurrent retries are safe too. Every response now has a `duplicate` field. Python `db.log(..., idempotency_key=)` and TypeScript `db.log({ idempotencyKey })` send it.
+- **Start-up migrations take a Postgres advisory lock**, so several uvicorn workers starting together no longer race on the same DDL. That race could crash a worker on start.
+- **New `infra/restore-postgres.sh`** restores a `backup-postgres.sh` file. It backs up the current database first, asks for confirmation (`--yes` skips it), stops and restarts the API, and checks health.
+
 ### Security hardening, without extra setup
 
 - **New installs get random secrets.** `scripts/setup-local.sh` runs the new `scripts/init-secrets.sh` when it creates `infra/.env`. The script replaces the defaults with a random Postgres password, Redis password, Qdrant API key and JWT secrets, and prints only the names it changed. It never changes the Postgres password of an existing database volume. Servers can run it by hand.
@@ -329,10 +388,10 @@ Production-hardening sprint merged to `main` (via stacked PRs #125–#139), incl
 - CLI: `why`, `baseline`, `token-usage`, `token-opt`
 - Docs: always-on Cursor coding standards, KB OSS scope updates
 
-See [GitHub releases](https://github.com/Zizka-ai/ZizkaDB/releases) for tagged artifacts.
+See [GitHub releases](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) for tagged artifacts.
 
-[Unreleased]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.8...HEAD
-[0.2.8]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.7...v0.2.8
-[0.2.7]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.6...v0.2.7
-[0.2.6]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.1.0...v0.2.6
-[0.1.0]: https://github.com/Zizka-ai/ZizkaDB/releases
+[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.1.0...v0.2.6
+[0.1.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/releases

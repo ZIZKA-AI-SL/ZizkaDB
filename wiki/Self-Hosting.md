@@ -7,7 +7,7 @@ Run ZizkaDB on your laptop or VPS with Docker or a native fallback when Docker i
 ### Docker (recommended — matches production)
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/quickstart.sh
 ```
 
@@ -19,7 +19,7 @@ Stack only:
 bash scripts/setup-local.sh
 ```
 
-Connect your agent: [CONNECT.md](https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md)
+Connect your agent: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md)
 
 Requires Docker Desktop or OrbStack running in a **native arm64 Terminal** (not Rosetta on Apple Silicon).
 
@@ -106,7 +106,7 @@ ZIZKADB_RUN_INTEGRATION=1 .venv/bin/pytest -m integration core/tests/test_integr
 
 ## Deploy on Redu Cloud
 
-The single-container image deploys to [Redu Cloud](https://redu.cloud) from this repository, unchanged. Add the redu MCP to your coding agent and ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The recipe it follows is [`redu.md`](https://github.com/Zizka-ai/ZizkaDB/blob/main/redu.md):
+The single-container image deploys to [Redu Cloud](https://redu.cloud) from this repository, unchanged. Add the redu MCP to your coding agent and ask it to "Deploy https://github.com/ZIZKA-AI-SL/ZizkaDB to redu". The recipe it follows is [`redu.md`](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/redu.md):
 
 - one VM, building `infra/allinone/Dockerfile`
 - port 3001 public, serving the dashboard with the API under `/v1`
@@ -171,7 +171,7 @@ Configure in `infra/.env`. Start with `bash scripts/init-secrets.sh`: it replace
 - `ENV=production` (disables dev key bypass). `infra/docker-compose.yml` requires `ENV` and stops with an error if it is missing; never use `ENV=development` on a server
 - `DEV_API_KEY` — set a unique random value (`openssl rand -hex 24`) — the API refuses to start in production if it is empty or the default, and never accepts it as auth there
 - `DEPLOYMENT_MODE=self_hosted` — keep this set even in production. `ENV=production` alone doesn't distinguish a self-hosted install from managed cloud (both use it), so this separate flag is what makes plan-based entitlement checks (e.g. API key limits) resolve to the Self-Hosted plan instead of whatever is in `users.plan`.
-- `EMBEDDINGS_ENABLED=false` — default for self-host. Set to `true` only when you want semantic search / vector indexing; then configure `OPENAI_API_KEY` (or your provider key in Dashboard → Settings).
+- `EMBEDDINGS_ENABLED=false` — default for self-host. Search and memory context still work with keyword search (Postgres full-text). Set to `true` for hybrid keyword + vector search; then configure `OPENAI_API_KEY` (or your provider key in Dashboard → Settings), or embed locally with `EMBEDDINGS_PROVIDER=local`, `LOCAL_EMBEDDINGS_URL` (any OpenAI-compatible endpoint: Ollama, LM Studio, vLLM) and `LOCAL_EMBEDDINGS_MODEL` (up to 1536 dims).
 - **One agent, one API key.** A self-hosted install runs a single agent with a single active API key; this is always enforced and cannot be changed by env vars. The first agent name you log with takes the slot (the `support-bot` demo agent does not count). Agents that already existed before upgrading keep working, but no new ones can be added. Multiple agents, agent fleets and agent-to-agent messaging are on [ZizkaDB Cloud](https://db.zizka.ai).
 
 Validate production config before deploy:
@@ -182,7 +182,7 @@ bash scripts/validate-selfhost-config.sh --production
 
 ## Embeddings
 
-Set `OPENAI_API_KEY` in `infra/.env` for semantic search, memory context, and drift embeddings. Logging and `why()` work without it.
+Set `OPENAI_API_KEY` in `infra/.env` (or use local embeddings, above) for vector search and drift embeddings. Logging, `why()`, keyword search and memory context work without it.
 
 Dashboard → Settings → choose embedding model (OpenAI platform key or bring your own).
 
@@ -209,4 +209,27 @@ bash infra/backup-postgres.sh
 bash infra/backup-qdrant.sh
 ```
 
-See [Production-Deployment.md](Production-Deployment.md) for restore steps.
+Restore a Postgres backup (it takes a safety backup of the current database first, then asks you to type `RESTORE`):
+
+```bash
+bash infra/restore-postgres.sh infra/backups/zizkadb_<stamp>.sql.gz
+```
+
+Qdrant vectors are not in the Postgres dump. With embeddings on, rebuild them with `scripts/reindex-events.py`. See [Production-Deployment.md](Production-Deployment.md) for more.
+
+## Retention, export and redaction
+
+- **Retention:** `EVENT_RETENTION_DAYS=90` deletes events older than 90 days, checking every hour. Each deletion leaves an audit-chain tombstone, so `GET /v1/events/chain` still verifies. Per agent: `PUT /v1/agents/{id}/retention` with `{"days": 30}` (dashboard session), or `null` to use the default. Unset means events are kept forever.
+- **Export / import:** `GET /v1/events/export?agent=` streams every event as NDJSON, oldest first. `POST /v1/events/import` (up to 1000 lines per request) loads them on another install, keeping timestamps and remapping parent links. Re-running an import is safe. SDKs: `export_events` / `import_events` (Python), `exportEvents` / `importEvents` (TypeScript).
+- **Redaction:** values under secret-named keys (`password`, `api_key`, `authorization`, `token` keys and so on) are stored as `[REDACTED]`, on by default. Add your own with `REDACT_KEYS=ssn,national_id`, or set `REDACT_KEYS=off`. Opt in to pattern redaction inside strings with `REDACT_PATTERNS=email,phone,card,iban,ipv4`; card numbers must pass the Luhn check. Redaction runs before the checksum, so the original value never reaches the database.
+
+## Monitoring
+
+Set `METRICS_TOKEN` and scrape `GET /metrics` (Prometheus text format) with `Authorization: Bearer <token>`. You get build info, Postgres/Redis up, estimated events, agents, the embedding queue (pending/failed), tombstones, database size and per-worker pool connections. Without `METRICS_TOKEN` the endpoint returns 404.
+
+## Limits
+
+- `MAX_EVENT_BYTES` (default 262144 = 256 KB): one event's `data` + `metadata` as JSON. Larger events get a 413; store big blobs elsewhere and log a reference.
+- `MAX_REQUEST_BYTES` (default 10 MB): any request body. Larger requests get a 413 before they are read.
+- Batches: `POST /v1/events/batch` takes up to 500 events per request (within `MAX_REQUEST_BYTES`).
+- Retries: send the same `idempotency_key` (body field or `Idempotency-Key` header) and the event is stored once; the retry gets the first event back with `"duplicate": true`.

@@ -8,15 +8,15 @@ This guide explains how to get started, what we expect in pull requests, and the
 
 | Resource | URL |
 |----------|-----|
-| Repository | https://github.com/Zizka-ai/ZizkaDB |
-| OSS quickstart (no clone) | `curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh \| bash` |
+| Repository | https://github.com/ZIZKA-AI-SL/ZizkaDB |
+| OSS quickstart (no clone) | `curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh \| bash` |
 | Connect guide | [CONNECT.md](CONNECT.md) |
 | Development setup | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Docs | https://db.zizka.ai/docs |
 | Architecture / trust | https://db.zizka.ai/trust |
-| Wiki | https://github.com/Zizka-ai/ZizkaDB/wiki |
+| Wiki | https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki |
 | Community board | https://db.zizka.ai/community |
-| Issues | https://github.com/Zizka-ai/ZizkaDB/issues |
+| Issues | https://github.com/ZIZKA-AI-SL/ZizkaDB/issues |
 | Security | [SECURITY.md](SECURITY.md) |
 
 Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before participating.
@@ -29,7 +29,7 @@ You do **not** need a large PR to help.
 
 | Type | Examples |
 |------|----------|
-| **Report bugs** | Events not appearing, drift score wrong, MCP tool failing — open a [GitHub issue](https://github.com/Zizka-ai/ZizkaDB/issues) with repro steps |
+| **Report bugs** | Events not appearing, drift score wrong, MCP tool failing — open a [GitHub issue](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues) with repro steps |
 | **Improve docs** | README, wiki, `dashboard/app/docs`, integration guides |
 | **Fix issues** | Pick an open issue or ask on the [community board](https://db.zizka.ai/community) |
 | **SDKs & MCP** | Python / TypeScript SDK, `zizkadb-mcp` tools |
@@ -72,7 +72,7 @@ For significant contributions, we may ask you to confirm you have the right to s
 ### One-command local stack
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git
 cd ZizkaDB
 bash scripts/setup-local.sh
 ```
@@ -302,7 +302,7 @@ git checkout -b docs/181-what-you-changed     # documentation only
 
 ### 5. Open a pull request
 
-Target the `main` branch on [Zizka-ai/ZizkaDB](https://github.com/Zizka-ai/ZizkaDB).
+Target the `main` branch on [ZIZKA-AI-SL/ZizkaDB](https://github.com/ZIZKA-AI-SL/ZizkaDB).
 
 **The PR description must start with the linked issue** — first line: `Fixes #<number>` (or `Closes #<number>`). Optionally repeat the issue title on the next line for reviewers. GitHub closes the issue when the PR merges.
 
@@ -460,4 +460,4 @@ You do not need permission to open a PR. You **do** need alignment for large des
 
 Contributors are credited in release notes and, with permission, on the project site. Thank you for helping build operational infrastructure for AI agents.
 
-**Questions?** [Community board](https://db.zizka.ai/community) · [GitHub Discussions/Issues](https://github.com/Zizka-ai/ZizkaDB/issues) · founder@zizka.ai
+**Questions?** [Community board](https://db.zizka.ai/community) · [GitHub Discussions/Issues](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues) · founder@zizka.ai

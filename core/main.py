@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 from contextlib import asynccontextmanager
+import asyncio
+import contextlib
 import logging
 import os
 
@@ -22,6 +24,8 @@ from api.account import router as account_router
 from api.demo_requests import router as demo_requests_router
 from api.community import router as community_router
 from api.marketing_subscriptions import router as marketing_subscriptions_router
+from api.metrics import router as metrics_router
+from middleware.body_limit import BodyLimitMiddleware
 from middleware.request_id import RequestIdMiddleware
 from services.runtime_env import env_name, is_dev_mode
 
@@ -29,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Display/API release line — keep in sync with zizkadb-sdk (see scripts/check-doc-drift.sh).
-API_VERSION = "0.4.1"
+API_VERSION = "0.5.0"
 
 
 def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:
@@ -128,8 +132,14 @@ async def lifespan(app: FastAPI):
             "Never use ENV=development on a reachable deployment."
         )
         await _ensure_dev_tenant(get_pool())
+    from services.retention import retention_loop
+
+    retention_task = asyncio.create_task(retention_loop(get_pool))
     logger.info("ZizkaDB started")
     yield
+    retention_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await retention_task
     await close_db()
     logger.info("ZizkaDB stopped")
 
@@ -202,6 +212,7 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(BodyLimitMiddleware)
 
 app.include_router(auth_router,      prefix="/v1/auth",      tags=["auth"])
 app.include_router(events_router,    prefix="/v1/events",    tags=["events"])
@@ -217,6 +228,7 @@ app.include_router(account_router,   prefix="/v1/account",   tags=["account"])
 app.include_router(demo_requests_router, prefix="/v1/demo-requests", tags=["demo"])
 app.include_router(community_router, prefix="/v1/community", tags=["community"])
 app.include_router(marketing_subscriptions_router, prefix="/v1/marketing-subscriptions", tags=["marketing"])
+app.include_router(metrics_router)
 
 
 @app.get("/health")

@@ -7,7 +7,7 @@ ZizkaDB is an operational database for AI agents. It stores event history, API k
 | Version | Supported |
 |---------|-----------|
 | `main` branch (latest) | Yes |
-| Latest [GitHub release](https://github.com/Zizka-ai/ZizkaDB/releases) | Yes |
+| Latest [GitHub release](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) | Yes |
 | Older releases | Best effort — upgrade recommended |
 
 Managed cloud at **db.zizka.ai** runs the latest stable deployment from this repository.
@@ -39,7 +39,7 @@ Examples of in-scope issues:
 - Privilege escalation (user → admin, tenant → tenant)
 - Insecure defaults on production deployments (`DEV_API_KEY` exposed, open admin routes)
 
-Out of scope (please use regular [issues](https://github.com/Zizka-ai/ZizkaDB/issues) instead):
+Out of scope (please use regular [issues](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues) instead):
 
 - Social engineering
 - Denial of service without a practical exploit path
@@ -71,7 +71,7 @@ If you run ZizkaDB yourself:
 - Back up Postgres regularly (`infra/backup-postgres.sh`)
 - Keep Docker images and dependencies updated
 
-See [Production Deployment wiki](https://github.com/Zizka-ai/ZizkaDB/wiki/Production-Deployment).
+See [Production Deployment wiki](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Production-Deployment).
 
 ## Contact
 

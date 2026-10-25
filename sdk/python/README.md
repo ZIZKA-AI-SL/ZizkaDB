@@ -1,8 +1,8 @@
 # zizkadb-sdk
 
-**PyPI:** [zizkadb-sdk 0.4.1](https://pypi.org/project/zizkadb-sdk/0.4.1/)
+**PyPI:** [zizkadb-sdk 0.5.0](https://pypi.org/project/zizkadb-sdk/0.5.0/)
 
-Python SDK for [ZizkaDB](https://github.com/Zizka-ai/ZizkaDB) — **Why did your agent do that?** Call `db.why(event_id)` or `zizkadb why <id>` after logging with `parent_id`.
+Python SDK for [ZizkaDB](https://github.com/ZIZKA-AI-SL/ZizkaDB) — **Why did your agent do that?** Call `db.why(event_id)` or `zizkadb why <id>` after logging with `parent_id`.
 
 ## Setup (managed cloud)
 
@@ -67,6 +67,20 @@ An API key works for one agent name. Running several agents — and agent-to-age
 
 Self-hosted ZizkaDB is single-agent: log everything under one agent name and use `session_id` to separate users or conversations. A second agent name is rejected with `409 agent_limit_reached`.
 
+## More than logging
+
+| Method | What it does |
+|---|---|
+| `log(..., idempotency_key=, supersedes=, importance=)` | Safe retries; replace an outdated fact; weight it in memory |
+| `log_batch(events)` | Up to 500 events in one request |
+| `search(query, mode=)` | Keyword out of the box, hybrid with embeddings |
+| `context_for(agent, task)` | Relevant past as a prompt block (no OpenAI key needed) |
+| `verify_chain(agent, after_seq=, anchor=)` | Prove no event was edited, removed or reordered |
+| `iter_events(agent)` | Every event, cursor-paged |
+| `export_events(agent)` / `import_events(lines)` | Portable NDJSON copy and import |
+
+Needs a server from release 0.5.0. Full guide: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md#beyond-log-and-why).
+
 ## Errors
 
 | Exception | Meaning |
@@ -94,4 +108,4 @@ Self-hosted ZizkaDB is single-agent: log everything under one agent name and use
 
 - [Docs](https://db.zizka.ai/docs)
 - [API explorer](https://db.zizka.ai/swagger)
-- [GitHub](https://github.com/Zizka-ai/ZizkaDB)
+- [GitHub](https://github.com/ZIZKA-AI-SL/ZizkaDB)

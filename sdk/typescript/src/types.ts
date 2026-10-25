@@ -11,6 +11,12 @@ export interface LogOptions {
   parentId?: string
   sessionId?: string
   metadata?: Record<string, unknown>
+  /** Send the same key when retrying a write: the server stores it once. */
+  idempotencyKey?: string
+  /** Id of an earlier fact this event replaces (it leaves context and search, not the log). */
+  supersedes?: string
+  /** 0..1, weights the event in contextFor() ranking. */
+  importance?: number
 }
 
 interface LineageOptions {
@@ -60,6 +66,10 @@ export interface SearchOptions {
   query: string
   agent?: string
   limit?: number
+  /** 'auto' (server default: hybrid with embeddings, keyword without), 'keyword', 'semantic' or 'hybrid'. */
+  mode?: 'auto' | 'keyword' | 'semantic' | 'hybrid'
+  /** Include facts that a later event superseded. */
+  includeSuperseded?: boolean
 }
 
 export interface AtOptions {
@@ -85,6 +95,23 @@ export interface LogResult {
   sequenceNo: number
   checksum: string
   indexStatus?: string
+  /** Link in the agent's audit hash chain (servers from 0.5.0). */
+  chainHash?: string
+  /** True when an idempotency key matched an event stored earlier. */
+  duplicate?: boolean
+}
+
+export interface ChainHead {
+  sequenceNo: number
+  chainHash: string
+}
+
+export interface ChainVerification {
+  agent: string
+  intact: boolean
+  summary: Record<string, number>
+  problems: Record<string, unknown>[]
+  chainHead: ChainHead | null
 }
 
 export interface CausalChain {
@@ -148,4 +175,25 @@ export class RateLimitError extends ZizkaDBError {
     super(message, 429)
     this.name = 'RateLimitError'
   }
+}
+
+export interface BatchEvent extends LogOptions {
+  /** Position of an earlier event in the same batch to use as parent. */
+  parentIndex?: number
+}
+
+export interface BatchResultItem {
+  index: number
+  ok: boolean
+  eventId?: string
+  sequenceNo?: number
+  duplicate?: boolean
+  status?: number
+  error?: unknown
+}
+
+export interface BatchResult {
+  written: number
+  failed: number
+  results: BatchResultItem[]
 }

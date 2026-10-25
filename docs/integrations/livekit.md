@@ -24,7 +24,7 @@ Pulls `zizkadb-sdk>=0.3.0` and `livekit-agents>=1.3.0` automatically. No separat
 Start ZizkaDB (Docker):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 ## Quick wiring

@@ -24,11 +24,15 @@
 
 import type {
   ZizkaDBConfig,
+  BatchEvent,
+  BatchResult,
   AgentEvent,
   AgentInfo,
   AgentState,
   AtOptions,
   CausalChain,
+  ChainHead,
+  ChainVerification,
   LogOptions,
   LogToolOptions,
   LogToolResultOptions,
@@ -287,6 +291,9 @@ export class ZizkaDB {
       parent_id: parentId,
       session_id: sessionId,
       metadata: options.metadata ?? null,
+      ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
+      ...(options.supersedes != null ? { supersedes: options.supersedes } : {}),
+      ...(options.importance != null ? { importance: options.importance } : {}),
     }) as {
       event_id: string
       timestamp: string
@@ -294,13 +301,17 @@ export class ZizkaDB {
       checksum: string
       index_status?: string
       indexed?: boolean
+      chain_hash?: string | null
+      duplicate?: boolean
     }
-    const result = {
+    const result: LogResult = {
       eventId: res.event_id,
       timestamp: new Date(res.timestamp),
       sequenceNo: res.sequence_no,
       checksum: res.checksum,
       indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
+      ...(res.chain_hash ? { chainHash: res.chain_hash } : {}),
+      ...(res.duplicate ? { duplicate: true } : {}),
     }
     recordLogResult(options.agent, result.eventId)
     emitLogHint(this.baseUrl, result.eventId)
@@ -369,6 +380,117 @@ export class ZizkaDB {
     return res.map(parseEvent)
   }
 
+  /**
+   * Every event of an agent, newest first, page by page with a cursor
+   * (fast at any depth, no duplicates or gaps).
+   *
+   *   for await (const event of db.iterEvents('my-bot')) { ... }
+   */
+  async *iterEvents(
+    agent: string,
+    options: { pageSize?: number, eventType?: string, sessionId?: string } = {},
+  ): AsyncGenerator<AgentEvent> {
+    const pageSize = options.pageSize ?? 500
+    let cursor: string | undefined
+    while (true) {
+      const params: Record<string, string> = { agent, limit: String(pageSize) }
+      if (options.eventType) params.event_type = options.eventType
+      if (options.sessionId) params.session_id = options.sessionId
+      if (cursor) params.cursor = cursor
+      const page = await this.get('/v1/events', params) as Record<string, unknown>[]
+      for (const item of page) yield parseEvent(item)
+      if (page.length < pageSize) return
+      // The raw timestamp keeps microseconds; a Date would round them off.
+      const last = page[page.length - 1]
+      cursor = `${last.timestamp as string}|${last.sequence_no as number}`
+    }
+  }
+
+  /**
+   * Stream every event of an agent, oldest first (the server's NDJSON export).
+   * Pass the objects to `importEvents()` on another instance, or save them.
+   */
+  async *exportEvents(agent: string): AsyncGenerator<Record<string, unknown>> {
+    const url = `${this.baseUrl}/v1/events/export?${new URLSearchParams({ agent })}`
+    const res = await fetch(url, { method: 'GET', headers: this.headers })
+    if (!res.ok || !res.body) {
+      await this.handle(res)
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      let newline = buffer.indexOf('\n')
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim()
+        buffer = buffer.slice(newline + 1)
+        if (line) yield JSON.parse(line) as Record<string, unknown>
+        newline = buffer.indexOf('\n')
+      }
+      if (done) break
+    }
+    if (buffer.trim()) yield JSON.parse(buffer) as Record<string, unknown>
+  }
+
+  /**
+   * Import events from `exportEvents()` (oldest first), 1000 per request.
+   * Original timestamps are kept, parents remapped; re-running is safe.
+   */
+  async importEvents(
+    events: Record<string, unknown>[],
+    options: { agent?: string, chunkSize?: number } = {},
+  ): Promise<{ imported: number, duplicates: number, failed: number, parentsDropped: number, errors: unknown[] }> {
+    const size = options.chunkSize ?? 1000
+    const totals = { imported: 0, duplicates: 0, failed: 0, parentsDropped: 0, errors: [] as unknown[] }
+    for (let start = 0; start < events.length; start += size) {
+      const res = await this.post('/v1/events/import', {
+        events: events.slice(start, start + size),
+        ...(options.agent ? { agent: options.agent } : {}),
+      }) as { imported: number, duplicates: number, failed: number, parents_dropped: number, errors: unknown[] }
+      totals.imported += res.imported
+      totals.duplicates += res.duplicates
+      totals.failed += res.failed
+      totals.parentsDropped += res.parents_dropped
+      totals.errors.push(...res.errors)
+    }
+    return totals
+  }
+
+  /**
+   * Write up to 500 events in one request, in order. One bad event does not
+   * reject the others: check `results[i].ok`.
+   */
+  async logBatch(events: BatchEvent[]): Promise<BatchResult> {
+    const res = await this.post('/v1/events/batch', {
+      events: events.map(e => ({
+        agent: e.agent,
+        event: e.event,
+        data: e.data,
+        parent_id: e.parentId ?? null,
+        session_id: e.sessionId ?? null,
+        metadata: e.metadata ?? null,
+        ...(e.idempotencyKey != null ? { idempotency_key: e.idempotencyKey } : {}),
+        ...(e.supersedes != null ? { supersedes: e.supersedes } : {}),
+        ...(e.importance != null ? { importance: e.importance } : {}),
+        ...(e.parentIndex != null ? { parent_index: e.parentIndex } : {}),
+      })),
+    }) as { written: number, failed: number, results: Record<string, unknown>[] }
+    return {
+      written: res.written,
+      failed: res.failed,
+      results: res.results.map(r => ({
+        index: r.index as number,
+        ok: r.ok as boolean,
+        ...(r.ok
+          ? { eventId: r.event_id as string, sequenceNo: r.sequence_no as number, duplicate: Boolean(r.duplicate) }
+          : { status: r.status as number, error: r.error }),
+      })),
+    }
+  }
+
   // ─────────────────────────────────────────
   // WHY
   // ─────────────────────────────────────────
@@ -434,6 +556,8 @@ export class ZizkaDB {
       query: options.query,
       agent: options.agent ?? null,
       limit: options.limit ?? 10,
+      ...(options.mode ? { mode: options.mode } : {}),
+      ...(options.includeSuperseded ? { include_superseded: true } : {}),
     }) as { results: Record<string, unknown>[] }
     return res.results.map(parseEvent)
   }
@@ -441,6 +565,35 @@ export class ZizkaDB {
   // ─────────────────────────────────────────
   // AT (time travel)
   // ─────────────────────────────────────────
+
+  /**
+   * Check the agent's audit hash chain: no event removed, inserted, reordered
+   * or changed (deletions through forget() are allowed). Store `chainHead`
+   * outside ZizkaDB and pass it back as `after` to check only newer events.
+   */
+  async verifyChain(agent: string, after?: ChainHead): Promise<ChainVerification> {
+    const params: Record<string, string> = { agent }
+    if (after) {
+      params.after_seq = String(after.sequenceNo)
+      params.anchor = after.chainHash
+    }
+    const res = await this.get('/v1/events/chain', params) as {
+      agent: string
+      intact: boolean
+      summary: Record<string, number>
+      problems: Record<string, unknown>[]
+      chain_head: { sequence_no: number, chain_hash: string } | null
+    }
+    return {
+      agent: res.agent,
+      intact: res.intact,
+      summary: res.summary,
+      problems: res.problems,
+      chainHead: res.chain_head
+        ? { sequenceNo: res.chain_head.sequence_no, chainHash: res.chain_head.chain_hash }
+        : null,
+    }
+  }
 
   async at(options: AtOptions): Promise<AgentState> {
     const res = await this.get('/v1/events/at', {

@@ -103,57 +103,48 @@ def uses_default_db_password() -> bool:
     return password in _WELL_KNOWN_DB_PASSWORDS
 
 
-async def init_db():
-    global _pg_pool, _redis, _qdrant
-
-    # ---------------- PostgreSQL ----------------
-
-    _pg_pool = await asyncpg.create_pool(
-        dsn=os.getenv("DATABASE_URL"),
-        min_size=2,
-        max_size=PG_POOL_MAX_SIZE,
+async def _ensure_supersedes_index() -> None:
+    """Lookup of explicit supersedes links (services/memory_rank.py)."""
+    await _ensure_index_concurrently(
+        "idx_events_supersedes",
+        "ON events (tenant_id, (metadata->>'supersedes')) WHERE metadata ? 'supersedes'",
     )
 
-    logger.info("Postgres connected")
-    if uses_default_db_password():
-        # A literal message: nothing derived from DATABASE_URL is logged.
-        logger.warning(
-            "Postgres uses a well-known password. Keep its port private, and set a "
-            "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
-            "see wiki/Self-Hosting.md."
-        )
-    workers, assumed = uvicorn_worker_count()
-    pool_warn = warn_if_pool_near_pg_limit(
-        PG_POOL_MAX_SIZE, workers, assumed=assumed
+
+async def _ensure_index_concurrently(name: str, definition: str) -> None:
+    valid = await _pg_pool.fetchval(
+        """
+        SELECT i.indisvalid FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = $1
+        """,
+        name,
     )
-    if pool_warn:
-        logger.warning(pool_warn)
+    if valid:
+        return
+    if valid is False:
+        await _pg_pool.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+    logger.info("Building index %s", name)
+    await _pg_pool.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} {definition}")
 
-    try:
-        user_count = await _pg_pool.fetchval(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema='public'
-            AND table_name='users'
-            """
-        )
 
-        if user_count:
-            n = await _pg_pool.fetchval("SELECT COUNT(*) FROM users")
-            logger.info("Postgres users table: %s rows", n)
-        else:
-            logger.warning(
-                "Users table missing."
-            )
+async def _ensure_fts_index() -> None:
+    """Full-text index for keyword search (services/keyword_search.py).
 
-    except Exception as e:
-        logger.warning("Could not inspect users table: %s", e)
+    Built CONCURRENTLY so a large events table keeps accepting writes while it
+    builds. A build that was interrupted leaves an INVALID index, which
+    IF NOT EXISTS would skip forever, so drop and rebuild that one.
+    """
+    from services.keyword_search import FTS_DOCUMENT
 
-    # -----------------------------------------------------------------
-    # Existing migrations (keep yours exactly as-is)
-    # -----------------------------------------------------------------
+    await _ensure_index_concurrently("idx_events_fts", f"ON events USING gin ({FTS_DOCUMENT})")
 
+
+# Any constant works; it only has to be the same in every worker.
+MIGRATION_LOCK_ID = 7_301_884_221
+
+
+async def _run_migrations():
     await _pg_pool.execute("""
         ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(50);
         ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(50);
@@ -399,9 +390,7 @@ async def init_db():
     """)
 
 
-    # ---------------- Redis ----------------
 
-    _redis = redis.from_url(redis_url())
 
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS demo_requests (
@@ -452,6 +441,111 @@ async def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS uq_email_suppressions_email
             ON email_suppressions (LOWER(email));
     """)
+
+    # Client-supplied idempotency key: a retried write returns the first event.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_events_idempotency
+            ON events (tenant_id, agent_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+    """)
+
+    # Per-agent hash chain (services/audit_chain.py) and the links of deleted rows.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS chain_hash VARCHAR(64);
+        CREATE TABLE IF NOT EXISTS event_tombstones (
+            tenant_id   UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            agent_id    VARCHAR(255) NOT NULL,
+            event_id    UUID NOT NULL,
+            sequence_no BIGINT NOT NULL,
+            chain_hash  VARCHAR(64) NOT NULL,
+            reason      VARCHAR(50) NOT NULL,
+            deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (tenant_id, event_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_tombstones_agent_seq
+            ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
+    """)
+
+    await _ensure_fts_index()
+    await _ensure_supersedes_index()
+
+    # parent_event_id is a soft reference: the write path checks the parent
+    # exists in the same tenant, and retention / forget may later delete an
+    # old parent. A foreign key would block that, and nulling the child's
+    # link would change its checksum.
+    await _pg_pool.execute("""
+        ALTER TABLE events DROP CONSTRAINT IF EXISTS events_parent_event_id_fkey;
+        ALTER TABLE agents ADD COLUMN IF NOT EXISTS retention_days INTEGER;
+    """)
+
+    # API key scope (read_write / read_only) and optional expiry.
+    await _pg_pool.execute("""
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'read_write';
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    """)
+
+
+
+async def init_db():
+    global _pg_pool, _redis, _qdrant
+
+    # ---------------- PostgreSQL ----------------
+
+    _pg_pool = await asyncpg.create_pool(
+        dsn=os.getenv("DATABASE_URL"),
+        min_size=2,
+        max_size=PG_POOL_MAX_SIZE,
+    )
+
+    logger.info("Postgres connected")
+    if uses_default_db_password():
+        # A literal message: nothing derived from DATABASE_URL is logged.
+        logger.warning(
+            "Postgres uses a well-known password. Keep its port private, and set a "
+            "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
+            "see wiki/Self-Hosting.md."
+        )
+    workers, assumed = uvicorn_worker_count()
+    pool_warn = warn_if_pool_near_pg_limit(
+        PG_POOL_MAX_SIZE, workers, assumed=assumed
+    )
+    if pool_warn:
+        logger.warning(pool_warn)
+
+    try:
+        user_count = await _pg_pool.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema='public'
+            AND table_name='users'
+            """
+        )
+
+        if user_count:
+            n = await _pg_pool.fetchval("SELECT COUNT(*) FROM users")
+            logger.info("Postgres users table: %s rows", n)
+        else:
+            logger.warning(
+                "Users table missing."
+            )
+
+    except Exception as e:
+        logger.warning("Could not inspect users table: %s", e)
+
+    # -----------------------------------------------------------------
+    # Schema migrations: idempotent DDL, run on every start.
+    # -----------------------------------------------------------------
+    # Every uvicorn worker runs init_db at the same moment. The advisory lock
+    # lets one worker migrate while the others wait, instead of racing on the
+    # same DDL (which crashed a worker during start-up).
+    async with _pg_pool.acquire() as lock_conn:
+        await lock_conn.execute("SELECT pg_advisory_lock($1)", MIGRATION_LOCK_ID)
+        try:
+            await _run_migrations()
+        finally:
+            await lock_conn.execute("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID)
 
     _redis = redis.from_url(redis_url())
     logger.info("Redis connected")

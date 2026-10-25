@@ -1,24 +1,24 @@
 <div align="center">
 
-<a href="https://db.zizka.ai"><img src="docs/assets/zizkadb-logo.png" alt="ZizkaDB — visit db.zizka.ai" width="160"/></a>
+<a href="https://db.zizka.ai"><img src="docs/assets/zizkadb-logo.png" alt="ZizkaDB, the operational database for AI agents: audit log, causal agent memory and compliance" width="160"/></a>
 
 # ZizkaDB
 
-### The audit trail database for AI agents
+### The operational database for AI agents: audit, memory and compliance
 
-**Tamper-evident, checksum-backed decision logs** with **session replay** and **time-travel debugging**,<br/>
-built to support **EU AI Act Article 12** record-keeping.
+Every agent decision linked to its cause. **Causal agent memory**, a **tamper-evident audit log** and **time-travel debugging**,<br/>
+in one open-source database on Postgres. Built for **EU AI Act Article 12** record-keeping.
 
-Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
+Keyword + vector search · Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
-**[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/Zizka-ai/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
+**[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations-langchain-langgraph-crewai-livekit-mcp)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
 
-[![CI](https://github.com/Zizka-ai/ZizkaDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Zizka-ai/ZizkaDB/actions/workflows/ci.yml)
+[![CI](https://github.com/ZIZKA-AI-SL/ZizkaDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZIZKA-AI-SL/ZizkaDB/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.4.1-f97316)](https://github.com/Zizka-ai/ZizkaDB/releases)
+[![Release](https://img.shields.io/github/v/release/ZIZKA-AI-SL/ZizkaDB?color=f97316&label=release)](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases)
 [![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK)](https://pypi.org/project/zizkadb-sdk/)
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
-[![GitHub stars](https://img.shields.io/github/stars/Zizka-ai/ZizkaDB?style=flat)](https://github.com/Zizka-ai/ZizkaDB/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/ZIZKA-AI-SL/ZizkaDB?style=flat)](https://github.com/ZIZKA-AI-SL/ZizkaDB/stargazers)
 [![PyPI downloads](https://img.shields.io/pepy/dt/zizkadb-sdk?label=PyPI%20downloads)](https://pepy.tech/projects/zizkadb-sdk)
 [![npm downloads](https://img.shields.io/npm/d18m/zizkadb-sdk?label=npm%20downloads)](https://www.npmjs.com/package/zizkadb-sdk)
 
@@ -26,11 +26,13 @@ Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
 </div>
 
-Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces.
+Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed: **causal observability for AI agents**, from debugging to compliance.
 
 - **Causal, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
 - **Time-travel.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment.
-- **Tamper-evident audit trail.** Every decision is logged with a checksum, so you have a verifiable record for EU AI Act Article 12.
+- **Provable history.** Every event has a checksum and is hash-chained to the one before it, so `db.verify_chain(agent)` proves nothing was edited, removed or reordered. GDPR deletions leave a content-free tombstone. A verifiable record for EU AI Act Article 12.
+- **Causal agent memory for the next run.** `db.context_for(agent, task)` returns the relevant past as a prompt block, ranked by relevance, importance and recency; a new fact can replace an old one (`supersedes`). Keyword search works with no OpenAI key, hybrid with embeddings, or embed locally.
+- **Built database.** Idempotent and batch writes, retention, export/import, read-only and expiring keys, Prometheus metrics, backup and restore scripts.
 - **Drift detection.** See when an agent's behavior shifts from its baseline.
 - **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure. Self-hosted runs **one agent with one API key**; multiple agents, agent fleets and agent-to-agent messaging are on Cloud.
 
@@ -46,20 +48,20 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 | Running it for your team on a server | [Self-host on a server](#self-host-on-a-server) or [Deploy on Redu Cloud](#deploy-on-redu-cloud) |
 
 <p align="center">
-  <a href="#quickstart-60-seconds"><img src="docs/assets/why-chain.svg" alt="Animated: db.why() walks from a tool_call back through llm_response to the root-cause user_message" width="900"/></a>
+  <a href="#quickstart-60-seconds"><img src="docs/assets/why-chain.svg" alt="Causal debugging for AI agents: db.why() traces a tool call back through the LLM response to the user message that caused it" width="900"/></a>
 </p>
 
 ## Contents
 
 - [Quickstart (60 seconds)](#quickstart-60-seconds)
   - [Self-host on a server](#self-host-on-a-server) · [Deploy on Redu Cloud](#deploy-on-redu-cloud)
-- [Integrations](#integrations)
+- [Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP](#integrations-langchain-langgraph-crewai-livekit-mcp)
 - [Connect your agent](#connect-your-agent)
 - [What it does](#what-it-does)
 - [Audit trail and EU AI Act Article 12](#audit-trail-and-eu-ai-act-article-12)
 - [How it works](#how-it-works)
 - [Use with your AI assistant (MCP)](#use-with-your-ai-assistant-mcp)
-- [ZizkaDB vs. tracing tools](#zizkadb-vs-tracing-tools)
+- [ZizkaDB vs Langfuse, LangSmith and Mem0](#zizkadb-vs-langfuse-langsmith-and-mem0-causality-not-just-traces-or-recall)
 - [Cloud, FAQ and docs](#more)
 - [Contributors](#contributors)
 
@@ -70,13 +72,13 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 One command, one container. No repo clone, no Python, no config files.
 
 <p align="center">
-  <a href="scripts/quickstart-remote.sh"><img src="docs/assets/quickstart-terminal.svg" alt="Terminal animation: one curl command starts ZizkaDB and prints a causal chain" width="900"/></a>
+  <a href="scripts/quickstart-remote.sh"><img src="docs/assets/quickstart-terminal.svg" alt="Self-hosted quickstart: one curl command starts the open-source ZizkaDB database on Postgres and prints an AI agent causal chain" width="900"/></a>
 </p>
 
 **1. Run it.** With [Docker](https://docs.docker.com/get-docker/) running:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 This pulls a single image (Postgres, the API and the dashboard together), starts it, and logs a demo agent run. After the download, startup takes a few seconds.
@@ -126,7 +128,7 @@ The single container has two modes:
 
   Put it behind HTTPS, and set `ZIZKADB_PUBLIC_URL=https://your-domain` so the links it generates are correct. If a reverse proxy on the same host forwards to it, add `-e TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12` so sign-in rate limits see each visitor.
 
-The single container runs without Qdrant, so semantic search and embeddings need the full stack below.
+The single container runs without Qdrant: search and `context_for()` use keyword search there (no setup, no OpenAI key). For vector search, use the full stack below with embeddings on.
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).
 
@@ -134,10 +136,10 @@ Self-hosted is single-agent: the first agent name you log with becomes your agen
 
 ### Self-host from a clone
 
-The full stack (Postgres, Qdrant, Redis, API, dashboard as separate containers) — use this for development, semantic search, or production:
+The full stack (Postgres, Qdrant, Redis, API, dashboard as separate containers) — use this for development, vector search, or production. It generates random database, Redis and Qdrant passwords on first setup:
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/setup-local.sh
 ```
 
@@ -149,31 +151,39 @@ bash scripts/setup-local.sh
 
 ### Self-host on a server
 
-On a machine other people can reach, set these in `infra/.env` before starting the stack:
+On a machine other people can reach:
+
+```bash
+cp .env.example infra/.env
+bash scripts/init-secrets.sh        # random Postgres, Redis, Qdrant and JWT secrets
+```
+
+Then set these in `infra/.env` before starting the stack:
 
 ```bash
 ENV=production                      # turns off the one-click button and dev API keys
 DEV_API_KEY=<random>                # must not be the default, or the API refuses to start
-JWT_SECRET=<random>                 # openssl rand -hex 32 (also JWT_REFRESH_SECRET)
 DEPLOYMENT_MODE=self_hosted
 SELFHOST_ADMIN_TOKEN=<long-random>  # python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-The dashboard then asks for the admin token instead of showing the one-click button. Without `SELFHOST_ADMIN_TOKEN`, dashboard login stays disabled. Everyone who has the token signs in to the same single owner workspace. Check your config with `bash scripts/validate-selfhost-config.sh --production`. Full steps: [wiki/Self-Hosting](https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting).
+Optional: `EVENT_RETENTION_DAYS` (delete old events), `METRICS_TOKEN` (Prometheus `/metrics`), `REDACT_PATTERNS` (redact emails, phones, cards before storage). Data ports stay on `127.0.0.1`.
+
+The dashboard then asks for the admin token instead of showing the one-click button. Without `SELFHOST_ADMIN_TOKEN`, dashboard login stays disabled. Everyone who has the token signs in to the same single owner workspace. Check your config with `bash scripts/validate-selfhost-config.sh --production`. Full steps: [wiki/Self-Hosting](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Self-Hosting).
 
 ### Deploy on Redu Cloud
 
 [![Deploy on Redu Cloud](https://img.shields.io/badge/Deploy%20on-Redu%20Cloud-2563eb)](redu.md)
 
-[Redu Cloud](https://redu.cloud) is ZizkaDB's recommended cloud for the open-source edition. With the redu MCP added to your coding agent, ask it to "Deploy https://github.com/Zizka-ai/ZizkaDB to redu". The agent follows [redu.md](redu.md): the single container on one VM, the dashboard and API on one HTTPS URL, and your data kept in a volume. Then sign in with the admin token, create your API key in Settings, and set `ZIZKADB_HOST` and `ZIZKADB_API_KEY` in your agent.
+[Redu Cloud](https://redu.cloud) is ZizkaDB's recommended cloud for the open-source edition. With the redu MCP added to your coding agent, ask it to "Deploy https://github.com/ZIZKA-AI-SL/ZizkaDB to redu". The agent follows [redu.md](redu.md): the single container on one VM, the dashboard and API on one HTTPS URL, and your data kept in a volume. Then sign in with the admin token, create your API key in Settings, and set `ZIZKADB_HOST` and `ZIZKADB_API_KEY` in your agent.
 
 Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troubleshooting.md](wiki/Troubleshooting.md) · What ZizkaDB sends: [docs/telemetry.md](docs/telemetry.md)
 
 ---
 
-## Integrations
+## Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP
 
-Works with the stack you already use — add one package and every step is logged with its cause.
+Works with the agent framework you already use — add one package and every step is logged with its cause.
 
 <p align="center">
   <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/python/3776AB" alt="Python" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt="TypeScript" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#langchain"><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="LangChain" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#crewai"><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="CrewAI" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#livekit-agents-voice"><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="LiveKit" height="40"/></a> &nbsp;&nbsp; <a href="mcp/README.md"><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="MCP" height="40"/></a> &nbsp;&nbsp; <a href="https://db.zizka.ai/swagger"><img src="https://cdn.simpleicons.org/swagger/85EA2D" alt="REST API" height="40"/></a>
@@ -195,6 +205,11 @@ Works with the stack you already use — add one package and every step is logge
     <td nowrap><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="" height="20" align="center"/>&nbsp;<a href="CONNECT.md#langchain"><strong>LangChain</strong></a></td>
     <td><code>pip install zizkadb-langchain</code></td>
     <td>Drop-in callback handler</td>
+  </tr>
+  <tr>
+    <td nowrap><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="" height="20" align="center"/>&nbsp;<a href="integrations/langgraph/README.md"><strong>LangGraph</strong></a></td>
+    <td><code>pip install zizkadb-langgraph</code></td>
+    <td>Every graph node logged with its parent</td>
   </tr>
   <tr>
     <td nowrap><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="" height="20" align="center"/>&nbsp;<a href="CONNECT.md#crewai"><strong>CrewAI</strong></a></td>
@@ -258,20 +273,26 @@ From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.
 
 ## What it does
 
-| Function | What you get |
-| --- | --- |
-| `db.why(event_id)` | The causal chain behind any event |
-| `db.at(agent, timestamp)` | What the agent knew at a past moment |
-| `db.search(query)` | Semantic search over the agent's history |
-| `db.context_for(agent, task)` | Relevant past events, ready to inject into the next prompt |
-| `db.baseline(agent)` | Drift detection: alerts when agent behavior shifts from past sessions |
-| `db.forget(key, value)` | GDPR erasure by metadata filter, including the search index |
+| | Function | What you get |
+| --- | --- | --- |
+| **Debug** | `db.why(event_id)` | The causal chain behind any event |
+| | `db.at(agent, timestamp)` | What the agent knew at a past moment |
+| | `db.baseline(agent)` | Drift detection: alerts when behavior shifts from past sessions |
+| **Causal agent memory** | `db.context_for(agent, task)` | Relevant past events as a prompt block (relevance × importance × recency) |
+| | `db.search(query, mode=)` | Keyword search out of the box; hybrid keyword + vector with embeddings |
+| | `db.log(..., supersedes=, importance=)` | Replace an outdated fact; weight what matters |
+| **Audit** | `db.verify_chain(agent)` | Proof that no event was edited, removed or reordered |
+| | `db.forget(key, value)` | GDPR erasure, including the search index, leaving a tombstone |
+| | `db.export_events(agent)` / `db.import_events(...)` | Portable NDJSON copy; move between self-host and Cloud |
+| **Operate** | `db.log(..., idempotency_key=)` / `db.log_batch(events)` | Safe retries; up to 500 events per request |
+| | `db.iter_events(agent)` | Every event, cursor-paged |
+| | Server settings | Retention, redaction, read-only and expiring keys, `/metrics`, backup and restore |
 
 ### Audit trail and EU AI Act Article 12
 
 Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record:
 
-- **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum over its content and audit fields (agent, session, parent, timestamp, sequence), and `GET /v1/events/verify` reports any row whose fields no longer match.
+- **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum over its content and audit fields (agent, session, parent, timestamp, sequence), and `GET /v1/events/verify` reports any row whose fields no longer match. Events are also hash-chained per agent, so `GET /v1/events/chain` proves no event was removed, inserted or reordered (GDPR deletions leave a content-free tombstone).
 - **Causally linked history.** Each decision points to the event that caused it, so an auditor can follow the full chain.
 - **Session replay.** Step through any past session event by event.
 - **Time-travel debugging.** Rebuild exactly what the agent knew at any moment with `db.at()`.
@@ -280,7 +301,7 @@ Article 12 of the EU AI Act requires high-risk AI systems to automatically keep 
 ZizkaDB supports your record-keeping obligations; it doesn't make a system compliant on its own.
 
 <p align="center">
-  <a href="https://db.zizka.ai"><img src="docs/assets/readme-hero-dashboard.png" alt="ZizkaDB dashboard showing agent activity" width="900"/></a>
+  <a href="https://db.zizka.ai"><img src="docs/assets/readme-hero-dashboard.png" alt="ZizkaDB dashboard: causal chain of an AI agent decision, tamper-evident audit log and agent memory" width="900"/></a>
 </p>
 
 ---
@@ -292,13 +313,13 @@ flowchart LR
     A[Your agent<br/>SDK · LangChain · CrewAI · LiveKit] -->|events + parent_id| B[ZizkaDB API]
     D[Dashboard] --> B
     M[MCP server<br/>Cursor · Claude] --> B
-    B --> P[(PostgreSQL<br/>source of truth)]
-    B --> Q[(Qdrant<br/>semantic search)]
-    B --> R[(Redis<br/>cache)]
+    B --> P[(PostgreSQL<br/>events · hash chain · keyword search)]
+    B -.->|embeddings on| Q[(Qdrant<br/>vector search)]
+    B --> R[(Redis<br/>cache · rate limits)]
 ```
 
-- **Causal lineage** lives in Postgres: every event stores its parent, and `why()` walks the chain with a recursive query. No separate graph store.
-- **Every event is written twice**: to Postgres for structured queries and to Qdrant for semantic search. Design decisions: [docs/adr/](docs/adr/).
+- **Postgres is the source of truth.** Every event stores its parent (`why()` is one recursive query), its checksum and its link in the agent's hash chain. Keyword search is Postgres full-text search, so search works with nothing else installed.
+- **Qdrant is optional.** With embeddings on (OpenAI or a local model), events are also indexed for vector search, and search becomes hybrid. Design decisions: [docs/adr/](docs/adr/).
 
 ---
 
@@ -318,21 +339,25 @@ Ask Cursor or Claude *"why did support-bot call lookup_order?"* and get the chai
 }
 ```
 
-For ZizkaDB Cloud, use `ZIZKADB_API_KEY` instead. Setup for each client: [mcp/README.md](mcp/README.md). The MCP server is MIT-licensed.
+For ZizkaDB Cloud, use `ZIZKADB_API_KEY` instead. Setup for each client: [mcp/README.md](mcp/README.md). The MCP server is MIT-licensed; everything else is AGPL-3.0 ([NOTICE](NOTICE)).
 
 ---
 
-## ZizkaDB vs. tracing tools
+## ZizkaDB vs Langfuse, LangSmith and Mem0: causality, not just traces or recall
 
-Tools like Langfuse and LangSmith **observe** span trees. ZizkaDB **audits** decisions.
+Tracing tools such as Langfuse and LangSmith **observe** span trees. Memory layers such as Mem0 **recall** facts. ZizkaDB **records why** each decision happened, keeps it as **auditable memory**, and lets you **prove** the record is intact. Use it alongside a tracer if you already have one.
 
-| | ZizkaDB | Typical LLM tracing tools |
-| --- | :---: | :---: |
-| Explicit cause → effect links | ✅ | Span nesting |
-| One-call root cause (`db.why()`) | ✅ | Manual trace reading |
-| Time-travel to past agent state | ✅ | — |
-| Memory for future runs (`db.context_for()`) | ✅ | — |
-| Pricing | Free self-host (AGPL) | Often per-trace |
+| | ZizkaDB | LLM tracing tools | Agent memory layers |
+| --- | :---: | :---: | :---: |
+| Explicit cause → effect links | ✅ | Span nesting | — |
+| One-call root cause (`db.why()`) | ✅ | Manual trace reading | — |
+| Time-travel to past agent state | ✅ | — | — |
+| Memory for future runs (`db.context_for()`) | ✅ | — | ✅ |
+| Tamper-evident hash chain, verifiable in one call | ✅ | — | — |
+| GDPR erasure that leaves proof (tombstones) | ✅ | — | — |
+| Self-hosted search with no LLM key | ✅ | — | — |
+
+— means not a core feature of that category; check each tool for specifics.
 
 ---
 
@@ -364,6 +389,21 @@ No. The curl quickstart downloads config and Docker images only.
 **Do I need an API key locally?**  
 No. `http://localhost:8000` uses a built-in dev key.
 
+**Do I need an OpenAI key?**  
+No. Logging, `why()`, time travel, keyword search and `context_for()` work without one. Add an OpenAI key, or run a local embedding model (`EMBEDDINGS_PROVIDER=local` with Ollama, LM Studio or vLLM), for hybrid vector search.
+
+**How is ZizkaDB different from an agent memory layer like Mem0?**  
+A memory layer stores facts to recall. ZizkaDB stores what the agent did and *why*, linked step by step, and serves the relevant part back as memory (`context_for()`). The same record is a tamper-evident audit log, so memory, debugging and compliance come from one source.
+
+**Is ZizkaDB an observability tool?**  
+It's causal observability for AI agents: instead of a span tree to read through, every event points to the event that caused it, and `db.why()` returns the chain. It works next to tracing tools such as Langfuse or LangSmith.
+
+**Can I use ZizkaDB as an audit log for the EU AI Act (Article 12)?**  
+Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations; it doesn't make a system compliant on its own.
+
+**How do I prove the logs weren't changed?**  
+`db.verify_chain(agent)` (or `GET /v1/events/chain`) rechecks every checksum and link and returns the chain head. Store the head somewhere else; checking again later from that head proves nothing before it was rewritten.
+
 **My server's login page asks for an admin token. Where is it?**  
 A server install generates one on first start. Single container: `docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Full stack: the `SELFHOST_ADMIN_TOKEN` you set in `infra/.env`. After signing in, create your API key in **Settings**.
 
@@ -382,9 +422,9 @@ The stack isn't running. Start it with the curl command above or `bash scripts/s
 | --- | --- |
 | Worked example | [worked/01-support-order-delay](worked/01-support-order-delay/) |
 | Examples | [examples/](examples/) |
-| Self-hosting | [DEVELOPMENT.md](DEVELOPMENT.md) · [wiki/Self-Hosting](https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting) |
+| Self-hosting | [DEVELOPMENT.md](DEVELOPMENT.md) · [wiki/Self-Hosting](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Self-Hosting) |
 | Integrate any agent | [docs/integrate/](docs/integrate/) |
-| Issues · Discussions | [Issues](https://github.com/Zizka-ai/ZizkaDB/issues) · [Discussions](https://github.com/Zizka-ai/ZizkaDB/discussions) |
+| Issues · Discussions | [Issues](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues) · [Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions) |
 | Security | [SECURITY.md](SECURITY.md) |
 | AI-assisted development | [AGENTS.md](AGENTS.md) |
 
@@ -394,7 +434,7 @@ The stack isn't running. Start it with the curl command above or `bash scripts/s
 
 ## Contributors
 
-Thanks to everyone who has helped build ZizkaDB. Want to join? Read [CONTRIBUTING.md](CONTRIBUTING.md) or pick up an [open issue](https://github.com/Zizka-ai/ZizkaDB/issues).
+Thanks to everyone who has helped build ZizkaDB. Want to join? Read [CONTRIBUTING.md](CONTRIBUTING.md) or pick up an [open issue](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues).
 
 <!-- CONTRIBUTORS:START -->
 <table>

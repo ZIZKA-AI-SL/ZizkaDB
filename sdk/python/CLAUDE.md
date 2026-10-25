@@ -30,12 +30,16 @@ asyncio.run(main())
 
 | Method | What it does | Requires OpenAI key? |
 |---|---|---|
-| `db.log(agent, event, data, parent_id?, session_id?)` | Log an event | No |
+| `db.verify_chain(agent, after_seq?, anchor?)` | Check the audit hash chain | No |
+| `db.log(agent, event, data, parent_id?, session_id?, idempotency_key?, supersedes?, importance?)` | Log an event (same key on retry = stored once; `supersedes` retires an older fact from memory) | No |
 | `db.why(event_id)` | Causal chain backward from an event | No |
 | `db.at(agent, timestamp)` | Time-travel — agent state at a point in time | No |
 | `db.query(agent, ...)` | Fetch events with filters | No |
-| `db.search(query, agent?)` | Semantic search over event history | Yes |
-| `db.context_for(agent, task)` | Relevant past events as a prompt block | Yes |
+| `db.iter_events(agent, page_size?)` | Every event, newest first, cursor-paged (async iterator) | No |
+| `db.export_events(agent)` / `db.import_events(events, agent?)` | NDJSON export (async iterator) and import with parent remapping | No |
+| `db.log_batch(events)` | Up to 500 events in one request; per-item results, `parent_index` | No |
+| `db.search(query, agent?, mode?)` | Search event history: hybrid with embeddings, keyword (Postgres full-text) without | No |
+| `db.context_for(agent, task)` | Relevant past events as a prompt block (keyword relevance without embeddings) | No |
 | `db.memory_diff(agent)` | Compare this session to previous sessions | Yes |
 | `db.baseline(agent)` | Behavioral baseline + drift signal | No |
 | `db.token_usage(agent, ...)` | Token usage report for date range | No |

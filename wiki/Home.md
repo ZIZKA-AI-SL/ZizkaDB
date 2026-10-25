@@ -4,15 +4,15 @@
 
 | Resource | Link |
 |----------|------|
-| GitHub | [Zizka-ai/ZizkaDB](https://github.com/Zizka-ai/ZizkaDB) |
-| OSS quickstart (no clone) | `curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh \| bash` |
-| Connect guide | [CONNECT.md](https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md) |
-| PyPI SDK | [zizkadb-sdk](https://pypi.org/project/zizkadb-sdk/) **0.4.1** |
+| GitHub | [ZIZKA-AI-SL/ZizkaDB](https://github.com/ZIZKA-AI-SL/ZizkaDB) |
+| OSS quickstart (no clone) | `curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh \| bash` |
+| Connect guide | [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md) |
+| PyPI SDK | [zizkadb-sdk](https://pypi.org/project/zizkadb-sdk/) **0.5.0** |
 | PyPI MCP | [zizkadb-mcp](https://pypi.org/project/zizkadb-mcp/) **0.1.8** |
 | PyPI LangChain | [zizkadb-langchain](https://pypi.org/project/zizkadb-langchain/) **0.1.3** |
 | PyPI CrewAI | [zizkadb-crewai](https://pypi.org/project/zizkadb-crewai/) **0.1.3** |
 | PyPI LiveKit | [zizkadb-livekit](https://pypi.org/project/zizkadb-livekit/) **0.2.0** |
-| npm SDK | [zizkadb-sdk](https://www.npmjs.com/package/zizkadb-sdk) **0.4.1** |
+| npm SDK | [zizkadb-sdk](https://www.npmjs.com/package/zizkadb-sdk) **0.5.0** |
 | Docs site | [db.zizka.ai/docs](https://db.zizka.ai/docs) |
 | Managed cloud (optional) | [db.zizka.ai/signup](https://db.zizka.ai/signup) |
 
@@ -36,7 +36,7 @@ When an agent misbehaves in production, scattered logs are not enough. ZizkaDB s
 ## Quick start (OSS — recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 No signup. No API key on localhost. Runs `zizkadb demo` and opens the dashboard at http://localhost:3001/login.
@@ -44,11 +44,11 @@ No signup. No API key on localhost. Runs `zizkadb demo` and opens the dashboard 
 **Have the repo?**
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/quickstart.sh
 ```
 
-See [[Getting Started]] · [worked example 01](https://github.com/Zizka-ai/ZizkaDB/tree/main/worked/01-support-order-delay)
+See [[Getting Started]] · [worked example 01](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/worked/01-support-order-delay)
 
 ---
 

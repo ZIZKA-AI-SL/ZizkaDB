@@ -1,6 +1,6 @@
 # ZizkaDB Wiki (source)
 
-Markdown files in this folder are the **source** for the [GitHub Wiki](https://github.com/Zizka-ai/ZizkaDB/wiki).
+Markdown files in this folder are the **source** for the [GitHub Wiki](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki).
 
 ## Publish to GitHub Wiki
 
@@ -11,7 +11,7 @@ Markdown files in this folder are the **source** for the [GitHub Wiki](https://g
 bash wiki/push-wiki.sh
 ```
 
-3. Open https://github.com/Zizka-ai/ZizkaDB/wiki
+3. Open https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki
 
 ## Pages
 

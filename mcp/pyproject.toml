@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zizkadb-mcp"
-version = "0.1.9"
+version = "0.1.10"
 description = "MCP server for ZizkaDB, the audit trail database for AI agents: query tamper-evident decision logs from Cursor, Claude Desktop, and any MCP client"
 readme = "README.md"
 license = "MIT"
@@ -33,8 +33,8 @@ zizkadb-mcp = "zizkadb_mcp.server:main"
 [project.urls]
 Homepage = "https://db.zizka.ai"
 Documentation = "https://db.zizka.ai/docs"
-Repository = "https://github.com/Zizka-ai/ZizkaDB"
-Issues = "https://github.com/Zizka-ai/ZizkaDB/issues"
+Repository = "https://github.com/ZIZKA-AI-SL/ZizkaDB"
+Issues = "https://github.com/ZIZKA-AI-SL/ZizkaDB/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

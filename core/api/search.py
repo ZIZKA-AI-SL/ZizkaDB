@@ -1,4 +1,6 @@
 import json
+import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from services.exceptions import bad_request
@@ -9,14 +11,57 @@ from api.deps import assert_agent_allowed, get_tenant, is_unbound_api_key
 from db.connection import get_pool, get_qdrant
 from services.embeddings import generate_embedding
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
+from services.keyword_search import keyword_search, reciprocal_rank_fusion
+from services.memory_rank import superseded_ids
 
 router = APIRouter()
+log = logging.getLogger(__name__)
+
+SearchMode = Literal["auto", "keyword", "semantic", "hybrid"]
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=2000)
     agent: str | None = None
     limit: int = Field(default=10, ge=1, le=100)
+    # auto: hybrid when embeddings are on, keyword otherwise.
+    mode: SearchMode = "auto"
+    # Superseded facts are left out unless asked for (the audit log keeps them).
+    include_superseded: bool = False
+
+
+def _embeddings_off_error() -> Exception:
+    if is_self_hosted_deployment():
+        return bad_request(
+            "Semantic search is disabled on this self-hosted install. Use mode "
+            "'keyword' (or 'auto'), or set EMBEDDINGS_ENABLED=true in infra/.env, "
+            "restart the API, then configure embeddings in Dashboard → Settings."
+        )
+    return bad_request("Semantic search is disabled for this deployment.")
+
+
+async def vector_search(
+    tenant_id: str,
+    query: str,
+    *,
+    agent: str | None,
+    limit: int,
+) -> list[tuple[str, float]] | None:
+    """(event_id, score) best first, or None when no embedding could be made."""
+    embedding = await generate_embedding(query, tenant_id)
+    if not embedding:
+        return None
+    must = [FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id))]
+    if agent:
+        must.append(FieldCondition(key="agent_id", match=MatchValue(value=agent)))
+    results = await get_qdrant().search(
+        collection_name="agent_events",
+        query_vector=embedding,
+        query_filter=Filter(must=must),
+        limit=limit,
+        with_payload=True,
+    )
+    return [(str(r.id), r.score) for r in results]
 
 
 @router.post("")
@@ -34,60 +79,68 @@ async def semantic_search(
     if agent:
         await assert_agent_allowed(tenant, agent)
 
-    if not embeddings_enabled():
-        if is_self_hosted_deployment():
-            raise bad_request(
-                "Semantic search is disabled on this self-hosted install. "
-                "Set EMBEDDINGS_ENABLED=true in infra/.env, restart the API, "
-                "then add your embedding API key in Dashboard → Settings."
-            )
-        raise bad_request("Semantic search is disabled for this deployment.")
+    mode = body.mode
+    if mode == "auto":
+        mode = "hybrid" if embeddings_enabled() else "keyword"
+    if mode in ("semantic", "hybrid") and not embeddings_enabled():
+        raise _embeddings_off_error()
 
-    embedding = await generate_embedding(body.query, tenant_id)
-    if not embedding:
-        raise bad_request(
-            "Embedding generation failed. Configure embeddings in Dashboard → Settings "
-            "(platform key or your OpenAI API key)."
+    warning = None
+    keyword_hits: list = []
+    vector_hits: list[tuple[str, float]] | None = []
+
+    if mode in ("semantic", "hybrid"):
+        vector_hits = await vector_search(
+            tenant_id, body.query, agent=agent,
+            limit=body.limit * (2 if mode == "hybrid" else 1),
+        )
+        if vector_hits is None:
+            if body.mode == "semantic":
+                raise bad_request(
+                    "Embedding generation failed. Configure embeddings in Dashboard → Settings."
+                )
+            # auto / hybrid: still answer, from keywords alone.
+            warning = "Embedding generation failed; results come from keyword search only."
+            mode = "keyword"
+            vector_hits = []
+
+    if mode in ("keyword", "hybrid"):
+        keyword_hits = await keyword_search(
+            get_pool(), tenant_id, body.query, agent=agent,
+            limit=body.limit * (2 if mode == "hybrid" else 1),
         )
 
-    qdrant = get_qdrant()
-
-    if agent:
-        query_filter = Filter(
-            must=[
-                FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-                FieldCondition(key="agent_id", match=MatchValue(value=agent)),
-            ]
-        )
+    if mode == "keyword":
+        scores = {str(r["event_id"]): s for r, s in keyword_hits}
+    elif mode == "semantic":
+        scores = dict(vector_hits)
     else:
-        query_filter = Filter(
-            must=[FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id))]
+        scores = reciprocal_rank_fusion(
+            [eid for eid, _ in vector_hits],
+            [str(r["event_id"]) for r, _ in keyword_hits],
         )
 
-    results = await qdrant.search(
-        collection_name="agent_events",
-        query_vector=embedding,
-        query_filter=query_filter,
-        limit=body.limit,
-        with_payload=True,
-    )
+    if scores and not body.include_superseded:
+        for event_id in await superseded_ids(get_pool(), tenant_id, agent, scores):
+            scores.pop(event_id, None)
 
-    pool = get_pool()
-    event_ids = [r.id for r in results]
-    if not event_ids:
-        return {"results": []}
+    ranked = sorted(scores, key=scores.get, reverse=True)[: body.limit]
+    response = {"query": body.query, "mode": mode, "results": []}
+    if warning:
+        response["warning"] = warning
+    if not ranked:
+        return response
 
-    rows = await pool.fetch(
+    rows = await get_pool().fetch(
         """
         SELECT event_id, agent_id, timestamp, event_type,
                data, parent_event_id, session_id, sequence_no
         FROM events
         WHERE event_id = ANY($1::uuid[]) AND tenant_id = $2
         """,
-        event_ids, tenant_id,
+        ranked, tenant_id,
     )
 
-    score_map = {str(r.id): r.score for r in results}
     events = []
     for row in rows:
         data = row["data"]
@@ -100,8 +153,9 @@ async def semantic_search(
             "event": row["event_type"],
             "data": dict(data),
             "parent_id": str(row["parent_event_id"]) if row["parent_event_id"] else None,
-            "score": score_map.get(str(row["event_id"]), 0),
+            "score": round(scores.get(str(row["event_id"]), 0), 6),
         })
 
     events.sort(key=lambda x: x["score"], reverse=True)
-    return {"query": body.query, "results": events}
+    response["results"] = events
+    return response

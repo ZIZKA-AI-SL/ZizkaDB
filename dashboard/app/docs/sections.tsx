@@ -225,7 +225,7 @@ const SDK_METHODS = [
   },
   {
     method: "search(query)",
-    desc: "Semantic search over agent history in plain English.",
+    desc: "Search agent history in plain English (keyword, or hybrid with embeddings).",
   },
   {
     method: "at(agent, timestamp)",
@@ -304,13 +304,13 @@ export function OverviewSection({
 
       <Callout type="tip">
         <strong>OSS quickstart (recommended):</strong>
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 bash scripts/quickstart.sh`}</Code>
         Pulls pre-built GHCR images when available — no local compile. Runs the <code style={codeMonoDark}>why()</code> demo
         and opens the dashboard at <code style={codeMonoDark}>http://localhost:3001/login</code> (no signup).
         Full connect guide:{' '}
-        <a href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 500 }}>
+        <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 500 }}>
           CONNECT.md
         </a>
       </Callout>
@@ -378,10 +378,10 @@ export ZIZKADB_TELEMETRY=false            # optional`}</Code>
         Full guide in{' '}
         <button type="button" onClick={() => onNavigate('selfhost')} style={{ background: 'none', border: 'none', color: '#1e40af', fontWeight: 500, cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>Self-host →</button>
         {' '}· connect snippets in{' '}
-        <a href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af', fontWeight: 500 }}>CONNECT.md</a>
+        <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af', fontWeight: 500 }}>CONNECT.md</a>
       </p>
       <Step n={1} title="Quickstart (one command)">
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 bash scripts/quickstart.sh`}</Code>
         <p style={S.p}>
@@ -483,8 +483,8 @@ await db.log(agent="my-bot", event="started", data={})`}</Code>
       <Step n={2} title="Configure embeddings (managed)">
         <p style={S.p}>
           In Settings → <strong>Embeddings</strong>, pick your OpenAI model
-          (platform-hosted or your own key). Required for semantic search and{" "}
-          <code style={codeMonoDark}>context_for()</code>.
+          (platform-hosted or your own key) to add vector results to search and{" "}
+          <code style={codeMonoDark}>context_for()</code>; without embeddings both use keyword search.
           Logging and <code style={codeMonoDark}>why()</code>{" "}
           work without embeddings.
         </p>
@@ -1030,7 +1030,7 @@ curl -X DELETE https://db.zizka.ai/v1/memory/forget \\
               ["GET", "/v1/events", "Query events"],
               ["GET", "/v1/events/{id}/why", "Causal chain"],
               ["GET", "/v1/events/at", "State at timestamp"],
-              ["POST", "/v1/search", "Semantic search"],
+              ["POST", "/v1/search", "Search (keyword, semantic or hybrid)"],
               ["POST", "/v1/memory/context", "Prompt context"],
               ["GET", "/v1/memory/diff/{session_id}", "Session diff"],
               ["DELETE", "/v1/memory/forget", "GDPR erasure"],
@@ -1328,7 +1328,8 @@ export function McpSection() {
             tool: "log_event",
             desc: "Log action with optional causal parent_id",
           },
-          { tool: "search_memory", desc: "Semantic search over agent history" },
+          { tool: "search_memory", desc: "Keyword or hybrid search over agent history" },
+          { tool: "verify_chain", desc: "Prove the agent's history is untouched" },
           {
             tool: "get_context",
             desc: "Formatted memory block for system prompts",
@@ -1438,7 +1439,7 @@ export function SelfHostSection() {
       </Callout>
 
       <Step n={1} title="Quickstart (recommended)">
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 bash scripts/quickstart.sh`}</Code>
         <p style={S.p}>
@@ -1448,7 +1449,7 @@ bash scripts/quickstart.sh`}</Code>
         <p style={S.p}>
           Stack only: <code style={codeMonoDark}>bash scripts/setup-local.sh</code> ·
           Connect guide:{' '}
-          <a href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>CONNECT.md</a>
+          <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>CONNECT.md</a>
         </p>
       </Step>
 
@@ -1457,14 +1458,14 @@ bash scripts/quickstart.sh`}</Code>
 zizkadb demo`}</Code>
         <p style={S.p}>
           Worked example:{' '}
-          <a href="https://github.com/Zizka-ai/ZizkaDB/tree/main/worked/01-support-order-delay" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>
+          <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/worked/01-support-order-delay" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>
             worked/01-support-order-delay
           </a>
         </p>
       </Step>
 
       <Step n={3} title="Manual setup (optional)">
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 cp .env.example infra/.env`}</Code>
         <p style={S.p}>
@@ -1707,7 +1708,7 @@ async with ZizkaDB("zizkadb_live_...") as db:
         Runnable trees under{" "}
         <code style={codeMonoDark}>examples/</code> on{" "}
         <a
-          href="https://github.com/Zizka-ai/ZizkaDB"
+          href="https://github.com/ZIZKA-AI-SL/ZizkaDB"
           style={{ color: "#1e40af" }}
         >
           GitHub

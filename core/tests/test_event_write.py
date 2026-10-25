@@ -415,7 +415,8 @@ async def test_write_event_inserts_v2_checksum_of_canonical_values(
     assert "nextval" in select_call.args[0]
     insert_sql, *insert_args = insert_call.args
     assert "INSERT INTO events" in insert_sql
-    assert insert_args[8:] == [7, canonical["timestamp"], expected]
+    assert insert_args[8:12] == [7, canonical["timestamp"], expected, None]
+    assert len(insert_args[12]) == 64  # chain_hash
     assert not any(
         "UPDATE events SET checksum" in c.args[0] for c in mock_pool.execute.await_args_list
     )

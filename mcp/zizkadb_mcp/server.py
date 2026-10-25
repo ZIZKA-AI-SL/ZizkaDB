@@ -208,18 +208,20 @@ async def search_memory(
     query: str,
     agent: str = "",
     limit: int = 10,
+    mode: str = "",
 ) -> dict:
     """
-    Semantically search over all logged agent events.
+    Search over all logged agent events.
 
-    Finds past decisions, tool calls, conversations, or any event by meaning --
-    not just keyword matching. Useful before a new task to see what happened
-    in similar past situations.
+    Finds past decisions, tool calls, conversations, or any event. Works on any
+    server: keyword search without embeddings, keyword + meaning (hybrid) with
+    them. Useful before a new task to see what happened in similar situations.
 
     Args:
         query: Natural language description of what you're looking for
         agent: Filter to a specific agent (optional -- leave blank to search all)
         limit: Number of results (default 10, max 50)
+        mode:  Leave blank for the server default, or "keyword", "semantic", "hybrid"
 
     Returns:
         List of matching events with relevance scores
@@ -227,7 +229,28 @@ async def search_memory(
     body: dict = {"query": query, "limit": limit}
     if agent:
         body["agent"] = agent
+    if mode:
+        body["mode"] = mode
     return await _api("POST", "/search", body)
+
+
+@mcp.tool()
+async def verify_chain(agent: str) -> dict:
+    """
+    Prove an agent's history is untouched.
+
+    Rechecks every event's checksum and its link in the agent's hash chain.
+    "intact": true means no event was edited, removed or reordered (GDPR
+    deletions show up as tombstones, not breaks). Keep "chain_head" as proof
+    of the history at this moment.
+
+    Args:
+        agent: The agent whose history to check
+
+    Returns:
+        intact, a summary, any problems found, and chain_head
+    """
+    return await _api("GET", f"/events/chain?{urlencode({'agent': agent})}")
 
 
 @mcp.tool()

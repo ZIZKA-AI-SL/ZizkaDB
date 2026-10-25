@@ -1,11 +1,11 @@
 # GitHub repository settings (maintainers)
 
-Admin-only steps for **Zizka-ai/ZizkaDB**. Contributors cannot change rulesets or repo settings.
+Admin-only steps for **ZIZKA-AI-SL/ZizkaDB**. Contributors cannot change rulesets or repo settings.
 
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed
-- Repo **admin** access (org owner `Zizka-ai` or delegated admin)
+- Repo **admin** access (org owner `ZIZKA-AI-SL` or delegated admin)
 - [.github/workflows/ci.yml](../../.github/workflows/ci.yml) merged to `main` first
 
 ## Quick setup (recommended)
@@ -24,7 +24,7 @@ The ruleset **"Only admin"** (id `18095491`) blocks all pushes/merges with GH013
 - Requires Code Scanning (CodeQL not configured)
 - Requires signed commits (GPG friction for contributors)
 
-**Action:** https://github.com/Zizka-ai/ZizkaDB/rules/18095491 → set enforcement to **Disabled**
+**Action:** https://github.com/ZIZKA-AI-SL/ZizkaDB/rules/18095491 → set enforcement to **Disabled**
 
 Do this **before** merging the first CI PR if merges are blocked.
 
@@ -37,7 +37,7 @@ Do this **before** merging the first CI PR if merges are blocked.
 | Auto-delete head branches | **On** |
 | Actions → Workflow permissions | **Read repository contents** |
 
-Path: https://github.com/Zizka-ai/ZizkaDB/settings
+Path: https://github.com/ZIZKA-AI-SL/ZizkaDB/settings
 
 ### 3. Create light ruleset for `main`
 
@@ -80,10 +80,10 @@ After the first CI run on a PR, open the **Checks** tab. If names differ (e.g. `
 Copy and send to the org owner:
 
 ```
-Hi — we need GitHub admin help on Zizka-ai/ZizkaDB so contributors can merge PRs.
+Hi — we need GitHub admin help on ZIZKA-AI-SL/ZizkaDB so contributors can merge PRs.
 
 1. DISABLE ruleset "Only admin" (id 18095491):
-   https://github.com/Zizka-ai/ZizkaDB/rules/18095491
+   https://github.com/ZIZKA-AI-SL/ZizkaDB/rules/18095491
    (It requires Code Scanning we don't run yet — every push fails with GH013.)
 
 2. After our CI workflow is on main, run:

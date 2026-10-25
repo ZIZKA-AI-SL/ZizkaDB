@@ -4,14 +4,14 @@
 # opens the dashboard on a demo agent's causal chain.
 # If that image is unavailable, falls back to the multi-container compose stack.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 #
 # Options (env): ZIZKADB_IMAGE_TAG, ZIZKADB_DASHBOARD_PORT, ZIZKADB_NO_OPEN=1,
 #                ZIZKADB_QUICKSTART=compose (force the compose stack)
 set -euo pipefail
 
 REF="${ZIZKADB_REF:-main}"
-REPO="${ZIZKADB_REPO:-Zizka-ai/ZizkaDB}"
+REPO="${ZIZKADB_REPO:-ZIZKA-AI-SL/ZizkaDB}"
 BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 INSTALL_DIR="${ZIZKADB_HOME:-${HOME}/.zizkadb}"
 INFRA="${INSTALL_DIR}/infra"

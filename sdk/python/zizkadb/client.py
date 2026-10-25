@@ -24,11 +24,12 @@ Usage:
     state = await db.at(agent="my-bot", timestamp=datetime(2026, 5, 1))
 """
 
+import json
 import os
 import sys
 import httpx
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from .session_scope import SessionScope
@@ -205,6 +206,9 @@ class ZizkaDB:
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         token_usage: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        supersedes: str | None = None,
+        importance: float | None = None,
     ) -> LogResult:
         """
         Log an event.
@@ -216,6 +220,11 @@ class ZizkaDB:
             parent_id:  ID of the causing event (enables causal lineage)
             session_id: Group related events into a session
             metadata:   Optional extra metadata
+            idempotency_key: Send the same key when retrying a write; the
+                        server stores the event once and returns it again
+            supersedes: Event id of an earlier fact this one replaces; the old
+                        one leaves context_for() and search (not the log)
+            importance: 0..1, weights the event in context_for() ranking
 
         Returns:
             LogResult with event_id, timestamp, sequence_no, checksum
@@ -231,17 +240,21 @@ class ZizkaDB:
         payload_data = dict(data)
         if token_usage is not None:
             payload_data["token_usage"] = token_usage
-        response = await self._post(
-            "/v1/events",
-            {
-                "agent": agent,
-                "event": event,
-                "data": payload_data,
-                "parent_id": parent_id,
-                "session_id": session_id,
-                "metadata": metadata,
-            },
-        )
+        body = {
+            "agent": agent,
+            "event": event,
+            "data": payload_data,
+            "parent_id": parent_id,
+            "session_id": session_id,
+            "metadata": metadata,
+        }
+        if idempotency_key is not None:
+            body["idempotency_key"] = idempotency_key
+        if supersedes is not None:
+            body["supersedes"] = supersedes
+        if importance is not None:
+            body["importance"] = importance
+        response = await self._post("/v1/events", body)
         result = LogResult.from_dict(response)
         record_log_result(agent, result)
         _emit_log_hint(self._base_url, result.event_id)
@@ -426,6 +439,103 @@ class ZizkaDB:
         response = await self._get("/v1/events", params)
         return [Event.from_dict(e) for e in response]
 
+    async def iter_events(
+        self,
+        agent: str,
+        page_size: int = 500,
+        event_type: str | None = None,
+        session_id: str | None = None,
+    ) -> AsyncIterator[Event]:
+        """
+        Every event of an agent, newest first, fetched page by page with a
+        cursor (fast at any depth, no duplicates or gaps while you read).
+
+        Example:
+            async for event in db.iter_events("my-bot"):
+                ...
+        """
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"agent": agent, "limit": page_size}
+            if event_type:
+                params["event_type"] = event_type
+            if session_id:
+                params["session_id"] = session_id
+            if cursor:
+                params["cursor"] = cursor
+            page = await self._get("/v1/events", params)
+            for item in page:
+                yield Event.from_dict(item)
+            if len(page) < page_size:
+                return
+            last = page[-1]
+            cursor = f"{last['timestamp']}|{last['sequence_no']}"
+
+    async def export_events(self, agent: str) -> AsyncIterator[dict[str, Any]]:
+        """
+        Stream every event of an agent, oldest first, as dicts (the server's
+        NDJSON export). Write them to a file for an offline copy, or pass them
+        to import_events() on another instance.
+
+        Example:
+            with open("bot.ndjson", "w") as f:
+                async for line in db.export_events("my-bot"):
+                    f.write(json.dumps(line) + "\\n")
+        """
+        client = await self._get_client()
+        try:
+            async with client.stream("GET", "/v1/events/export", params={"agent": agent}) as resp:
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    self._handle(resp)
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        yield json.loads(line)
+        finally:
+            if not self._client:
+                await client.aclose()
+
+    async def import_events(
+        self,
+        events: list[dict[str, Any]],
+        agent: str | None = None,
+        chunk_size: int = 1000,
+    ) -> dict[str, Any]:
+        """
+        Import events from export_events() (oldest first). Original timestamps
+        are kept and parent links remapped; re-running is safe (already
+        imported lines count as duplicates). ``agent`` stores everything under
+        another agent name.
+
+        Returns totals: imported, duplicates, failed, parents_dropped, errors.
+        """
+        totals: dict[str, Any] = {
+            "imported": 0, "duplicates": 0, "failed": 0, "parents_dropped": 0, "errors": [],
+        }
+        for start in range(0, len(events), chunk_size):
+            body: dict[str, Any] = {"events": events[start:start + chunk_size]}
+            if agent:
+                body["agent"] = agent
+            result = await self._post("/v1/events/import", body)
+            for key in ("imported", "duplicates", "failed", "parents_dropped"):
+                totals[key] += result.get(key, 0)
+            totals["errors"].extend(
+                {**e, "index": e.get("index", 0) + start} for e in result.get("errors", [])
+            )
+        return totals
+
+    async def log_batch(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """
+        Write up to 500 events in one request, in order. Each item takes the
+        log() fields (agent, event, data, parent_id, session_id, metadata,
+        idempotency_key) plus parent_index: the position of an earlier item
+        in the same batch to use as parent.
+
+        Returns {"written", "failed", "results"}; one bad event does not
+        reject the others, so check results[i]["ok"].
+        """
+        return await self._post("/v1/events/batch", {"events": events})
+
     # ─────────────────────────────────────────
     # WHY — causal chain for an event
     # ─────────────────────────────────────────
@@ -470,6 +580,8 @@ class ZizkaDB:
         query: str,
         agent: str | None = None,
         limit: int = 10,
+        mode: str | None = None,
+        include_superseded: bool = False,
     ) -> list[Event]:
         """
         Search agent history using natural language.
@@ -478,6 +590,8 @@ class ZizkaDB:
             query: Natural language query
             agent: Limit search to a specific agent (optional)
             limit: Number of results (default 10)
+            mode:  "auto" (server default: hybrid with embeddings, keyword
+                   without), "keyword", "semantic" or "hybrid"
 
         Returns:
             List of Events sorted by relevance score
@@ -485,10 +599,12 @@ class ZizkaDB:
         Example:
             results = await db.search("what happened with billing refunds")
         """
-        response = await self._post(
-            "/v1/search",
-            {"query": query, "agent": agent, "limit": limit},
-        )
+        body: dict[str, Any] = {"query": query, "agent": agent, "limit": limit}
+        if mode is not None:
+            body["mode"] = mode
+        if include_superseded:
+            body["include_superseded"] = True
+        response = await self._post("/v1/search", body)
         return [Event.from_dict(e) for e in response["results"]]
 
     # ─────────────────────────────────────────
@@ -517,6 +633,26 @@ class ZizkaDB:
             {"agent": agent, "timestamp": _parse_timestamp(timestamp).isoformat()},
         )
         return AgentState.from_dict(response)
+
+    async def verify_chain(
+        self,
+        agent: str,
+        after_seq: int | None = None,
+        anchor: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Check the agent's audit hash chain: no event removed, inserted,
+        reordered or changed (deletions through forget() are allowed).
+
+        Returns a dict with ``intact``, ``summary``, ``problems`` and
+        ``chain_head``. Store ``chain_head`` outside ZizkaDB; later pass its
+        ``sequence_no`` as ``after_seq`` and ``chain_hash`` as ``anchor``.
+        """
+        params: dict[str, Any] = {"agent": agent}
+        if after_seq is not None or anchor is not None:
+            params["after_seq"] = after_seq
+            params["anchor"] = anchor
+        return await self._get("/v1/events/chain", params)
 
     # ─────────────────────────────────────────
     # CONTEXT FOR — prompt-ready memory injection

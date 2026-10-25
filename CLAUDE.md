@@ -44,7 +44,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 ## Local dev setup
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/setup-local.sh
 ```
 
@@ -112,6 +112,10 @@ cd dashboard && npm run lint && npm test && npm run build
 
 **SDK host resolution** — explicit `host` → `ZIZKADB_HOST` → legacy `AGENTDB_HOST` → ZizkaDB Cloud when an API key is given (Python `client.py`, TypeScript `index.ts`; blank values count as unset). Templates and examples pass `host = HOST or (None if API_KEY else "http://localhost:8000")` so they also work with the SDK already on PyPI.
 
+**Audit chain** — `services/audit_chain.py`: each event stores `chain_hash = sha256(prev + ":" + checksum)` per agent, written under the `agents` row lock. Any code that deletes events must first call `tombstone_events()` in the same transaction (forget does; deleting a whole agent drops its tombstones too), or `GET /v1/events/chain` reports a break. Retention (`services/retention.py`, background task under an advisory lock) does the same. `parent_event_id` is a soft link (no foreign key), so a deleted parent never blocks deletes or changes a child's checksum.
+
+**Redaction** — `services/redaction.py` runs in `write_event()` before the size check and the checksum: secret-named keys are always redacted, patterns only with `REDACT_PATTERNS`. Never store or log the pre-redaction payload.
+
 **Health** — `/health` is liveness only (always 200). `/health/deep` returns 503 when Postgres, Redis, or (with embeddings enabled) Qdrant is down.
 
 **Schema migrations** — Fresh install: `core/db/schema.sql` (run by Docker on first boot). Running install: `ALTER TABLE IF EXISTS` in `core/db/connection.py::init_db()` (runs on every startup). Always write idempotent DDL.
@@ -145,9 +149,9 @@ cd dashboard && npm run lint && npm test && npm run build
 
 ## Critical invariants — never break these
 
-1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data.
+1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data. Routes that write or delete through an API key use `get_writer_tenant`, which refuses read-only keys.
 2. **Route paths**: never rename `/v1/...` paths without updating `dashboard/lib/api.ts` — there is no runtime contract enforcement between backend and dashboard.
-3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`) must call this.
+3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`, `events/verify`, `events/chain`) must call this.
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.
 5. **Idempotent DDL**: all schema changes must use `IF NOT EXISTS` / `IF EXISTS` — the same migration runs on fresh installs and live databases.
 6. **`docker-compose.yml` is production**: never add `--reload` or `../core:/app` volume mounts to the base compose file. Those belong in `docker-compose.dev.yml`.
@@ -183,7 +187,7 @@ cd dashboard && npm run lint && npm test && npm run build
 | Cursor rules (per-area conventions) | `.cursor/rules/` — **`coding-standards.mdc` and `ai-knowledge-base.mdc` always apply** |
 | Agent entry (all tools) | `AGENTS.md` |
 | Release workflow | `.cursor/skills/zizkadb-release/SKILL.md` |
-| Wiki (14 pages) | `wiki/` or https://github.com/Zizka-ai/ZizkaDB/wiki |
+| Wiki (14 pages) | `wiki/` or https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki |
 | REST API explorer | http://localhost:8000/swagger |
 | Self-hosting guide | `wiki/Self-Hosting.md` |
 | Redu Cloud deploy recipe | `redu.md` |

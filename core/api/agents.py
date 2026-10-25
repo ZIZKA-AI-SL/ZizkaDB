@@ -2,12 +2,14 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from services.exceptions import bad_request, conflict, not_found, service_unavailable
 from pydantic import BaseModel, Field
 
 from api.deps import (
+    get_writer_tenant,
     assert_agent_allowed,
     get_tenant,
     is_unbound_api_key,
@@ -137,6 +139,9 @@ class CreateAgentBody(BaseModel):
 
 class CreateAgentKeyBody(BaseModel):
     name: str | None = None
+    # read_only keys can query, search and verify but never write or delete.
+    scope: Literal["read_write", "read_only"] = "read_write"
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.get("")
@@ -258,6 +263,56 @@ async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> None:
         )
 
 
+class RetentionBody(BaseModel):
+    # Days to keep events; null = use EVENT_RETENTION_DAYS (or keep forever).
+    days: int | None = Field(default=None, ge=1, le=36500)
+
+
+@router.get("/{agent_id}/retention")
+async def get_agent_retention(
+    agent_id: str,
+    tenant: dict = Depends(require_dashboard_session),
+):
+    from services.retention import default_retention_days
+
+    agent_id = _validate_agent_id(agent_id)
+    row = await get_pool().fetchrow(
+        "SELECT retention_days FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+        tenant["tenant_id"], agent_id,
+    )
+    if not row:
+        raise not_found("Agent not found")
+    default = default_retention_days()
+    return {
+        "agent": agent_id,
+        "days": row["retention_days"],
+        "default_days": default,
+        "effective_days": row["retention_days"] or default,
+    }
+
+
+@router.put("/{agent_id}/retention")
+async def set_agent_retention(
+    agent_id: str,
+    body: RetentionBody,
+    tenant: dict = Depends(require_dashboard_session),
+):
+    """Keep this agent's events for ``days`` (older ones are deleted hourly,
+    leaving audit-chain tombstones). ``null`` falls back to the server default."""
+    agent_id = _validate_agent_id(agent_id)
+    updated = await get_pool().fetchval(
+        """
+        UPDATE agents SET retention_days = $3
+        WHERE tenant_id = $1 AND agent_id = $2
+        RETURNING 1
+        """,
+        tenant["tenant_id"], agent_id, body.days,
+    )
+    if not updated:
+        raise not_found("Agent not found")
+    return await get_agent_retention(agent_id, tenant=tenant)
+
+
 @router.delete("/{agent_id}")
 async def delete_agent(
     agent_id: str,
@@ -285,6 +340,12 @@ async def delete_agent(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
             )
+            # The whole agent goes, so its chain does too: a new agent under
+            # the same name starts a fresh chain.
+            await conn.execute(
+                "DELETE FROM event_tombstones WHERE tenant_id = $1 AND agent_id = $2",
+                tenant_id, agent_id,
+            )
             await conn.execute(
                 "DELETE FROM agents WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
@@ -302,7 +363,7 @@ async def delete_agent(
 @router.post("/{agent_id}/test-event", status_code=201)
 async def test_agent_event(
     agent_id: str,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """Log a test event to this agent (dashboard JWT). Verifies the pipeline for this agent."""
     agent_id = _validate_agent_id(agent_id)
@@ -377,6 +438,8 @@ async def create_agent_api_key(
                 tenant_id=tenant_id,
                 name=body.name or f"{agent_id} key",
                 agent_id=agent_id,
+                scope=body.scope,
+                expires_in_days=body.expires_in_days,
             )
 
 

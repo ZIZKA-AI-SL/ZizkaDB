@@ -279,3 +279,35 @@ class TestMemoryDiff:
             await memory_diff(session_id="sess/with/slashes")
 
         assert "sess/with/slashes" not in captured["path"]
+
+
+class TestVerifyChainAndSearchMode:
+    @pytest.mark.asyncio
+    async def test_verify_chain_calls_the_chain_route(self):
+        captured = {}
+
+        async def capture(method, path, body=None):
+            captured["call"] = (method, path)
+            return {"intact": True}
+
+        with patch("zizkadb_mcp.server._api", new=capture):
+            from zizkadb_mcp.server import verify_chain
+            result = await verify_chain(agent="support bot")
+
+        assert result == {"intact": True}
+        assert captured["call"] == ("GET", "/events/chain?agent=support+bot")
+
+    @pytest.mark.asyncio
+    async def test_search_mode_sent_only_when_given(self):
+        bodies = []
+
+        async def capture(method, path, body=None):
+            bodies.append(body)
+            return {}
+
+        with patch("zizkadb_mcp.server._api", new=capture):
+            from zizkadb_mcp.server import search_memory
+            await search_memory(query="q", mode="keyword")
+            await search_memory(query="q")
+
+        assert bodies[0]["mode"] == "keyword" and "mode" not in bodies[1]

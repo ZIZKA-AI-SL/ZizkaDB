@@ -1,6 +1,6 @@
 # zizkadb-sdk
 
-**npm:** [zizkadb-sdk 0.4.1](https://www.npmjs.com/package/zizkadb-sdk)
+**npm:** [zizkadb-sdk 0.5.0](https://www.npmjs.com/package/zizkadb-sdk)
 
 TypeScript SDK for [ZizkaDB](https://db.zizka.ai) — causal lineage, time travel, and semantic search for AI agents.
 
@@ -47,6 +47,19 @@ chain.print()
 
 If your app logs to **different agent ids** per user (e.g. `conv-alice`, `conv-bob`), create a **tenant-wide key** in **Settings → Tenant-wide API key**. Per-agent keys only work for that one agent name.
 
+## More than logging
+
+| Method | What it does |
+|---|---|
+| `log({ ..., idempotencyKey, supersedes, importance })` | Safe retries; replace an outdated fact; weight it in memory |
+| `logBatch(events)` | Up to 500 events in one request |
+| `search({ query, mode })` | Keyword out of the box, hybrid with embeddings |
+| `verifyChain(agent, after?)` | Prove no event was edited, removed or reordered |
+| `iterEvents(agent)` | Every event, cursor-paged (`for await`) |
+| `exportEvents(agent)` / `importEvents(lines)` | Portable NDJSON copy and import |
+
+Needs a server from release 0.5.0. Full guide: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md#beyond-log-and-why).
+
 ## Errors
 
 | Error | Meaning |
@@ -69,4 +82,4 @@ Core HTTP client only — LangChain, CrewAI, and LiveKit adapters are Python pac
 
 - [Docs](https://db.zizka.ai/docs)
 - [API explorer](https://db.zizka.ai/swagger)
-- [GitHub](https://github.com/Zizka-ai/ZizkaDB)
+- [GitHub](https://github.com/ZIZKA-AI-SL/ZizkaDB)
