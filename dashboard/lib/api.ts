@@ -115,6 +115,9 @@ export interface ApiKey {
   agent_id: string | null
   created_at: string
   last_used: string | null
+  /** read_only keys can query, search and verify but never write. */
+  scope?: 'read_write' | 'read_only'
+  expires_at?: string | null
 }
 
 export interface CreateKeyResponse {
@@ -122,16 +125,32 @@ export interface CreateKeyResponse {
   key_id?: string
   prefix: string
   name: string | null
+  scope?: 'read_write' | 'read_only'
+  expires_at?: string | null
+}
+
+export interface CreateKeyOptions {
+  scope?: 'read_write' | 'read_only'
+  expiresInDays?: number
 }
 
 export async function getAgentApiKeys(token: string, agentId: string): Promise<ApiKey[]> {
   return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}/api-keys`, token)
 }
 
-export async function createAgentApiKey(token: string, agentId: string, name?: string): Promise<CreateKeyResponse> {
+export async function createAgentApiKey(
+  token: string,
+  agentId: string,
+  name?: string,
+  options: CreateKeyOptions = {},
+): Promise<CreateKeyResponse> {
   return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}/api-keys`, token, {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({
+      name,
+      ...(options.scope ? { scope: options.scope } : {}),
+      ...(options.expiresInDays ? { expires_in_days: options.expiresInDays } : {}),
+    }),
   })
 }
 

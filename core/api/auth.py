@@ -13,12 +13,13 @@ from services.exceptions import (
     forbidden,
     service_unavailable,
 )
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from services.auth import request_otp, verify_otp, _issue_tokens, email_exists
 from services.api_keys import (
     assert_and_reserve_api_key_slot,
     count_active_api_keys,
     create_api_key_record,
+    key_row,
     revoke_api_key_record,
 )
 from api.deps import get_tenant, require_dashboard_session
@@ -105,6 +106,9 @@ class VerifyOTPBody(BaseModel):
 
 class CreateAPIKeyBody(BaseModel):
     name: str | None = None
+    # Unassigned keys are always read-write (a read-only key must belong to an
+    # agent: POST /v1/agents/{id}/api-keys); they may still expire.
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.post("/request-otp")
@@ -215,6 +219,7 @@ async def create_api_key(
                 tenant_id=tenant_id,
                 name=body.name,
                 agent_id=None,
+                expires_in_days=body.expires_in_days,
             )
 
 
@@ -422,21 +427,11 @@ async def list_api_keys(tenant: dict = Depends(require_dashboard_session)):
     pool = get_pool()
     rows = await pool.fetch(
         """
-        SELECT key_id, key_prefix, name, agent_id, created_at, last_used
+        SELECT key_id, key_prefix, name, agent_id, created_at, last_used, scope, expires_at
         FROM api_keys
         WHERE tenant_id = $1 AND revoked = FALSE
         ORDER BY created_at DESC
         """,
         tenant["tenant_id"],
     )
-    return [
-        {
-            "key_id": str(r["key_id"]),
-            "prefix": r["key_prefix"],
-            "name": r["name"],
-            "agent_id": r["agent_id"],
-            "created_at": r["created_at"].isoformat(),
-            "last_used": r["last_used"].isoformat() if r["last_used"] else None,
-        }
-        for r in rows
-    ]
+    return [key_row(r) for r in rows]

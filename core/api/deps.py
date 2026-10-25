@@ -1,5 +1,5 @@
 import os
-from fastapi import Security
+from fastapi import Depends, Security
 from services.exceptions import forbidden, unauthorized
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from services.auth import verify_api_key, decode_access_token
@@ -185,3 +185,16 @@ async def get_tenant(
         }
     except Exception:
         raise unauthorized(detail="Invalid token")
+
+
+READ_ONLY_KEY_MESSAGE = (
+    "This API key is read-only: it can query, search and verify, but not write "
+    "or delete. Use a read-write key for this request."
+)
+
+
+async def get_writer_tenant(tenant: dict = Depends(get_tenant)) -> dict:
+    """get_tenant for routes that write or delete: refuses read-only API keys."""
+    if tenant.get("scope") == "read_only":
+        raise forbidden(detail=READ_ONLY_KEY_MESSAGE)
+    return tenant

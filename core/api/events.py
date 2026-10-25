@@ -7,7 +7,7 @@ from uuid import UUID
 from datetime import datetime
 import json
 
-from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
 from db.connection import get_pool
 from services.checksum import CHECKSUM_COLUMNS, fetch_legacy_cutoff, verify_stored_checksum
 from services.audit_chain import verify_chain
@@ -43,7 +43,7 @@ class LogEventRequest(BaseModel):
 @router.post("", status_code=201)
 async def log_event(
     body: LogEventRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
     idempotency_key: str | None = Header(default=None, max_length=255),
 ):
     await assert_agent_allowed(tenant, body.agent)
@@ -80,7 +80,7 @@ class LogBatchRequest(BaseModel):
 @router.post("/batch")
 async def log_events_batch(
     body: LogBatchRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """Write up to 500 events in one request, in order.
 
@@ -217,7 +217,7 @@ class ImportRequest(BaseModel):
 @router.post("/import")
 async def import_events(
     body: ImportRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """Import lines from GET /v1/events/export (send them oldest first, up to
     1000 per request). Original timestamps are kept; events get new ids,

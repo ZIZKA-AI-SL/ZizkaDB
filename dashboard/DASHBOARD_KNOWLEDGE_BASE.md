@@ -560,7 +560,7 @@ Router prefixes are mounted in `core/main.py:66-79`.
 | `deleteAgent` | DELETE `/v1/agents/{id}` | `agents.py:114` |
 | `sendAgentTestEvent` | POST `/v1/agents/{id}/test-event` | `agents.py:150` |
 | `getAgentApiKeys` | GET `/v1/agents/{id}/api-keys` | `agents.py:180` |
-| `createAgentApiKey` | POST `/v1/agents/{id}/api-keys` | `agents.py:199` |
+| `createAgentApiKey` | POST `/v1/agents/{id}/api-keys` (optional `scope`: read_write / read_only, `expires_in_days`) | `agents.py` |
 | `revokeAgentApiKey` | DELETE `/v1/agents/{id}/api-keys/{keyId}` | `agents.py:224` |
 | `getAgentStats` | GET `/v1/agents/{id}/stats` (incl. `top_actions`: per-tool/API calls + error rate, `services/actions.py`) | `agents.py:239` |
 | `getAgentSessions` | GET `/v1/agents/{id}/sessions` | `agents.py:280` |

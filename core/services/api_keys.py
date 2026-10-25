@@ -23,7 +23,11 @@ async def count_active_api_keys(conn, tenant_id: str) -> int:
     """
     return int(
         await conn.fetchval(
-            "SELECT COUNT(*) FROM api_keys WHERE tenant_id = $1 AND revoked = FALSE",
+            """
+            SELECT COUNT(*) FROM api_keys
+            WHERE tenant_id = $1 AND revoked = FALSE
+              AND (expires_at IS NULL OR expires_at > NOW())
+            """,
             tenant_id,
         )
     )
@@ -79,7 +83,7 @@ async def assert_and_reserve_api_key_slot(conn, *, tenant_id: str) -> None:
         )
 
 
-def _key_row(row) -> dict:
+def key_row(row) -> dict:
     return {
         "key_id": str(row["key_id"]),
         "prefix": row["key_prefix"],
@@ -87,6 +91,8 @@ def _key_row(row) -> dict:
         "agent_id": row["agent_id"],
         "created_at": row["created_at"].isoformat(),
         "last_used": row["last_used"].isoformat() if row["last_used"] else None,
+        "scope": row["scope"],
+        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
     }
 
 
@@ -96,20 +102,29 @@ async def create_api_key_record(
     tenant_id: str,
     name: str | None,
     agent_id: str | None = None,
+    scope: str = "read_write",
+    expires_in_days: int | None = None,
 ) -> dict:
-    """``db`` is a pool or a transaction connection (used by the create guard)."""
+    """``db`` is a pool or a transaction connection (used by the create guard).
+
+    ``scope``: ``read_write`` or ``read_only`` (refused by every write route).
+    ``expires_in_days``: the key stops working after that many days.
+    """
     raw_key, key_hash, prefix = generate_api_key()
     row = await db.fetchrow(
         """
-        INSERT INTO api_keys (tenant_id, key_hash, key_prefix, name, agent_id)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING key_id
+        INSERT INTO api_keys (tenant_id, key_hash, key_prefix, name, agent_id, scope, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6,
+                CASE WHEN $7::int IS NULL THEN NULL ELSE NOW() + make_interval(days => $7::int) END)
+        RETURNING key_id, expires_at
         """,
         tenant_id,
         key_hash,
         prefix,
         name,
         agent_id,
+        scope,
+        expires_in_days,
     )
     return {
         "key_id": str(row["key_id"]),
@@ -117,6 +132,8 @@ async def create_api_key_record(
         "prefix": prefix,
         "name": name,
         "agent_id": agent_id,
+        "scope": scope,
+        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
         "warning": "Save this key — it will not be shown again.",
     }
 
@@ -124,7 +141,7 @@ async def create_api_key_record(
 async def list_api_keys_for_agent(pool, tenant_id: str, agent_id: str) -> list[dict]:
     rows = await pool.fetch(
         """
-        SELECT key_id, key_prefix, name, agent_id, created_at, last_used
+        SELECT key_id, key_prefix, name, agent_id, created_at, last_used, scope, expires_at
         FROM api_keys
         WHERE tenant_id = $1 AND agent_id = $2 AND revoked = FALSE
         ORDER BY created_at DESC
@@ -132,7 +149,7 @@ async def list_api_keys_for_agent(pool, tenant_id: str, agent_id: str) -> list[d
         tenant_id,
         agent_id,
     )
-    return [_key_row(r) for r in rows]
+    return [key_row(r) for r in rows]
 
 
 async def revoke_api_key_record(pool, tenant_id: str, key_id: str, agent_id: str | None = None) -> bool:
