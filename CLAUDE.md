@@ -112,6 +112,8 @@ cd dashboard && npm run lint && npm test && npm run build
 
 **SDK host resolution** — explicit `host` → `ZIZKADB_HOST` → legacy `AGENTDB_HOST` → ZizkaDB Cloud when an API key is given (Python `client.py`, TypeScript `index.ts`; blank values count as unset). Templates and examples pass `host = HOST or (None if API_KEY else "http://localhost:8000")` so they also work with the SDK already on PyPI.
 
+**Audit chain** — `services/audit_chain.py`: each event stores `chain_hash = sha256(prev + ":" + checksum)` per agent, written under the `agents` row lock. Any code that deletes events must first call `tombstone_events()` in the same transaction (forget does; deleting a whole agent drops its tombstones too), or `GET /v1/events/chain` reports a break.
+
 **Health** — `/health` is liveness only (always 200). `/health/deep` returns 503 when Postgres, Redis, or (with embeddings enabled) Qdrant is down.
 
 **Schema migrations** — Fresh install: `core/db/schema.sql` (run by Docker on first boot). Running install: `ALTER TABLE IF EXISTS` in `core/db/connection.py::init_db()` (runs on every startup). Always write idempotent DDL.
@@ -147,7 +149,7 @@ cd dashboard && npm run lint && npm test && npm run build
 
 1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data.
 2. **Route paths**: never rename `/v1/...` paths without updating `dashboard/lib/api.ts` — there is no runtime contract enforcement between backend and dashboard.
-3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`) must call this.
+3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`, `events/verify`, `events/chain`) must call this.
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.
 5. **Idempotent DDL**: all schema changes must use `IF NOT EXISTS` / `IF EXISTS` — the same migration runs on fresh installs and live databases.
 6. **`docker-compose.yml` is production**: never add `--reload` or `../core:/app` volume mounts to the base compose file. Those belong in `docker-compose.dev.yml`.

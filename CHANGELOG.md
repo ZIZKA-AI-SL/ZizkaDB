@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Tamper-evident audit chain
+
+- Every new event stores a `chain_hash` that links it to the agent's previous event (SHA-256 of the previous link and the event's checksum). Deleting, inserting, reordering or editing a row now breaks the chain. The per-event checksum could not show a deleted row.
+- **New `GET /v1/events/chain?agent=`** checks the whole chain and every checksum. It returns `intact`, a summary, the problems found, and `chain_head`. Keep the head outside ZizkaDB, then pass it back as `after_seq` + `anchor` to check only newer events and prove the older ones were not rewritten. SDKs: Python `db.verify_chain(agent, after_seq=, anchor=)`, TypeScript `db.verifyChain(agent, after?)`.
+- **GDPR `forget` leaves a tombstone** per deleted event, holding its link and the reason but none of its content, so the chain still verifies and shows where data was removed. Events written before this release have no link and are reported as `unchained_legacy`.
+- Write responses (and the SDK `LogResult`) include `chain_hash`.
+
 ### Database safety: size limits, idempotent writes, migration lock, restore
 
 - **Event size limit.** One event's `data` + `metadata` may be up to `MAX_EVENT_BYTES` (default 256 KB). Larger events get a 413 with the limit in the message, before anything is written. Any request body over `MAX_REQUEST_BYTES` (default 10 MB) gets a 413 before it is read.

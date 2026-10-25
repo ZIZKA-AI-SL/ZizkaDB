@@ -413,6 +413,23 @@ async def _run_migrations():
             WHERE idempotency_key IS NOT NULL;
     """)
 
+    # Per-agent hash chain (services/audit_chain.py) and the links of deleted rows.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS chain_hash VARCHAR(64);
+        CREATE TABLE IF NOT EXISTS event_tombstones (
+            tenant_id   UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            agent_id    VARCHAR(255) NOT NULL,
+            event_id    UUID NOT NULL,
+            sequence_no BIGINT NOT NULL,
+            chain_hash  VARCHAR(64) NOT NULL,
+            reason      VARCHAR(50) NOT NULL,
+            deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (tenant_id, event_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_tombstones_agent_seq
+            ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
+    """)
+
 
 
 async def init_db():

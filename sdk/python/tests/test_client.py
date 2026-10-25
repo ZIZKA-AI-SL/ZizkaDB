@@ -330,3 +330,20 @@ def test_log_api_names_the_call_and_drops_secrets_from_the_url(monkeypatch):
     }
     assert "secret" not in json.dumps(bodies[0]) and "pw@" not in json.dumps(bodies[0])
     assert bodies[1]["data"] == {"api": "orders.list", "method": "GET", "url": "/internal/orders"}
+
+
+def test_verify_chain_passes_anchor(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"agent": "a", "intact": True, "summary": {},
+                                         "problems": [], "chain_head": None})
+
+    db = _client(monkeypatch, handler)
+    try:
+        result = asyncio.run(db.verify_chain("a", after_seq=5, anchor="h5"))
+    finally:
+        asyncio.run(_close(db))
+    assert result["intact"] is True
+    assert "/v1/events/chain?agent=a&after_seq=5&anchor=h5" in seen["url"]

@@ -87,6 +87,23 @@ export interface LogResult {
   sequenceNo: number
   checksum: string
   indexStatus?: string
+  /** Link in the agent's audit hash chain (servers from 0.5.0). */
+  chainHash?: string
+  /** True when an idempotency key matched an event stored earlier. */
+  duplicate?: boolean
+}
+
+export interface ChainHead {
+  sequenceNo: number
+  chainHash: string
+}
+
+export interface ChainVerification {
+  agent: string
+  intact: boolean
+  summary: Record<string, number>
+  problems: Record<string, unknown>[]
+  chainHead: ChainHead | null
 }
 
 export interface CausalChain {

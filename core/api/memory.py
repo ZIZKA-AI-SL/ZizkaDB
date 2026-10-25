@@ -18,6 +18,7 @@ import logging
 
 from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from db.connection import get_pool, get_qdrant
+from services.audit_chain import tombstone_events
 from services.embeddings import generate_embedding
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
 
@@ -412,6 +413,9 @@ async def forget(
                 raise service_unavailable(
                     "Search index unavailable; nothing was deleted. Retry forget shortly."
                 )
+
+            # Keep the deleted rows' chain links so the audit chain still verifies.
+            await tombstone_events(conn, tenant_id, event_ids, "forget")
 
             # PostgreSQL does not support aggregate functions in RETURNING
             # clauses. We already know the count from the SELECT above, so
