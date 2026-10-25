@@ -1,6 +1,6 @@
 # Connect your agent (self-host / OSS)
 
-**Current PyPI releases:** `zizkadb-sdk` **0.4.1** · `zizkadb-mcp` **0.1.8** · `zizkadb-langchain` **0.1.3** · `zizkadb-crewai` **0.1.3** · `zizkadb-livekit` **0.2.1**
+**Current releases:** `zizkadb-sdk` **0.5.0** (PyPI and npm) · `zizkadb-mcp` **0.1.10** · `zizkadb-langchain` **0.1.4** · `zizkadb-crewai` **0.1.4** · `zizkadb-langgraph` **0.1.1** · `zizkadb-livekit` **0.2.2**
 
 ## Start the stack (pick one)
 

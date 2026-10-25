@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-25
+
 ### Docs and project page
 
 - `LICENSE` is now the plain AGPL-3.0 text, so GitHub and licence scanners recognise it. The MCP server's MIT licence is noted in the new `NOTICE` file.
