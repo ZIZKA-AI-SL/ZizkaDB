@@ -30,6 +30,10 @@ class LogEventRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     # Same key again (per agent) returns the first event instead of a duplicate.
     idempotency_key: str | None = Field(default=None, max_length=255)
+    # This event replaces an earlier fact: the old one leaves memory/search.
+    supersedes: str | None = None
+    # 0..1, weights the event in context_for() ranking (unset = 0.5).
+    importance: float | None = Field(default=None, ge=0, le=1)
 
 
 # ─────────────────────────────────────────
@@ -52,6 +56,8 @@ async def log_event(
         session_id=body.session_id,
         metadata=body.metadata,
         idempotency_key=body.idempotency_key or idempotency_key,
+        supersedes=body.supersedes,
+        importance=body.importance,
     )
 
 
@@ -108,6 +114,8 @@ async def log_events_batch(
                 session_id=item.session_id,
                 metadata=item.metadata,
                 idempotency_key=item.idempotency_key,
+                supersedes=item.supersedes,
+                importance=item.importance,
             )
         except HTTPException as exc:
             results.append({"index": index, "ok": False, "status": exc.status_code, "error": exc.detail})

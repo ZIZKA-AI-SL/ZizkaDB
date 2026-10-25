@@ -103,6 +103,31 @@ def uses_default_db_password() -> bool:
     return password in _WELL_KNOWN_DB_PASSWORDS
 
 
+async def _ensure_supersedes_index() -> None:
+    """Lookup of explicit supersedes links (services/memory_rank.py)."""
+    await _ensure_index_concurrently(
+        "idx_events_supersedes",
+        "ON events (tenant_id, (metadata->>'supersedes')) WHERE metadata ? 'supersedes'",
+    )
+
+
+async def _ensure_index_concurrently(name: str, definition: str) -> None:
+    valid = await _pg_pool.fetchval(
+        """
+        SELECT i.indisvalid FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = $1
+        """,
+        name,
+    )
+    if valid:
+        return
+    if valid is False:
+        await _pg_pool.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+    logger.info("Building index %s", name)
+    await _pg_pool.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} {definition}")
+
+
 async def _ensure_fts_index() -> None:
     """Full-text index for keyword search (services/keyword_search.py).
 
@@ -112,21 +137,7 @@ async def _ensure_fts_index() -> None:
     """
     from services.keyword_search import FTS_DOCUMENT
 
-    valid = await _pg_pool.fetchval(
-        """
-        SELECT i.indisvalid FROM pg_index i
-        JOIN pg_class c ON c.oid = i.indexrelid
-        WHERE c.relname = 'idx_events_fts'
-        """
-    )
-    if valid:
-        return
-    if valid is False:
-        await _pg_pool.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_events_fts")
-    logger.info("Building the keyword search index (idx_events_fts)")
-    await _pg_pool.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_events_fts ON events USING gin ({FTS_DOCUMENT})"
-    )
+    await _ensure_index_concurrently("idx_events_fts", f"ON events USING gin ({FTS_DOCUMENT})")
 
 
 # Any constant works; it only has to be the same in every worker.
@@ -457,6 +468,7 @@ async def _run_migrations():
     """)
 
     await _ensure_fts_index()
+    await _ensure_supersedes_index()
 
     # parent_event_id is a soft reference: the write path checks the parent
     # exists in the same tenant, and retention / forget may later delete an

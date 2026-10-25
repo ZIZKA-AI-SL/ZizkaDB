@@ -70,7 +70,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         assert response.status_code == 200
         body = response.json()
@@ -93,7 +93,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         assert response.status_code == 200
         assert response.json()["results"] == []
@@ -108,7 +108,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=None),
         )
 
-        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         assert response.status_code == 400
         assert "embedding" in response.json()["detail"].lower()
@@ -131,7 +131,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         body = response.json()
         assert body["results"][0]["score"] == 0.42
@@ -151,7 +151,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        client.post("/v1/search", json={"query": "hello", "mode": "semantic"})
+        client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         _, kwargs = qdrant.search.call_args
         must_conditions = kwargs["query_filter"].must
@@ -172,7 +172,7 @@ class TestSearchAgentScope:
             "tenant_id": _TENANT["tenant_id"],
             "key_id": "key-1",
         }
-        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
         assert response.status_code == 400
         assert "agent is required" in response.json()["detail"]
 
