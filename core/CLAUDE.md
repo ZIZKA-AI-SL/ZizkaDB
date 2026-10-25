@@ -8,7 +8,7 @@ See root [`CLAUDE.md`](../CLAUDE.md) for full project context. This file covers 
 
 All routers are mounted in `main.py` at `/v1/<prefix>`:
 
-The thirteen routers mounted in `main.py` (`app.include_router`):
+The fifteen routers mounted in `main.py` (`app.include_router`):
 
 | File | Prefix | Auth type |
 |---|---|---|
@@ -25,6 +25,7 @@ The thirteen routers mounted in `main.py` (`app.include_router`):
 | `api/demo_requests.py` | `/v1/demo-requests` | public (honeypot + rate limit) |
 | `api/community.py` | `/v1/community` | public (honeypot on writes) |
 | `api/marketing_subscriptions.py` | `/v1/marketing-subscriptions` | public (honeypot on writes) |
+| `api/metrics.py` | `/metrics` (no `/v1`) | `METRICS_TOKEN` bearer; 404 when unset |
 
 Under `/v1/agents`: per-agent analytics (`/stats`, `/sessions`, `/baseline`, `/behavior-change`,
 `/report`, `/token-usage`, `/token-optimization`, `/suggestions`, `/at`) use `get_tenant` +

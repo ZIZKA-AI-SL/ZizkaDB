@@ -9,18 +9,18 @@ The FastAPI backend. Handles all event ingestion, causal chain queries, semantic
 - **Qdrant** (vector semantic search — collection `agent_events`, 1536-dim cosine)
 - **Redis 7** (embedding cache, 24 h TTL)
 
-## Routers (14 total, all at `/v1/`)
+## Routers (15 total; all at `/v1/` except `/metrics`)
 
 Authoritative list: `main.py` (`app.include_router`). There is **no** `admin.py` or `stats.py` router in this OSS tree.
 
 | File | Prefix | Purpose |
 |---|---|---|
 | `api/auth.py` | `/v1/auth` | OTP login, JWT tokens, API key management |
-| `api/events.py` | `/v1/events` | Log events, query events, time-travel (`db.at()`) |
+| `api/events.py` | `/v1/events` | Log events (single and `/batch`), query events (cursor paging), time-travel (`db.at()`), checksum and chain verification |
 | `api/sessions.py` | `/v1/sessions` | Cross-agent session timeline and session-scoped `why()` |
 | `api/agents.py` | `/v1/agents` | Agent stats, sessions, causal lineage (`db.why()`), baseline, API keys |
 | `api/a2a.py` | `/v1/a2a` | Agent-to-agent messages (scoped API keys) |
-| `api/search.py` | `/v1/search` | Semantic search (`db.search()`) |
+| `api/search.py` | `/v1/search` | Keyword, semantic and hybrid search (`db.search()`) |
 | `api/memory.py` | `/v1/memory` | Memory injection (`db.context_for()`, `db.memory_diff()`) |
 | `api/telemetry.py` | `/v1/telemetry` | Anonymous SDK install pings |
 | `api/billing_checkout.py` | `/v1/billing` | Plan/trial status (stubbed — always `has_access: True`) |
@@ -29,6 +29,7 @@ Authoritative list: `main.py` (`app.include_router`). There is **no** `admin.py`
 | `api/demo_requests.py` | `/v1/demo-requests` | Public demo request form (landing newsletter / book demo) |
 | `api/community.py` | `/v1/community` | Public community board |
 | `api/marketing_subscriptions.py` | `/v1/marketing-subscriptions` | Email signup |
+| `api/metrics.py` | `/metrics` | Prometheus metrics; off unless `METRICS_TOKEN` is set (bearer) |
 
 Swagger UI: `http://localhost:8000/swagger`
 

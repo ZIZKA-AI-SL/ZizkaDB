@@ -24,6 +24,8 @@
 
 import type {
   ZizkaDBConfig,
+  BatchEvent,
+  BatchResult,
   AgentEvent,
   AgentInfo,
   AgentState,
@@ -374,6 +376,62 @@ export class ZizkaDB {
 
     const res = await this.get('/v1/events', params) as Record<string, unknown>[]
     return res.map(parseEvent)
+  }
+
+  /**
+   * Every event of an agent, newest first, page by page with a cursor
+   * (fast at any depth, no duplicates or gaps).
+   *
+   *   for await (const event of db.iterEvents('my-bot')) { ... }
+   */
+  async *iterEvents(
+    agent: string,
+    options: { pageSize?: number, eventType?: string, sessionId?: string } = {},
+  ): AsyncGenerator<AgentEvent> {
+    const pageSize = options.pageSize ?? 500
+    let cursor: string | undefined
+    while (true) {
+      const params: Record<string, string> = { agent, limit: String(pageSize) }
+      if (options.eventType) params.event_type = options.eventType
+      if (options.sessionId) params.session_id = options.sessionId
+      if (cursor) params.cursor = cursor
+      const page = await this.get('/v1/events', params) as Record<string, unknown>[]
+      for (const item of page) yield parseEvent(item)
+      if (page.length < pageSize) return
+      // The raw timestamp keeps microseconds; a Date would round them off.
+      const last = page[page.length - 1]
+      cursor = `${last.timestamp as string}|${last.sequence_no as number}`
+    }
+  }
+
+  /**
+   * Write up to 500 events in one request, in order. One bad event does not
+   * reject the others: check `results[i].ok`.
+   */
+  async logBatch(events: BatchEvent[]): Promise<BatchResult> {
+    const res = await this.post('/v1/events/batch', {
+      events: events.map(e => ({
+        agent: e.agent,
+        event: e.event,
+        data: e.data,
+        parent_id: e.parentId ?? null,
+        session_id: e.sessionId ?? null,
+        metadata: e.metadata ?? null,
+        ...(e.idempotencyKey != null ? { idempotency_key: e.idempotencyKey } : {}),
+        ...(e.parentIndex != null ? { parent_index: e.parentIndex } : {}),
+      })),
+    }) as { written: number, failed: number, results: Record<string, unknown>[] }
+    return {
+      written: res.written,
+      failed: res.failed,
+      results: res.results.map(r => ({
+        index: r.index as number,
+        ok: r.ok as boolean,
+        ...(r.ok
+          ? { eventId: r.event_id as string, sequenceNo: r.sequence_no as number, duplicate: Boolean(r.duplicate) }
+          : { status: r.status as number, error: r.error }),
+      })),
+    }
   }
 
   // ─────────────────────────────────────────
