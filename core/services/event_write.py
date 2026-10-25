@@ -113,9 +113,14 @@ async def write_event(
     metadata: dict | None = None,
     idempotency_key: str | None = None,
     occurred_at: datetime | None = None,
+    supersedes: str | None = None,
+    importance: float | None = None,
 ) -> dict:
     """Write one event. ``occurred_at`` is for imports only: it keeps the
-    original timestamp instead of the database clock."""
+    original timestamp instead of the database clock. ``supersedes`` and
+    ``importance`` are stored in metadata (so the checksum covers them) and
+    steer context_for() / search (services/memory_rank.py)."""
+    metadata = _memory_metadata(metadata, supersedes, importance)
     validate_event_payload(
         agent=agent,
         event=event,
@@ -143,6 +148,12 @@ async def write_event(
         )
 
     pool = get_pool()
+
+    if supersedes is not None and not await pool.fetchval(
+        "SELECT 1 FROM events WHERE event_id = $1 AND tenant_id = $2 AND agent_id = $3",
+        metadata["supersedes"], tenant_id, agent,
+    ):
+        raise bad_request("supersedes must be the id of an earlier event of the same agent")
 
     if idempotency_key:
         existing = await _find_idempotent(pool, tenant_id, agent, idempotency_key)
@@ -187,6 +198,23 @@ async def write_event(
     if redacted:
         result["redacted"] = redacted
     return result
+
+
+def _memory_metadata(metadata: dict | None, supersedes: str | None,
+                     importance: float | None) -> dict | None:
+    if supersedes is None and importance is None:
+        return metadata
+    metadata = dict(metadata or {})
+    if supersedes is not None:
+        try:
+            metadata["supersedes"] = str(UUID(str(supersedes)))
+        except ValueError:
+            raise bad_request("supersedes must be a valid event UUID")
+    if importance is not None:
+        if isinstance(importance, bool) or not 0 <= importance <= 1:
+            raise bad_request("importance must be a number from 0 to 1")
+        metadata["importance"] = importance
+    return metadata
 
 
 async def _find_idempotent(pool, tenant_id: str, agent: str, key: str | None) -> dict | None:

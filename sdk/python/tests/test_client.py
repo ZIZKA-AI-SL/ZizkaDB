@@ -416,3 +416,19 @@ def test_export_streams_lines_and_import_chunks(monkeypatch):
         asyncio.run(_close(db))
     assert [line["event_id"] for line in lines] == ["a", "c"]
     assert totals["imported"] == 2 and len(posts) == 2 and posts[0]["agent"] == "new"
+
+
+def test_log_sends_memory_fields(monkeypatch):
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"event_id": "e", "timestamp": "2026-06-19T00:00:00Z",
+                                         "sequence_no": 1, "checksum": "c"})
+
+    db = _client(monkeypatch, handler)
+    try:
+        asyncio.run(db.log(agent="a", event="fact", data={}, supersedes="old", importance=0.9))
+    finally:
+        asyncio.run(_close(db))
+    assert bodies[0]["supersedes"] == "old" and bodies[0]["importance"] == 0.9

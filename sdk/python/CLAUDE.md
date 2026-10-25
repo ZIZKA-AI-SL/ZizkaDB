@@ -31,7 +31,7 @@ asyncio.run(main())
 | Method | What it does | Requires OpenAI key? |
 |---|---|---|
 | `db.verify_chain(agent, after_seq?, anchor?)` | Check the audit hash chain | No |
-| `db.log(agent, event, data, parent_id?, session_id?, idempotency_key?)` | Log an event (same key on retry = stored once) | No |
+| `db.log(agent, event, data, parent_id?, session_id?, idempotency_key?, supersedes?, importance?)` | Log an event (same key on retry = stored once; `supersedes` retires an older fact from memory) | No |
 | `db.why(event_id)` | Causal chain backward from an event | No |
 | `db.at(agent, timestamp)` | Time-travel — agent state at a point in time | No |
 | `db.query(agent, ...)` | Fetch events with filters | No |

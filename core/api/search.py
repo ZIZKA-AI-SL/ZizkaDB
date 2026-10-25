@@ -12,6 +12,7 @@ from db.connection import get_pool, get_qdrant
 from services.embeddings import generate_embedding
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
 from services.keyword_search import keyword_search, reciprocal_rank_fusion
+from services.memory_rank import superseded_ids
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
     # auto: hybrid when embeddings are on, keyword otherwise.
     mode: SearchMode = "auto"
+    # Superseded facts are left out unless asked for (the audit log keeps them).
+    include_superseded: bool = False
 
 
 def _embeddings_off_error() -> Exception:
@@ -116,6 +119,10 @@ async def semantic_search(
             [eid for eid, _ in vector_hits],
             [str(r["event_id"]) for r, _ in keyword_hits],
         )
+
+    if scores and not body.include_superseded:
+        for event_id in await superseded_ids(get_pool(), tenant_id, agent, scores):
+            scores.pop(event_id, None)
 
     ranked = sorted(scores, key=scores.get, reverse=True)[: body.limit]
     response = {"query": body.query, "mode": mode, "results": []}

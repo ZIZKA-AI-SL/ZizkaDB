@@ -606,3 +606,16 @@ describe('exportEvents() and importEvents()', () => {
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
   })
 })
+
+describe('memory fields', () => {
+  it('sends supersedes and importance only when given', async () => {
+    mockFetch(201, { event_id: 'e', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'c' })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.log({ agent: 'a', event: 'fact', data: {}, supersedes: 'old', importance: 0.9 })
+    await db.log({ agent: 'a', event: 'fact', data: {} })
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit][]
+    const first = JSON.parse(calls[0][1].body as string)
+    expect([first.supersedes, first.importance]).toEqual(['old', 0.9])
+    expect('supersedes' in JSON.parse(calls[1][1].body as string)).toBe(false)
+  })
+})

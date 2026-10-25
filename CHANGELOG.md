@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Memory quality: superseded facts, importance, recency, duplicates
+
+- **`supersedes`.** `POST /v1/events` (and the batch route) accepts `supersedes: <event_id>` for an earlier event of the same agent. The old fact stays in the log but leaves `context_for()` and search, so "the user moved to Berlin" replaces the old address instead of competing with it. Search can still include it with `include_superseded: true`.
+- **`STATE_SET` supersedes automatically.** A `STATE_SET` whose keys were all set again, or deleted, by later state events leaves memory, following the same rule as time travel.
+- **`importance` (0–1)** and recency now rank the relevant part of `context_for()`: score = relevance × (0.5 + importance) × recency, where recency halves every `CONTEXT_RECENCY_HALF_LIFE_DAYS` (default 30). An unset importance counts as 0.5.
+- **Exact duplicates** (same type and data) appear once in `context_for()`, leaving room in the token budget.
+- Both fields are stored in `metadata`, so the checksum and chain cover them. SDKs: `log(..., supersedes=, importance=)`, `search(..., include_superseded=)`, and the camelCase equivalents.
+
 ### Retention, export/import, redaction
 
 - **Retention.** `EVENT_RETENTION_DAYS` (unset by default, meaning keep forever), or a per-agent setting via `GET/PUT /v1/agents/{id}/retention`. Events past the limit are deleted every hour (`RETENTION_INTERVAL_SECONDS`) by one worker at a time. Their vectors are removed and each leaves an audit-chain tombstone with reason `retention`.

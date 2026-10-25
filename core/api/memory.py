@@ -22,6 +22,7 @@ from services.audit_chain import tombstone_events
 from api.search import vector_search
 from services.embeddings import generate_embedding
 from services.keyword_search import keyword_search
+from services.memory_rank import superseded_ids, weighted_score
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
 
 router = APIRouter()
@@ -76,7 +77,7 @@ async def get_context(
     # 1. Recent events — always include these for temporal grounding
     recent_rows = await pool.fetch(
         """
-        SELECT event_id, agent_id, timestamp, event_type, data, session_id
+        SELECT event_id, agent_id, timestamp, event_type, data, session_id, metadata
         FROM events
         WHERE tenant_id = $1 AND agent_id = $2
           AND ($3::text IS NULL OR session_id::text != $3)
@@ -102,7 +103,7 @@ async def get_context(
         score_map = {eid: round(score, 3) for eid, score in vector_hits}
         sem_rows = await pool.fetch(
             """
-            SELECT event_id, agent_id, timestamp, event_type, data, session_id
+            SELECT event_id, agent_id, timestamp, event_type, data, session_id, metadata
             FROM events
             WHERE event_id = ANY($1::uuid[]) AND tenant_id = $2
               AND ($3::text IS NULL OR session_id::text != $3)
@@ -124,20 +125,36 @@ async def get_context(
     # 3. Merge — deduplicate, recent first then semantic fills gaps
     # Recent events take priority: they provide temporal grounding. Semantic
     # results that overlap with recent are skipped to avoid duplication.
-    seen_ids = set()
+    # Superseded facts (an explicit `supersedes`, or a STATE_SET whose keys
+    # were all written again) stay in the log but not in memory.
+    hidden = await superseded_ids(
+        pool, tenant_id, body.agent,
+        [r["event_id"] for r in recent_rows] + [r["event_id"] for r, _ in semantic_rows],
+    )
+    # Relevant events rank by relevance × importance × recency.
+    semantic_rows = [
+        (row, round(weighted_score(score, row["timestamp"], row.get("metadata")), 4))
+        for row, score in semantic_rows
+    ]
+
+    seen_ids = set(hidden)
+    seen_content = set()
     merged = []
 
-    for row in recent_rows:
+    def add(row, source, score):
         eid = str(row["event_id"])
-        if eid not in seen_ids:
-            seen_ids.add(eid)
-            merged.append({"row": row, "source": "recent", "score": 0.0})
+        # Exact repeats (same type and data) would only spend the token budget.
+        content = (row["event_type"], json.dumps(row["data"], sort_keys=True, default=str))
+        if eid in seen_ids or content in seen_content:
+            return
+        seen_ids.add(eid)
+        seen_content.add(content)
+        merged.append({"row": row, "source": source, "score": score})
 
+    for row in recent_rows:
+        add(row, "recent", 0.0)
     for row, score in sorted(semantic_rows, key=lambda x: x[1], reverse=True):
-        eid = str(row["event_id"])
-        if eid not in seen_ids:
-            seen_ids.add(eid)
-            merged.append({"row": row, "source": relevant_source, "score": score})
+        add(row, relevant_source, score)
 
     # 4. Format as a prompt-ready string within token budget
     # Rough estimate: 1 token ≈ 4 chars

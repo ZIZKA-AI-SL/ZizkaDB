@@ -207,6 +207,8 @@ class ZizkaDB:
         metadata: dict[str, Any] | None = None,
         token_usage: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        supersedes: str | None = None,
+        importance: float | None = None,
     ) -> LogResult:
         """
         Log an event.
@@ -220,6 +222,9 @@ class ZizkaDB:
             metadata:   Optional extra metadata
             idempotency_key: Send the same key when retrying a write; the
                         server stores the event once and returns it again
+            supersedes: Event id of an earlier fact this one replaces; the old
+                        one leaves context_for() and search (not the log)
+            importance: 0..1, weights the event in context_for() ranking
 
         Returns:
             LogResult with event_id, timestamp, sequence_no, checksum
@@ -245,6 +250,10 @@ class ZizkaDB:
         }
         if idempotency_key is not None:
             body["idempotency_key"] = idempotency_key
+        if supersedes is not None:
+            body["supersedes"] = supersedes
+        if importance is not None:
+            body["importance"] = importance
         response = await self._post("/v1/events", body)
         result = LogResult.from_dict(response)
         record_log_result(agent, result)
@@ -572,6 +581,7 @@ class ZizkaDB:
         agent: str | None = None,
         limit: int = 10,
         mode: str | None = None,
+        include_superseded: bool = False,
     ) -> list[Event]:
         """
         Search agent history using natural language.
@@ -592,6 +602,8 @@ class ZizkaDB:
         body: dict[str, Any] = {"query": query, "agent": agent, "limit": limit}
         if mode is not None:
             body["mode"] = mode
+        if include_superseded:
+            body["include_superseded"] = True
         response = await self._post("/v1/search", body)
         return [Event.from_dict(e) for e in response["results"]]
 

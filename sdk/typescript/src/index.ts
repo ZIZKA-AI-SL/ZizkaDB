@@ -292,6 +292,8 @@ export class ZizkaDB {
       session_id: sessionId,
       metadata: options.metadata ?? null,
       ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
+      ...(options.supersedes != null ? { supersedes: options.supersedes } : {}),
+      ...(options.importance != null ? { importance: options.importance } : {}),
     }) as {
       event_id: string
       timestamp: string
@@ -471,6 +473,8 @@ export class ZizkaDB {
         session_id: e.sessionId ?? null,
         metadata: e.metadata ?? null,
         ...(e.idempotencyKey != null ? { idempotency_key: e.idempotencyKey } : {}),
+        ...(e.supersedes != null ? { supersedes: e.supersedes } : {}),
+        ...(e.importance != null ? { importance: e.importance } : {}),
         ...(e.parentIndex != null ? { parent_index: e.parentIndex } : {}),
       })),
     }) as { written: number, failed: number, results: Record<string, unknown>[] }
@@ -553,6 +557,7 @@ export class ZizkaDB {
       agent: options.agent ?? null,
       limit: options.limit ?? 10,
       ...(options.mode ? { mode: options.mode } : {}),
+      ...(options.includeSuperseded ? { include_superseded: true } : {}),
     }) as { results: Record<string, unknown>[] }
     return res.results.map(parseEvent)
   }

@@ -54,7 +54,7 @@ async def keyword_search(
     rows = await pool.fetch(
         f"""
         SELECT event_id, agent_id, timestamp, event_type, data, parent_event_id,
-               session_id, sequence_no,
+               session_id, sequence_no, metadata,
                ts_rank_cd({FTS_DOCUMENT}, q) AS score
         FROM events, to_tsquery('simple', $3) AS q
         WHERE tenant_id = $1
