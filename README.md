@@ -4,7 +4,7 @@
 
 # ZizkaDB
 
-### The memory Operational database for Auditing, Memory and Compliance for AI Agents
+### The Operational database for Auditing, Memory and Compliance for AI Agents
 
 Every step linked to its cause, every record **provably untouched**, every past state replayable.<br/>
 **Hash-chained audit trail** for **EU AI Act Article 12** · **memory that works without OpenAI** · **time-travel debugging**
