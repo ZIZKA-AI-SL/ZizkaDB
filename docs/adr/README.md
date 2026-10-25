@@ -16,7 +16,7 @@ ADRs are the highest-leverage documentation for long-term maintainability. They 
 | [006](006-token-usage-jsonb-convention.md) | Token usage stored in `events.data.token_usage` JSONB |
 | [007](007-deterministic-token-optimization.md) | Deterministic (no-LLM) token optimization detectors |
 | [008](008-ai-coding-assistant-architecture.md) | Repo-encoded AI coding standards (layers + tool adapters) |
-| [009](009-audit-hash-chain.md) | Per-tenant audit hash chain over events, with sealed erasure tombstones |
+| [009](009-audit-hash-chain.md) | Audit hash chain: the per-agent chain from #310 and its hardening plan |
 
 ## Format
 
