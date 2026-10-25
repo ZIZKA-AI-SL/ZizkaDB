@@ -29,6 +29,8 @@ import type {
   AgentState,
   AtOptions,
   CausalChain,
+  ChainHead,
+  ChainVerification,
   LogOptions,
   LogToolOptions,
   LogToolResultOptions,
@@ -295,13 +297,17 @@ export class ZizkaDB {
       checksum: string
       index_status?: string
       indexed?: boolean
+      chain_hash?: string | null
+      duplicate?: boolean
     }
-    const result = {
+    const result: LogResult = {
       eventId: res.event_id,
       timestamp: new Date(res.timestamp),
       sequenceNo: res.sequence_no,
       checksum: res.checksum,
       indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
+      ...(res.chain_hash ? { chainHash: res.chain_hash } : {}),
+      ...(res.duplicate ? { duplicate: true } : {}),
     }
     recordLogResult(options.agent, result.eventId)
     emitLogHint(this.baseUrl, result.eventId)
@@ -442,6 +448,35 @@ export class ZizkaDB {
   // ─────────────────────────────────────────
   // AT (time travel)
   // ─────────────────────────────────────────
+
+  /**
+   * Check the agent's audit hash chain: no event removed, inserted, reordered
+   * or changed (deletions through forget() are allowed). Store `chainHead`
+   * outside ZizkaDB and pass it back as `after` to check only newer events.
+   */
+  async verifyChain(agent: string, after?: ChainHead): Promise<ChainVerification> {
+    const params: Record<string, string> = { agent }
+    if (after) {
+      params.after_seq = String(after.sequenceNo)
+      params.anchor = after.chainHash
+    }
+    const res = await this.get('/v1/events/chain', params) as {
+      agent: string
+      intact: boolean
+      summary: Record<string, number>
+      problems: Record<string, unknown>[]
+      chain_head: { sequence_no: number, chain_hash: string } | null
+    }
+    return {
+      agent: res.agent,
+      intact: res.intact,
+      summary: res.summary,
+      problems: res.problems,
+      chainHead: res.chain_head
+        ? { sequenceNo: res.chain_head.sequence_no, chainHash: res.chain_head.chain_hash }
+        : null,
+    }
+  }
 
   async at(options: AtOptions): Promise<AgentState> {
     const res = await this.get('/v1/events/at', {

@@ -134,6 +134,14 @@ describe('log()', () => {
     expect('idempotency_key' in JSON.parse(calls[1][1].body as string)).toBe(false)
   })
 
+  it('returns chainHash and duplicate when the server sends them', async () => {
+    mockFetch(201, { event_id: 'e', timestamp: '2026-06-01T00:00:00Z', sequence_no: 4, checksum: 'c', chain_hash: 'h', duplicate: true })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const r = await db.log({ agent: 'my-bot', event: 'e', data: {} })
+    expect(r.chainHash).toBe('h')
+    expect(r.duplicate).toBe(true)
+  })
+
   it('forwards parentId and sessionId', async () => {
     mockFetch(201, { event_id: 'evt-002', timestamp: '2026-06-01T00:00:00Z', sequence_no: 2, checksum: 'def' })
 
@@ -525,5 +533,17 @@ describe('SDK version', () => {
     const { SDK_VERSION } = await import('../index')
     const packageJson = await import('../../package.json')
     expect(SDK_VERSION).toBe(packageJson.version)
+  })
+})
+
+describe('verifyChain()', () => {
+  it('maps the chain head and passes an anchor', async () => {
+    mockFetch(200, { agent: 'a', intact: true, summary: { events: 2 }, problems: [], chain_head: { sequence_no: 9, chain_hash: 'h9' } })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const r = await db.verifyChain('a', { sequenceNo: 5, chainHash: 'h5' })
+    expect(r.intact).toBe(true)
+    expect(r.chainHead).toEqual({ sequenceNo: 9, chainHash: 'h9' })
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string]
+    expect(url).toContain('/v1/events/chain?agent=a&after_seq=5&anchor=h5')
   })
 })

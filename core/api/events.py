@@ -9,6 +9,7 @@ import json
 from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from db.connection import get_pool
 from services.checksum import CHECKSUM_COLUMNS, fetch_legacy_cutoff, verify_stored_checksum
+from services.audit_chain import verify_chain
 from services.event_write import write_event
 from services.why_analysis import analyze_why_chain
 
@@ -422,6 +423,35 @@ async def time_travel(
 # VERIFY CHECKSUMS — GET /v1/events/verify
 # Recompute checksums for an agent's events (audit helper)
 # ─────────────────────────────────────────
+
+@router.get("/chain")
+async def verify_event_chain(
+    agent: str,
+    after_seq: int | None = Query(default=None, ge=0),
+    anchor: str | None = Query(default=None, min_length=64, max_length=64),
+    tenant: dict = Depends(get_tenant),
+):
+    """Check the agent's hash chain: no event removed, inserted, reordered or changed.
+
+    Walks every event (and tombstone of a legitimately deleted one) in order,
+    recomputing checksums and links. Returns ``intact``, a summary, up to 100
+    problems and ``chain_head``. Store ``chain_head`` outside ZizkaDB; later pass
+    its ``sequence_no`` as ``after_seq`` and its ``chain_hash`` as ``anchor`` to
+    check only newer events and prove nothing before the head was rewritten.
+    """
+    await assert_agent_allowed(tenant, agent)
+    if (after_seq is None) != (anchor is None):
+        raise bad_request("Pass after_seq and anchor together (from a stored chain_head)")
+    pool = get_pool()
+    return await verify_chain(
+        pool,
+        tenant["tenant_id"],
+        agent,
+        after_seq=after_seq,
+        anchor=anchor,
+        legacy_until_seq=await fetch_legacy_cutoff(pool),
+    )
+
 
 @router.get("/verify")
 async def verify_events(

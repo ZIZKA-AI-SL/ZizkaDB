@@ -16,6 +16,7 @@ from qdrant_client.models import PointStruct
 from services.embeddings import generate_embedding, event_to_text
 from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.agent_limits import assert_agent_slot
+from services.audit_chain import compute_chain_hash, previous_link
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request, payload_too_large
@@ -178,7 +179,7 @@ async def _find_idempotent(pool, tenant_id: str, agent: str, key: str | None) ->
         return None
     row = await pool.fetchrow(
         """
-        SELECT event_id, timestamp, sequence_no, checksum, index_status
+        SELECT event_id, timestamp, sequence_no, checksum, chain_hash, index_status
         FROM events
         WHERE tenant_id = $1 AND agent_id = $2 AND idempotency_key = $3
         """,
@@ -193,6 +194,7 @@ async def _find_idempotent(pool, tenant_id: str, agent: str, key: str | None) ->
         "timestamp": row["timestamp"].isoformat(),
         "sequence_no": row["sequence_no"],
         "checksum": row["checksum"],
+        "chain_hash": row.get("chain_hash"),
         "indexed": row["index_status"] == "indexed",
         "index_status": row["index_status"],
         "duplicate": True,
@@ -282,16 +284,21 @@ async def _insert_event(
                 "sequence_no": canonical["sequence_no"],
                 "metadata": canonical["metadata"],
             })
+            # The agents upsert above holds this agent's row lock until commit,
+            # so no other write for the agent can take the same previous link.
+            chain_hash = compute_chain_hash(
+                await previous_link(conn, tenant_id, agent), checksum
+            )
 
             row = await conn.fetchrow(
                 """
                 INSERT INTO events (
                     tenant_id, agent_id, event_type, data, parent_event_id, session_id,
                     metadata, index_status, sequence_no, timestamp, checksum,
-                    idempotency_key
+                    idempotency_key, chain_hash
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                RETURNING event_id, timestamp, sequence_no
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                RETURNING event_id, timestamp, sequence_no, chain_hash
                 """,
                 tenant_id,
                 agent,
@@ -305,6 +312,7 @@ async def _insert_event(
                 canonical["timestamp"],
                 checksum,
                 idempotency_key,
+                chain_hash,
             )
     return row, checksum
 
@@ -379,6 +387,7 @@ async def _after_insert(
         "timestamp": row["timestamp"].isoformat(),
         "sequence_no": row["sequence_no"],
         "checksum": checksum,
+        "chain_hash": row.get("chain_hash"),
         "indexed": indexed,
         "index_status": index_status,
         "duplicate": False,

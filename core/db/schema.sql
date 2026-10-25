@@ -107,6 +107,7 @@ CREATE TABLE events (
     index_attempts  INTEGER NOT NULL DEFAULT 0,
     index_retry_at  TIMESTAMPTZ,
     idempotency_key VARCHAR(255),                       -- retried writes return the first event
+    chain_hash      VARCHAR(64),                        -- per-agent hash chain (services/audit_chain.py)
 
     CONSTRAINT fk_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id)
@@ -138,6 +139,21 @@ CREATE INDEX idx_events_data
 CREATE UNIQUE INDEX uq_events_idempotency
     ON events (tenant_id, agent_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+-- Chain links of deleted events (GDPR forget, retention): the hash, never the content.
+CREATE TABLE event_tombstones (
+    tenant_id   UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    agent_id    VARCHAR(255) NOT NULL,
+    event_id    UUID NOT NULL,
+    sequence_no BIGINT NOT NULL,
+    chain_hash  VARCHAR(64) NOT NULL,
+    reason      VARCHAR(50) NOT NULL,
+    deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX idx_event_tombstones_agent_seq
+    ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
 
 -- Checksum verification pages an agent's events by sequence_no.
 CREATE INDEX idx_events_agent_seq

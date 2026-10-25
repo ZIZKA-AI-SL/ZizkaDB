@@ -285,6 +285,12 @@ async def delete_agent(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
             )
+            # The whole agent goes, so its chain does too: a new agent under
+            # the same name starts a fresh chain.
+            await conn.execute(
+                "DELETE FROM event_tombstones WHERE tenant_id = $1 AND agent_id = $2",
+                tenant_id, agent_id,
+            )
             await conn.execute(
                 "DELETE FROM agents WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,

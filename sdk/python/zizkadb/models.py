@@ -56,6 +56,8 @@ class LogResult:
     sequence_no: int
     checksum: str
     index_status: str = "skipped"
+    chain_hash: str | None = None
+    duplicate: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "LogResult":
@@ -75,6 +77,8 @@ class LogResult:
             sequence_no=d["sequence_no"],
             checksum=d["checksum"],
             index_status=index_status,
+            chain_hash=d.get("chain_hash"),
+            duplicate=bool(d.get("duplicate", False)),
         )
 
 

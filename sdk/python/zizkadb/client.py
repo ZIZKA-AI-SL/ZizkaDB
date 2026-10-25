@@ -521,6 +521,26 @@ class ZizkaDB:
         )
         return AgentState.from_dict(response)
 
+    async def verify_chain(
+        self,
+        agent: str,
+        after_seq: int | None = None,
+        anchor: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Check the agent's audit hash chain: no event removed, inserted,
+        reordered or changed (deletions through forget() are allowed).
+
+        Returns a dict with ``intact``, ``summary``, ``problems`` and
+        ``chain_head``. Store ``chain_head`` outside ZizkaDB; later pass its
+        ``sequence_no`` as ``after_seq`` and ``chain_hash`` as ``anchor``.
+        """
+        params: dict[str, Any] = {"agent": agent}
+        if after_seq is not None or anchor is not None:
+            params["after_seq"] = after_seq
+            params["anchor"] = anchor
+        return await self._get("/v1/events/chain", params)
+
     # ─────────────────────────────────────────
     # CONTEXT FOR — prompt-ready memory injection
     # ─────────────────────────────────────────
