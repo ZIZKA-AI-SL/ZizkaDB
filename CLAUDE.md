@@ -149,7 +149,7 @@ cd dashboard && npm run lint && npm test && npm run build
 
 ## Critical invariants — never break these
 
-1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data.
+1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data. Routes that write or delete through an API key use `get_writer_tenant`, which refuses read-only keys.
 2. **Route paths**: never rename `/v1/...` paths without updating `dashboard/lib/api.ts` — there is no runtime contract enforcement between backend and dashboard.
 3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`, `events/verify`, `events/chain`) must call this.
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.

@@ -41,6 +41,8 @@ CREATE TABLE api_keys (
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     last_used   TIMESTAMPTZ,
     revoked     BOOLEAN DEFAULT FALSE,
+    scope       VARCHAR(16) NOT NULL DEFAULT 'read_write',  -- read_only keys never write
+    expires_at  TIMESTAMPTZ,                                 -- NULL = never expires
     CONSTRAINT fk_api_keys_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
 );

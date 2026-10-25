@@ -2,12 +2,14 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from services.exceptions import bad_request, conflict, not_found, service_unavailable
 from pydantic import BaseModel, Field
 
 from api.deps import (
+    get_writer_tenant,
     assert_agent_allowed,
     get_tenant,
     is_unbound_api_key,
@@ -137,6 +139,9 @@ class CreateAgentBody(BaseModel):
 
 class CreateAgentKeyBody(BaseModel):
     name: str | None = None
+    # read_only keys can query, search and verify but never write or delete.
+    scope: Literal["read_write", "read_only"] = "read_write"
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.get("")
@@ -358,7 +363,7 @@ async def delete_agent(
 @router.post("/{agent_id}/test-event", status_code=201)
 async def test_agent_event(
     agent_id: str,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """Log a test event to this agent (dashboard JWT). Verifies the pipeline for this agent."""
     agent_id = _validate_agent_id(agent_id)
@@ -433,6 +438,8 @@ async def create_agent_api_key(
                 tenant_id=tenant_id,
                 name=body.name or f"{agent_id} key",
                 agent_id=agent_id,
+                scope=body.scope,
+                expires_in_days=body.expires_in_days,
             )
 
 

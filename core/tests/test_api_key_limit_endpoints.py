@@ -61,7 +61,7 @@ class FakeConn:
         return self._plan
 
     async def fetchrow(self, query, *args):
-        return {"key_id": "33333333-3333-3333-3333-333333333333"}
+        return {"key_id": "33333333-3333-3333-3333-333333333333", "expires_at": None}
 
 
 class FakePool:

@@ -16,7 +16,7 @@ import hashlib
 import json
 import logging
 
-from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
 from db.connection import get_pool, get_qdrant
 from services.audit_chain import tombstone_events
 from api.search import vector_search
@@ -336,7 +336,7 @@ async def session_diff(
 @router.delete("/forget")
 async def forget(
     body: ForgetRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """
     Delete all events where data contains a specific key-value pair.

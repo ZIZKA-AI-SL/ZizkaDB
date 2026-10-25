@@ -57,6 +57,7 @@ Coverage: `core/tests/test_a2a.py`.
 ```
 Is this route SDK-callable (agents logging events, querying data)?
   → Depends(get_tenant)            accepts API keys + JWTs
+    Does it write or delete? → Depends(get_writer_tenant)  (refuses read_only keys)
 
 Is this route dashboard-only (manages keys, billing, user settings, destructive ops)?
   → Depends(require_dashboard_session)   JWT only, rejects API keys

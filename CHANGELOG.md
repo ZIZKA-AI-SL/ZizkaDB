@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Read-only and expiring API keys
+
+- `POST /v1/agents/{id}/api-keys` accepts `scope: "read_only"`. A read-only key can query, search, build context, export and verify, but every write or delete route (`/v1/events`, `/batch`, `/import`, `/v1/memory/forget`, A2A, test events) refuses it with 403. This suits dashboards, evaluation tools and auditors. Read-only keys always belong to one agent.
+- `expires_in_days` (1–3650) on both key-creation routes makes a key stop working after that many days. Expired keys get a 401 and no longer count towards the plan's key limit. Key lists show `scope` and `expires_at`.
+
 ### Memory quality: superseded facts, importance, recency, duplicates
 
 - **`supersedes`.** `POST /v1/events` (and the batch route) accepts `supersedes: <event_id>` for an earlier event of the same agent. The old fact stays in the log but leaves `context_for()` and search, so "the user moved to Berlin" replaces the old address instead of competing with it. Search can still include it with `include_superseded: true`.

@@ -68,14 +68,15 @@ async def verify_api_key(raw_key: str) -> dict | None:
 
     row = await pool.fetchrow(
         """
-        SELECT ak.tenant_id, ak.key_id, ak.agent_id, ak.revoked
+        SELECT ak.tenant_id, ak.key_id, ak.agent_id, ak.revoked, ak.scope,
+               (ak.expires_at IS NOT NULL AND ak.expires_at <= NOW()) AS expired
         FROM api_keys ak
         WHERE ak.key_hash = $1
         """,
         key_hash,
     )
 
-    if not row or row["revoked"]:
+    if not row or row["revoked"] or row["expired"]:
         return None
 
     # Update last_used async (fire and forget)
@@ -88,6 +89,7 @@ async def verify_api_key(raw_key: str) -> dict | None:
         "tenant_id": str(row["tenant_id"]),
         "key_id": str(row["key_id"]),
         "agent_id": row["agent_id"],
+        "scope": row["scope"] or "read_write",
     }
 
 

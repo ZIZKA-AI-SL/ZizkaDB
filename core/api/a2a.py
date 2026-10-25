@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from api.deps import get_tenant
+from api.deps import get_tenant, get_writer_tenant
 from db.connection import get_pool
 from services.entitlements import is_self_hosted_deployment
 from services.event_write import write_event
@@ -27,7 +27,7 @@ class A2AMessageRequest(BaseModel):
 @router.post("/messages", status_code=201)
 async def send_message(
     body: A2AMessageRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """
     Send a message from the authenticated agent to another

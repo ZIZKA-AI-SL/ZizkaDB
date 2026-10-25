@@ -479,6 +479,12 @@ async def _run_migrations():
         ALTER TABLE agents ADD COLUMN IF NOT EXISTS retention_days INTEGER;
     """)
 
+    # API key scope (read_write / read_only) and optional expiry.
+    await _pg_pool.execute("""
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'read_write';
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    """)
+
 
 
 async def init_db():
