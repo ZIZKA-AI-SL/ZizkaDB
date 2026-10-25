@@ -112,7 +112,9 @@ cd dashboard && npm run lint && npm test && npm run build
 
 **SDK host resolution** — explicit `host` → `ZIZKADB_HOST` → legacy `AGENTDB_HOST` → ZizkaDB Cloud when an API key is given (Python `client.py`, TypeScript `index.ts`; blank values count as unset). Templates and examples pass `host = HOST or (None if API_KEY else "http://localhost:8000")` so they also work with the SDK already on PyPI.
 
-**Audit chain** — `services/audit_chain.py`: each event stores `chain_hash = sha256(prev + ":" + checksum)` per agent, written under the `agents` row lock. Any code that deletes events must first call `tombstone_events()` in the same transaction (forget does; deleting a whole agent drops its tombstones too), or `GET /v1/events/chain` reports a break.
+**Audit chain** — `services/audit_chain.py`: each event stores `chain_hash = sha256(prev + ":" + checksum)` per agent, written under the `agents` row lock. Any code that deletes events must first call `tombstone_events()` in the same transaction (forget does; deleting a whole agent drops its tombstones too), or `GET /v1/events/chain` reports a break. Retention (`services/retention.py`, background task under an advisory lock) does the same. `parent_event_id` is a soft link (no foreign key), so a deleted parent never blocks deletes or changes a child's checksum.
+
+**Redaction** — `services/redaction.py` runs in `write_event()` before the size check and the checksum: secret-named keys are always redacted, patterns only with `REDACT_PATTERNS`. Never store or log the pre-redaction payload.
 
 **Health** — `/health` is liveness only (always 200). `/health/deep` returns 503 when Postgres, Redis, or (with embeddings enabled) Qdrant is down.
 

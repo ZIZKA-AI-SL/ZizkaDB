@@ -24,6 +24,7 @@ Usage:
     state = await db.at(agent="my-bot", timestamp=datetime(2026, 5, 1))
 """
 
+import json
 import os
 import sys
 import httpx
@@ -460,6 +461,59 @@ class ZizkaDB:
                 return
             last = page[-1]
             cursor = f"{last['timestamp']}|{last['sequence_no']}"
+
+    async def export_events(self, agent: str) -> AsyncIterator[dict[str, Any]]:
+        """
+        Stream every event of an agent, oldest first, as dicts (the server's
+        NDJSON export). Write them to a file for an offline copy, or pass them
+        to import_events() on another instance.
+
+        Example:
+            with open("bot.ndjson", "w") as f:
+                async for line in db.export_events("my-bot"):
+                    f.write(json.dumps(line) + "\\n")
+        """
+        client = await self._get_client()
+        try:
+            async with client.stream("GET", "/v1/events/export", params={"agent": agent}) as resp:
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    self._handle(resp)
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        yield json.loads(line)
+        finally:
+            if not self._client:
+                await client.aclose()
+
+    async def import_events(
+        self,
+        events: list[dict[str, Any]],
+        agent: str | None = None,
+        chunk_size: int = 1000,
+    ) -> dict[str, Any]:
+        """
+        Import events from export_events() (oldest first). Original timestamps
+        are kept and parent links remapped; re-running is safe (already
+        imported lines count as duplicates). ``agent`` stores everything under
+        another agent name.
+
+        Returns totals: imported, duplicates, failed, parents_dropped, errors.
+        """
+        totals: dict[str, Any] = {
+            "imported": 0, "duplicates": 0, "failed": 0, "parents_dropped": 0, "errors": [],
+        }
+        for start in range(0, len(events), chunk_size):
+            body: dict[str, Any] = {"events": events[start:start + chunk_size]}
+            if agent:
+                body["agent"] = agent
+            result = await self._post("/v1/events/import", body)
+            for key in ("imported", "duplicates", "failed", "parents_dropped"):
+                totals[key] += result.get(key, 0)
+            totals["errors"].extend(
+                {**e, "index": e.get("index", 0) + start} for e in result.get("errors", [])
+            )
+        return totals
 
     async def log_batch(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """

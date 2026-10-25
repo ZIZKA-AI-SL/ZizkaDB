@@ -390,3 +390,29 @@ def test_log_batch_posts_events(monkeypatch):
     assert seen["url"].endswith("/v1/events/batch")
     assert seen["body"]["events"][0]["agent"] == "a"
     assert result["written"] == 1
+
+
+def test_export_streams_lines_and_import_chunks(monkeypatch):
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            body = '{"event_id": "a", "agent": "b"}\n{"event_id": "c", "agent": "b"}\n'
+            return httpx.Response(200, text=body)
+        posts.append(json.loads(request.read().decode()))
+        n = len(posts[-1]["events"])
+        return httpx.Response(200, json={"imported": n, "duplicates": 0, "failed": 0,
+                                         "parents_dropped": 0, "errors": []})
+
+    db = _client(monkeypatch, handler)
+
+    async def run():
+        lines = [line async for line in db.export_events("b")]
+        return lines, await db.import_events(lines, agent="new", chunk_size=1)
+
+    try:
+        lines, totals = asyncio.run(run())
+    finally:
+        asyncio.run(_close(db))
+    assert [line["event_id"] for line in lines] == ["a", "c"]
+    assert totals["imported"] == 2 and len(posts) == 2 and posts[0]["agent"] == "new"

@@ -22,6 +22,7 @@ CREATE TABLE agents (
     last_seen   TIMESTAMPTZ DEFAULT NOW(),
     event_count BIGINT DEFAULT 0,
     metadata    JSONB,
+    retention_days INTEGER,  -- NULL = EVENT_RETENTION_DAYS, else kept forever (services/retention.py)
     PRIMARY KEY (agent_id, tenant_id)
 );
 
@@ -97,7 +98,7 @@ CREATE TABLE events (
     event_type      VARCHAR(100) NOT NULL,
     data            JSONB NOT NULL,
     embedding       vector(1536),
-    parent_event_id UUID REFERENCES events(event_id),  -- causal link
+    parent_event_id UUID,                               -- causal link (soft: the parent may be deleted by retention)
     session_id      VARCHAR(255),                       -- group related events
     sequence_no     BIGSERIAL,                          -- monotonic, never gaps
     checksum        VARCHAR(64),                        -- SHA-256; v2 covers the audit fields (services/checksum.py)

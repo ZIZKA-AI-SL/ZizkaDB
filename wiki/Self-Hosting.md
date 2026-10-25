@@ -217,6 +217,12 @@ bash infra/restore-postgres.sh infra/backups/zizkadb_<stamp>.sql.gz
 
 Qdrant vectors are not in the Postgres dump. With embeddings on, rebuild them with `scripts/reindex-events.py`. See [Production-Deployment.md](Production-Deployment.md) for more.
 
+## Retention, export and redaction
+
+- **Retention:** `EVENT_RETENTION_DAYS=90` deletes events older than 90 days, checking every hour. Each deletion leaves an audit-chain tombstone, so `GET /v1/events/chain` still verifies. Per agent: `PUT /v1/agents/{id}/retention` with `{"days": 30}` (dashboard session), or `null` to use the default. Unset means events are kept forever.
+- **Export / import:** `GET /v1/events/export?agent=` streams every event as NDJSON, oldest first. `POST /v1/events/import` (up to 1000 lines per request) loads them on another install, keeping timestamps and remapping parent links. Re-running an import is safe. SDKs: `export_events` / `import_events` (Python), `exportEvents` / `importEvents` (TypeScript).
+- **Redaction:** values under secret-named keys (`password`, `api_key`, `authorization`, `token` keys and so on) are stored as `[REDACTED]`, on by default. Add your own with `REDACT_KEYS=ssn,national_id`, or set `REDACT_KEYS=off`. Opt in to pattern redaction inside strings with `REDACT_PATTERNS=email,phone,card,iban,ipv4`; card numbers must pass the Luhn check. Redaction runs before the checksum, so the original value never reaches the database.
+
 ## Monitoring
 
 Set `METRICS_TOKEN` and scrape `GET /metrics` (Prometheus text format) with `Authorization: Bearer <token>`. You get build info, Postgres/Redis up, estimated events, agents, the embedding queue (pending/failed), tombstones, database size and per-worker pool connections. Without `METRICS_TOKEN` the endpoint returns 404.
