@@ -21,6 +21,8 @@ PR #310 added a hash chain to close the ordering gap. The first draft of this AD
 - **Serialisation.** The write path (`core/services/event_write.py`) takes the `agents` row lock with `INSERT … ON CONFLICT DO UPDATE` before it calls `nextval` and reads the previous link, all in one transaction. One agent's chain therefore cannot fork, and its `sequence_no` order matches its chain order.
 - **Unkeyed.** The hash is plain SHA-256. There is no key option.
 - **Events from before the chain** have `chain_hash = NULL` and are counted as `unchained_legacy`. A row without a link that appears after the agent's first link is reported as `unchained_after_chain_start`.
+- **Excluded columns.** The embedding pipeline's columns (`embedding`, `index_status`, `index_attempts`, `index_retry_at`) stay outside the checksum and the chain, so the embed worker's updates never affect verification.
+- **Seed scripts.** `seed-demo-data.py` (`COPY`) and `seed-token-usage-events.py` (raw `INSERT`) write backdated rows straight into `events` without a link. An agent seeded that way after its first chained event reports `unchained_after_chain_start`. They are development tools; the scripts that log through the SDK produce chained events.
 
 ### Tombstones for lawful deletion
 
