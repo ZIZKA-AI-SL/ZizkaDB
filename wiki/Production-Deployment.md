@@ -104,4 +104,4 @@ The public managed service runs the same open-source runtime from this repositor
 
 - [[Self-Hosting]] — first install, embeddings, suggestions API key
 - [[Troubleshooting]] — auth, empty dashboard, search
-- [SECURITY.md](https://github.com/Zizka-ai/ZizkaDB/blob/main/SECURITY.md) — vulnerability reporting
+- [SECURITY.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/SECURITY.md) — vulnerability reporting

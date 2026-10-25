@@ -11,13 +11,13 @@ Managed-cloud marketing, `/enterprise`, and the operator admin console live in t
 ### Quickstart (no clone)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 ### Full dev stack (from a clone)
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/setup-local.sh
 ```
 

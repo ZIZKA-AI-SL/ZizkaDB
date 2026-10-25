@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Push wiki/ markdown files to GitHub Wiki for Zizka-ai/ZizkaDB.
+# Push wiki/ markdown files to GitHub Wiki for ZIZKA-AI-SL/ZizkaDB.
 #
 # Prerequisites:
 #   1. Enable Wiki: GitHub repo → Settings → Features → Wikis ✓
@@ -10,7 +10,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WIKI_DIR="${WIKI_CLONE_DIR:-/tmp/ZizkaDB.wiki}"
-REPO="https://github.com/Zizka-ai/ZizkaDB.wiki.git"
+REPO="https://github.com/ZIZKA-AI-SL/ZizkaDB.wiki.git"
 
 echo "▶ Cloning or updating wiki repo..."
 if [[ -d "$WIKI_DIR/.git" ]]; then
@@ -20,7 +20,7 @@ else
   if ! git clone "$REPO" "$WIKI_DIR"; then
     echo ""
     echo "ERROR: Could not clone $REPO"
-    echo "Enable Wikis first: https://github.com/Zizka-ai/ZizkaDB/settings"
+    echo "Enable Wikis first: https://github.com/ZIZKA-AI-SL/ZizkaDB/settings"
     echo "  → Features → Wikis → check 'Wikis'"
     echo "Then run this script again."
     exit 1
@@ -44,4 +44,4 @@ fi
 git commit -m "Update wiki from main repo ($(date -Iseconds))"
 BRANCH="$(git branch --show-current 2>/dev/null || echo master)"
 git push origin "$BRANCH"
-echo "✅ Wiki pushed: https://github.com/Zizka-ai/ZizkaDB/wiki"
+echo "✅ Wiki pushed: https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki"

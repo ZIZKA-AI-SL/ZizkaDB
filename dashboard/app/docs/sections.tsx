@@ -304,13 +304,13 @@ export function OverviewSection({
 
       <Callout type="tip">
         <strong>OSS quickstart (recommended):</strong>
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 bash scripts/quickstart.sh`}</Code>
         Pulls pre-built GHCR images when available — no local compile. Runs the <code style={codeMonoDark}>why()</code> demo
         and opens the dashboard at <code style={codeMonoDark}>http://localhost:3001/login</code> (no signup).
         Full connect guide:{' '}
-        <a href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 500 }}>
+        <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 500 }}>
           CONNECT.md
         </a>
       </Callout>
@@ -378,10 +378,10 @@ export ZIZKADB_TELEMETRY=false            # optional`}</Code>
         Full guide in{' '}
         <button type="button" onClick={() => onNavigate('selfhost')} style={{ background: 'none', border: 'none', color: '#1e40af', fontWeight: 500, cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>Self-host →</button>
         {' '}· connect snippets in{' '}
-        <a href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af', fontWeight: 500 }}>CONNECT.md</a>
+        <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af', fontWeight: 500 }}>CONNECT.md</a>
       </p>
       <Step n={1} title="Quickstart (one command)">
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 bash scripts/quickstart.sh`}</Code>
         <p style={S.p}>
@@ -1328,7 +1328,8 @@ export function McpSection() {
             tool: "log_event",
             desc: "Log action with optional causal parent_id",
           },
-          { tool: "search_memory", desc: "Semantic search over agent history" },
+          { tool: "search_memory", desc: "Keyword or hybrid search over agent history" },
+          { tool: "verify_chain", desc: "Prove the agent's history is untouched" },
           {
             tool: "get_context",
             desc: "Formatted memory block for system prompts",
@@ -1438,7 +1439,7 @@ export function SelfHostSection() {
       </Callout>
 
       <Step n={1} title="Quickstart (recommended)">
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 bash scripts/quickstart.sh`}</Code>
         <p style={S.p}>
@@ -1448,7 +1449,7 @@ bash scripts/quickstart.sh`}</Code>
         <p style={S.p}>
           Stack only: <code style={codeMonoDark}>bash scripts/setup-local.sh</code> ·
           Connect guide:{' '}
-          <a href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>CONNECT.md</a>
+          <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>CONNECT.md</a>
         </p>
       </Step>
 
@@ -1457,14 +1458,14 @@ bash scripts/quickstart.sh`}</Code>
 zizkadb demo`}</Code>
         <p style={S.p}>
           Worked example:{' '}
-          <a href="https://github.com/Zizka-ai/ZizkaDB/tree/main/worked/01-support-order-delay" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>
+          <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/worked/01-support-order-delay" target="_blank" rel="noreferrer" style={{ color: '#1e40af' }}>
             worked/01-support-order-delay
           </a>
         </p>
       </Step>
 
       <Step n={3} title="Manual setup (optional)">
-        <Code lang="bash">{`git clone https://github.com/Zizka-ai/ZizkaDB
+        <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
 cp .env.example infra/.env`}</Code>
         <p style={S.p}>
@@ -1707,7 +1708,7 @@ async with ZizkaDB("zizkadb_live_...") as db:
         Runnable trees under{" "}
         <code style={codeMonoDark}>examples/</code> on{" "}
         <a
-          href="https://github.com/Zizka-ai/ZizkaDB"
+          href="https://github.com/ZIZKA-AI-SL/ZizkaDB"
           style={{ color: "#1e40af" }}
         >
           GitHub

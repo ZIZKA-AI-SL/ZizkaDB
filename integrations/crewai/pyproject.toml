@@ -32,8 +32,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://db.zizka.ai"
 Documentation = "https://db.zizka.ai/docs"
-Repository = "https://github.com/Zizka-ai/ZizkaDB"
-Issues = "https://github.com/Zizka-ai/ZizkaDB/issues"
+Repository = "https://github.com/ZIZKA-AI-SL/ZizkaDB"
+Issues = "https://github.com/ZIZKA-AI-SL/ZizkaDB/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

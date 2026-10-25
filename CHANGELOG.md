@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Docs and project page
+
+- `LICENSE` is now the plain AGPL-3.0 text, so GitHub and licence scanners recognise it. The MCP server's MIT licence is noted in the new `NOTICE` file.
+- Every link uses the organisation's current name, `ZIZKA-AI-SL/ZizkaDB`, including the `curl` quickstart. Before, links relied on GitHub's rename redirect.
+- The README describes the product as it is now: memory and audit database, hash-chained history, search without OpenAI, database operations (retention, export, read-only keys, metrics), `init-secrets.sh` for servers, and new FAQ answers. CONNECT.md and the SDK READMEs show the new methods.
+- MCP server: new `verify_chain` tool; `search_memory` accepts `mode`.
+
 ### Read-only and expiring API keys
 
 - `POST /v1/agents/{id}/api-keys` accepts `scope: "read_only"`. A read-only key can query, search, build context, export and verify, but every write or delete route (`/v1/events`, `/batch`, `/import`, `/v1/memory/forget`, A2A, test events) refuses it with 403. This suits dashboards, evaluation tools and auditors. Read-only keys always belong to one agent.
@@ -375,10 +382,10 @@ Production-hardening sprint merged to `main` (via stacked PRs #125–#139), incl
 - CLI: `why`, `baseline`, `token-usage`, `token-opt`
 - Docs: always-on Cursor coding standards, KB OSS scope updates
 
-See [GitHub releases](https://github.com/Zizka-ai/ZizkaDB/releases) for tagged artifacts.
+See [GitHub releases](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) for tagged artifacts.
 
-[Unreleased]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.8...HEAD
-[0.2.8]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.7...v0.2.8
-[0.2.7]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.6...v0.2.7
-[0.2.6]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.1.0...v0.2.6
-[0.1.0]: https://github.com/Zizka-ai/ZizkaDB/releases
+[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.1.0...v0.2.6
+[0.1.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/releases

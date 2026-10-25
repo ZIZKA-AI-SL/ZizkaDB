@@ -5,7 +5,7 @@
 Self-hosted, open-source **observability and causal debugging** for [CrewAI](https://crewai.com).
 
 A CrewAI run is normally a black box: when the output is wrong, it's hard to see which task or
-agent caused it. `zizkadb-crewai` logs every step of a crew run to [ZizkaDB](https://github.com/Zizka-ai/ZizkaDB)
+agent caused it. `zizkadb-crewai` logs every step of a crew run to [ZizkaDB](https://github.com/ZIZKA-AI-SL/ZizkaDB)
 with a `parent_id` link, so a run becomes a **causal tree** — and one call, `db.why()`, walks that
 tree back to the root cause.
 

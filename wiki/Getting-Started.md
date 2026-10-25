@@ -5,7 +5,7 @@
 ## Fastest path — no git clone (~60 seconds)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 Downloads only compose + schema to `~/.zizkadb`, pulls pre-built images, runs `zizkadb demo`.
@@ -18,7 +18,7 @@ Downloads only compose + schema to `~/.zizkadb`, pulls pre-built images, runs `z
 ## Have the repo? One-command quickstart
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/quickstart.sh
 ```
 
