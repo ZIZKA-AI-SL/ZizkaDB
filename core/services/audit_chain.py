@@ -61,6 +61,30 @@ async def previous_link(conn, tenant_id: str, agent_id: str) -> str | None:
     )
 
 
+async def lock_events(conn, event_ids: list) -> None:
+    """Take each event's advisory lock for this transaction, before deleting it.
+
+    The key is ``hashtext`` of the id, the one the embed worker takes, so it
+    cannot re-create a vector for a row being erased. Locks are taken in id
+    order, byte-wise (``COLLATE "C"``), which is the order 0.5.0 used
+    (``sorted(..., key=str)``): an older and a newer image erasing the same
+    events during a rolling deploy lock in the same order and cannot deadlock.
+    Two ids sharing a 32-bit key could still interleave badly; Postgres then
+    aborts one transaction, which is retried, and that needs two collisions.
+    """
+    await conn.execute(
+        """
+        SELECT pg_advisory_xact_lock(hashtext(id))
+        FROM (
+            SELECT DISTINCT e::text COLLATE "C" AS id
+            FROM unnest($1::uuid[]) AS e
+            ORDER BY id
+        ) ids
+        """,
+        event_ids,
+    )
+
+
 async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: str) -> int:
     """Delete events, keeping a tombstone for each chained one; returns how many were deleted.
 

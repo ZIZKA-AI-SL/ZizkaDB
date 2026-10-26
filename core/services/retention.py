@@ -15,7 +15,7 @@ import asyncio
 import logging
 import os
 
-from services.audit_chain import delete_and_tombstone
+from services.audit_chain import delete_and_tombstone, lock_events
 from services.entitlements import embeddings_enabled
 
 log = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ def default_retention_days() -> int | None:
 
 async def purge_expired(pool, *, batch: int = PURGE_BATCH) -> int:
     """Delete expired events for every agent; returns how many were deleted."""
-    from api.memory import _delete_vectors, _lock_events
+    from api.memory import _delete_vectors
 
     default_days = default_retention_days()
     agents = await pool.fetch(
@@ -68,11 +68,11 @@ async def purge_expired(pool, *, batch: int = PURGE_BATCH) -> int:
                         break
                     # Same locks as forget(), so the embed worker cannot
                     # re-create a vector for a row being deleted. Taken before
-                    # any row lock, in forget()'s key order, so a forget or the
+                    # any row lock, in forget()'s order, so a forget or the
                     # embed worker makes this pass wait instead of deadlocking.
                     # A row a concurrent forget deleted meanwhile is simply not
                     # counted by delete_and_tombstone().
-                    await _lock_events(conn, ids)
+                    await lock_events(conn, ids)
                     if embeddings_enabled() and not await _delete_vectors(ids, str(agent["tenant_id"])):
                         log.warning("Retention skipped a batch: search index unavailable")
                         return total

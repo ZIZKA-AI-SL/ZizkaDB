@@ -18,7 +18,7 @@ import logging
 
 from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
 from db.connection import get_pool, get_qdrant
-from services.audit_chain import delete_and_tombstone
+from services.audit_chain import delete_and_tombstone, lock_events
 from api.search import vector_search
 from services.embeddings import generate_embedding
 from services.keyword_search import keyword_search
@@ -396,7 +396,7 @@ async def forget(
             # recreate its vector once the deletion commits. Locks are
             # taken in sorted order so concurrent forgets cannot
             # deadlock, and released when the transaction ends.
-            await _lock_events(conn, event_ids)
+            await lock_events(conn, event_ids)
 
             # Vectors first: if the search index can't be cleaned, keep
             # the Postgres rows so a retry can still find (and delete)
@@ -442,26 +442,6 @@ async def forget(
 
 
 _VECTOR_DELETE_ATTEMPTS = 3
-
-
-async def _lock_events(conn, event_ids: list) -> None:
-    """Take each event's advisory lock (the embed worker's key) for this transaction.
-
-    Locks are taken in order of the key itself, ``hashtext`` of the id, not of
-    the id: two ids can share a 32-bit key, and only one global order over the
-    keys guarantees that concurrent erasures cannot deadlock on these locks.
-    """
-    await conn.execute(
-        """
-        SELECT pg_advisory_xact_lock(k)
-        FROM (
-            SELECT DISTINCT hashtext(e::text) AS k
-            FROM unnest($1::uuid[]) AS e
-            ORDER BY k
-        ) keys
-        """,
-        event_ids,
-    )
 
 
 async def _delete_vectors(event_ids: list, tenant_id: str) -> bool:
