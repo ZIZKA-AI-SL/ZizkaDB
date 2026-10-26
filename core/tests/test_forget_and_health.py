@@ -160,14 +160,15 @@ async def test_forget_never_logs_raw_value(monkeypatch, caplog):
 async def test_forget_locks_each_event_before_deleting(monkeypatch):
     # #234: forget must hold the per-event advisory lock while it deletes
     # vectors and rows, so the embedding worker cannot recreate a vector
-    # for an event being forgotten. All locks are taken in one statement,
-    # ordered by the lock key (deadlock-free against concurrent erasures,
-    # even when two ids share a key), and always precede the row DELETE.
+    # for an event being forgotten. All locks are taken in one statement, in
+    # byte-wise id order (the order 0.5.0 used, so mixed images can't
+    # deadlock during a rolling deploy), and always precede the row DELETE.
     pool, conn, qdrant = _setup_forget(monkeypatch, None)
     await forget(_body(), tenant=dict(SCOPED_TENANT))
     assert conn.lock_args() == [[r["event_id"] for r in conn.rows]]
-    assert "hashtext(e::text)" in conn.lock_queries()[0]
-    assert "ORDER BY k" in conn.lock_queries()[0]
+    assert "hashtext(id)" in conn.lock_queries()[0]
+    assert 'COLLATE "C" AS id' in conn.lock_queries()[0]
+    assert "ORDER BY id" in conn.lock_queries()[0]
     queries = [q for q, _ in conn.executed]
     delete_idx = next(i for i, q in enumerate(queries) if "DELETE FROM events" in q)
     lock_idxs = [i for i, q in enumerate(queries) if "pg_advisory_xact_lock" in q]
@@ -181,7 +182,7 @@ async def test_forget_reports_the_rows_its_delete_removed(monkeypatch):
     rows = [{"event_id": uuid.uuid4()}, {"event_id": uuid.uuid4()}]
     conn = _FakeConn(rows, deleted=1)
     monkeypatch.setattr("api.memory.get_pool", lambda: _FakePool(conn))
-    monkeypatch.setattr("api.memory.get_qdrant", lambda: AsyncMock())
+    monkeypatch.setattr("api.memory.get_qdrant", AsyncMock)
     monkeypatch.setattr("api.memory.embeddings_enabled", lambda: True)
     out = await forget(_body(), tenant=dict(SCOPED_TENANT))
     assert out["deleted_events"] == 1

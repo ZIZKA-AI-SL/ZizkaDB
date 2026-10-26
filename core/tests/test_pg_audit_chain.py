@@ -354,6 +354,9 @@ async def test_upgrade_from_0_5_0_adds_the_trigger_and_keeps_old_tombstones(pg_d
     import db.connection as connection
 
     tenant_id, written = await _setup(pg_db)
+    fresh_body = await pg_db.fetchval(
+        "SELECT prosrc FROM pg_proc WHERE proname = 'zizkadb_tombstone_checksum'"
+    )   # as schema.sql created it
     await pg_db.execute("""
         DROP TRIGGER trg_tombstone_checksum ON event_tombstones;
         DROP FUNCTION zizkadb_tombstone_checksum();
@@ -367,6 +370,12 @@ async def test_upgrade_from_0_5_0_adds_the_trigger_and_keeps_old_tombstones(pg_d
     assert await pg_db.fetchval(
         "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'trg_tombstone_checksum'"
     ) == 1
+    upgraded_body = await pg_db.fetchval(
+        "SELECT prosrc FROM pg_proc WHERE proname = 'zizkadb_tombstone_checksum'"
+    )   # as init_db() created it
+    # schema.sql and init_db() carry a copy each; fresh and upgraded installs
+    # must run the same trigger.
+    assert " ".join(upgraded_body.split()) == " ".join(fresh_body.split())
     assert await pg_db.fetchval("SELECT checksum FROM event_tombstones") is None
     await _old_style_forget(pg_db, tenant_id, written[3]["event_id"])   # 0.5.0 still running
     await _forget(tenant_id, "u4")                                      # new image
@@ -378,14 +387,30 @@ async def test_upgrade_from_0_5_0_adds_the_trigger_and_keeps_old_tombstones(pg_d
 
 async def test_erasure_locks_use_the_embed_workers_key(pg_db):
     """forget and retention lock hashtext(event_id), the key the embed worker takes."""
-    from api.memory import _lock_events
+    from services.audit_chain import lock_events
 
     tenant_id, written = await _setup(pg_db, n=2)
     ids = [w["event_id"] for w in written]
     async with pg_db.acquire() as holder, holder.transaction():
-        await _lock_events(holder, [*ids, ids[0]])        # duplicates are fine
+        await lock_events(holder, [*ids, ids[0]])         # duplicates are fine
         async with pg_db.acquire() as other:
             for eid in ids:
                 assert await other.fetchval(
                     "SELECT pg_try_advisory_lock(hashtext($1))", str(eid)
                 ) is False
+
+
+async def test_erasure_lock_order_matches_0_5_0(pg_db):
+    """lock_events orders ids byte-wise, exactly like 0.5.0's sorted(ids, key=str),
+    so an older and a newer image erasing the same events lock in one order."""
+    import uuid
+
+    ids = [uuid.uuid4() for _ in range(500)]
+    ordered = await pg_db.fetchval(
+        """
+        SELECT array_agg(id ORDER BY id)
+        FROM (SELECT DISTINCT e::text COLLATE "C" AS id FROM unnest($1::uuid[]) AS e) ids
+        """,
+        ids,
+    )
+    assert ordered == sorted(str(i) for i in ids)
