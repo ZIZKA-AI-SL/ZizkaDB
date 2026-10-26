@@ -26,7 +26,7 @@ PR #310 added a hash chain to close the ordering gap. The first draft of this AD
 
 ### Tombstones for lawful deletion
 
-- **Forget** (`DELETE /v1/memory/forget`) and the **retention purge** (`core/services/retention.py`) call `tombstone_events()` before deleting. It copies each row's `tenant_id`, `agent_id`, `event_id`, `sequence_no`, `chain_hash` and a fixed `reason` into `event_tombstones`. No content is kept.
+- **Forget** (`DELETE /v1/memory/forget`) and the **retention purge** (`core/services/retention.py`) call `tombstone_events()` before deleting (replaced by `delete_and_tombstone()` in #321, see H2). It copies each row's `tenant_id`, `agent_id`, `event_id`, `sequence_no`, `chain_hash` and a fixed `reason` into `event_tombstones`. No content is kept.
 - **Agent delete** removes the agent's events and its tombstones. Its chain is gone, and nothing is left to verify.
 - **Account delete** cascades from `tenants`, which also removes `event_tombstones`.
 
@@ -71,8 +71,9 @@ Keep the per-agent chain, the route and the SDK methods. Every change below is a
 ### H2. Tombstones come from the `DELETE` itself (done, #321)
 
 - Forget and retention insert tombstones with `INSERT … SELECT … FROM (DELETE … RETURNING …)`, so two overlapping erasures cannot both account for the same row, and the reported count is the number actually deleted.
-- **Lock order.** Forget and retention take the per-event advisory locks (key `hashtext(event_id)`, the embed worker's) before any row lock, in one statement ordered by the key itself (`_lock_events()` in `core/api/memory.py`).
-  - Ordering by the key, not the id, keeps a single global order even when two ids share a 32-bit key.
+- **Lock order.** Forget and retention take the per-event advisory locks (key `hashtext(event_id)`, the embed worker's) before any row lock, in one statement (`lock_events()` in `core/services/audit_chain.py`).
+  - The locks go in byte-wise id order (`COLLATE "C"`), the order 0.5.0 used. So an older and a newer image erasing the same events during a rolling deploy lock in one order and can't deadlock.
+  - Two ids sharing a 32-bit key could still interleave badly. Postgres then aborts one transaction; that needs two such collisions, and the erasure can be retried.
   - Retention used to lock rows first (`FOR UPDATE SKIP LOCKED`) and could deadlock with a forget. It now waits for the forget instead, and counts only the rows still there.
 
 ### H3. A chained erasure receipt per erasure, per agent
