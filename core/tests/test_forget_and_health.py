@@ -27,10 +27,12 @@ class _FakeConn:
     """Stands in for the asyncpg connection forget() acquires: serves the
     id SELECT and records every execute (advisory locks, DELETE) in order."""
 
-    def __init__(self, rows, on_execute=None):
+    def __init__(self, rows, on_execute=None, deleted=None):
         self.rows = rows
         self.executed = []
         self._on_execute = on_execute
+        # Rows the DELETE actually removes (fewer when another erasure got there first).
+        self.deleted = len(rows) if deleted is None else deleted
 
     def transaction(self):
         return _FakeTxn()
@@ -44,11 +46,19 @@ class _FakeConn:
             self._on_execute(query, args)
         return "OK"
 
+    async def fetchval(self, query, *args):
+        # The delete-and-tombstone statement returns how many rows it deleted.
+        await self.execute(query, *args)
+        return self.deleted if "DELETE FROM events" in query else None
+
     def delete_count(self):
         return sum(1 for q, _ in self.executed if "DELETE FROM events" in q)
 
     def lock_args(self):
         return [a[0] for q, a in self.executed if "pg_advisory_xact_lock" in q]
+
+    def lock_queries(self):
+        return [q for q, _ in self.executed if "pg_advisory_xact_lock" in q]
 
 
 class _FakeAcquire:
@@ -150,16 +160,32 @@ async def test_forget_never_logs_raw_value(monkeypatch, caplog):
 async def test_forget_locks_each_event_before_deleting(monkeypatch):
     # #234: forget must hold the per-event advisory lock while it deletes
     # vectors and rows, so the embedding worker cannot recreate a vector
-    # for an event being forgotten. Locks go in sorted order (deadlock-free
-    # against concurrent forgets) and always precede the row DELETE.
+    # for an event being forgotten. All locks are taken in one statement,
+    # ordered by the lock key (deadlock-free against concurrent erasures,
+    # even when two ids share a key), and always precede the row DELETE.
     pool, conn, qdrant = _setup_forget(monkeypatch, None)
     await forget(_body(), tenant=dict(SCOPED_TENANT))
-    expected = sorted(str(r["event_id"]) for r in conn.rows)
-    assert conn.lock_args() == expected
+    assert conn.lock_args() == [[r["event_id"] for r in conn.rows]]
+    assert "hashtext(e::text)" in conn.lock_queries()[0]
+    assert "ORDER BY k" in conn.lock_queries()[0]
     queries = [q for q, _ in conn.executed]
     delete_idx = next(i for i, q in enumerate(queries) if "DELETE FROM events" in q)
     lock_idxs = [i for i, q in enumerate(queries) if "pg_advisory_xact_lock" in q]
     assert lock_idxs and max(lock_idxs) < delete_idx
+
+
+@pytest.mark.asyncio
+async def test_forget_reports_the_rows_its_delete_removed(monkeypatch):
+    # An overlapping forget already removed one of the two selected rows: the
+    # response counts what this call's DELETE removed, not what it selected.
+    rows = [{"event_id": uuid.uuid4()}, {"event_id": uuid.uuid4()}]
+    conn = _FakeConn(rows, deleted=1)
+    monkeypatch.setattr("api.memory.get_pool", lambda: _FakePool(conn))
+    monkeypatch.setattr("api.memory.get_qdrant", lambda: AsyncMock())
+    monkeypatch.setattr("api.memory.embeddings_enabled", lambda: True)
+    out = await forget(_body(), tenant=dict(SCOPED_TENANT))
+    assert out["deleted_events"] == 1
+    assert out["message"].startswith("Deleted 1 events.")
 
 
 # ── /health/deep ──────────────────────────────────────────────────────────────
