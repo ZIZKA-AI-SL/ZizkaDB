@@ -56,17 +56,24 @@ Each gap below was checked against `main`. The first two were reproduced by runn
 
 Keep the per-agent chain, the route and the SDK methods. Every change below is additive: existing `chain_hash` values stay valid, and the response only gains fields and problem kinds.
 
-### H1. Tombstones keep the deleted row's checksum, and the verifier recomputes their link
+### H1. Tombstones keep the deleted row's checksum, and the verifier recomputes their link (done, #321)
 
-- Add `checksum VARCHAR(64)` to `event_tombstones`. `tombstone_events()` copies the row's stored checksum in SQL, so no payload reaches the API.
+- Add `checksum VARCHAR(64)` to `event_tombstones`. `delete_and_tombstone()` (which replaced `tombstone_events()`) copies the row's stored checksum in SQL, so no payload reaches the API.
 - The verifier checks `tombstone.chain_hash == sha256(prev + ":" + tombstone.checksum)`, exactly as for an event. That closes the restart at every tombstone.
-- A tombstone without a checksum (written before H1) keeps today's behaviour and is counted as `legacy_tombstone`.
-- **Privacy.** The checksum lets someone with database access who already knows an erased event's exact content confirm that it existed. `chain_hash` already allows the same guess today. The content itself is gone. The erasure docs must say this.
+- **Older images write checkable tombstones too.** A `BEFORE INSERT` trigger on `event_tombstones` (`zizkadb_tombstone_checksum()`) fills a missing checksum from the row being deleted. 0.5.0 inserts its tombstone before deleting the row, so its erasures during a rolling deploy or after a downgrade carry a checksum and verify normally.
+- **No new constraint.** A `CHECK (checksum IS NOT NULL)` would make a downgraded 0.5.0 forget fail; the trigger makes it unnecessary.
+- **Tombstones from before the upgrade** have no checksum. They are accepted as `legacy_tombstones` **only if deleted before `tombstone_checksum_cutoff.since`**.
+  - `init_db()` records that cutoff once, in a statement that runs after the trigger is committed, so every tombstone written afterwards has a checksum, whichever image wrote it.
+  - After the cutoff, a missing checksum is reported as `tombstone_missing_checksum`. Without that bound, blanking one column would undo H1.
+- **Limit (no key).** The cutoff is an ordinary database row. A deliberate database writer can blank checksums and also delete or move the cutoff row, or backdate `deleted_at`, and H1 no longer catches the edit before that tombstone. This is within the no-key limits in Consequences; only H4's key closes it.
+- **Privacy.** The checksum lets someone with database access who already knows an erased event's exact content confirm that it existed. `chain_hash` already allows the same guess today. The content itself is gone. The README's forget entry and the CHANGELOG say this.
 
-### H2. Tombstones come from the `DELETE` itself
+### H2. Tombstones come from the `DELETE` itself (done, #321)
 
 - Forget and retention insert tombstones with `INSERT … SELECT … FROM (DELETE … RETURNING …)`, so two overlapping erasures cannot both account for the same row, and the reported count is the number actually deleted.
-- Lock order is unchanged: the per-event advisory locks are taken before the `DELETE`, as today.
+- **Lock order.** Forget and retention take the per-event advisory locks (key `hashtext(event_id)`, the embed worker's) before any row lock, in one statement ordered by the key itself (`_lock_events()` in `core/api/memory.py`).
+  - Ordering by the key, not the id, keeps a single global order even when two ids share a 32-bit key.
+  - Retention used to lock rows first (`FOR UPDATE SKIP LOCKED`) and could deadlock with a forget. It now waits for the forget instead, and counts only the rows still there.
 
 ### H3. A chained erasure receipt per erasure, per agent
 
@@ -140,7 +147,7 @@ Without a key, the chain protects against accidental and partial changes, and ag
 
 ## Implementation order
 
-1. **H1 and H2**: schema column, `tombstone_events()` from `DELETE … RETURNING`, verifier change, unit tests for the two reproduced gaps and real-Postgres tests for overlapping forgets.
+1. **H1 and H2** (done, #321): schema column and trigger, `delete_and_tombstone()` from `DELETE … RETURNING` (replacing `tombstone_events()`), verifier change, retention lock order, real-Postgres tests for the reproduced gaps, overlapping erasures, upgrade and downgrade.
 2. **H5**: head columns and `head_mismatch`.
 3. **H3**: receipts, after #305 and #306 are fixed, with a real-Postgres deadlock test for forget against concurrent writes.
 4. **H4**: key option, docs and the single-image rule.
