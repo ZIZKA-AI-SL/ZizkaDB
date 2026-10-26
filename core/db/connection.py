@@ -123,14 +123,26 @@ async def _ensure_tombstone_checksums() -> None:
         """
     )
     if not has_column:
-        # First start after the upgrade only. Bounded wait, so a long reader of
-        # the table cannot make every event write queue behind this ALTER.
-        async with _pg_pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute("SET LOCAL lock_timeout = '10s'")
-                await conn.execute(
-                    "ALTER TABLE event_tombstones ADD COLUMN IF NOT EXISTS checksum VARCHAR(64)"
-                )
+        # First start after the upgrade only. Each try waits at most 10s for
+        # the lock, so a long reader of the table cannot make every event write
+        # queue behind this ALTER; a few tries ride out a long-running reader.
+        for attempt in range(1, 4):
+            try:
+                async with _pg_pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.execute("SET LOCAL lock_timeout = '10s'")
+                        await conn.execute(
+                            "ALTER TABLE event_tombstones ADD COLUMN IF NOT EXISTS checksum VARCHAR(64)"
+                        )
+                break
+            except asyncpg.exceptions.LockNotAvailableError:
+                if attempt == 3:
+                    raise RuntimeError(
+                        "Could not add event_tombstones.checksum: another session kept the "
+                        "table locked for 30s. Restart once the long-running query finishes."
+                    ) from None
+                logger.warning("event_tombstones is locked; retrying the checksum column (%s/3)", attempt)
+                await asyncio.sleep(2)
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
             singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
