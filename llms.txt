@@ -1,62 +1,52 @@
 # ZizkaDB
 
-> Causal event database for AI agents. Log every action, trace why a decision was made, time-travel to any past state, and inject relevant memory into future runs.
+> ZizkaDB is an open-source database built for AI agents. It records every agent action as an event linked to the event that caused it, so you can see why an agent made a decision (`why`), what it knew at any past moment (`at`), and prove the history was not changed (per-agent hash chain). It is the source of truth for what an agent actually did, independent of the LLM. AGPL-3.0 (the MCP server is MIT). Runs on Postgres with Docker.
 
-ZizkaDB is open-source (AGPL-3.0, except MCP server which is MIT). It runs as a FastAPI backend + Next.js 14 dashboard on a single EC2 instance. SDKs are available for Python and TypeScript.
+Key facts:
+- Install: `pip install zizkadb-sdk` (Python) or `npm install zizkadb-sdk` (TypeScript), version 0.5. Import: `from zizkadb import ZizkaDB`.
+- Run locally: `curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash` starts one container (Postgres, API, dashboard) and logs a demo agent run. API on http://localhost:8000, dashboard on http://localhost:3001. The full stack (`infra/docker-compose.yml`) adds Redis and Qdrant.
+- Core calls: `log()` records an event (`parent_id` links cause and effect), `why(event_id)` walks the causal chain, `at(agent, timestamp)` replays past state, `search()` finds past events (keyword, semantic or hybrid), `context_for(agent, task)` returns ranked memory for the next prompt, `verify_chain(agent)` checks the hash chain.
+- Integrity: checksum per event, per-agent hash chain, tombstones for deletions, secret redaction before storage.
+- Database features: idempotent and batch writes, cursor paging, retention, NDJSON export/import, read-only and expiring API keys, Prometheus metrics, backup and restore scripts.
+- Works without OpenAI: keyword search is built in; embeddings are optional (local, OpenAI or your own key).
+- Integrations: LangChain, CrewAI, LangGraph, LiveKit voice agents, MCP (Claude, Cursor), REST API.
+- Self-hosted (this repo, free): one agent with one API key; data stays on your servers.
+- ZizkaDB Cloud (https://db.zizka.ai, paid): multiple agents, agent fleets and agent-to-agent message recording.
+- Made by Zizka AI (https://zizka.ai).
 
-## Architecture
+## Start
+- [README](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/README.md): what it is, quickstart, comparison, FAQ
+- [Connect any agent](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md)
+- [Development and self-hosting](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/DEVELOPMENT.md)
+- [Hosted docs](https://db.zizka.ai/docs): Python, TypeScript, REST, MCP, frameworks, concepts
 
-- [Core API](core/) — FastAPI + asyncpg + PostgreSQL 16/pgvector + Qdrant + Redis. 14 routers at `/v1/`.
-- [Dashboard](dashboard/) — Next.js 14 App Router. Marketing + authenticated agent fleet view.
-- [Python SDK](sdk/python/) — `zizkadb-sdk` **0.4.1** on PyPI. Async client, `zizkadb init` CLI.
-- [TypeScript SDK](sdk/typescript/) — `zizkadb-sdk` **0.4.1** on npm. Sync constructor, camelCase fields.
-- [Integrations](integrations/) — `zizkadb-langchain` **0.1.3**, `zizkadb-crewai` **0.1.3**, `zizkadb-livekit` **0.2.0** on PyPI. Voice + text causal debugging via `db.why()`.
-- [MCP Server](mcp/) — `zizkadb-mcp` **0.1.8** on PyPI. MIT license. `uvx zizkadb-mcp`.
-- [Infra](infra/) — Docker Compose. Production: `docker-compose.yml`. Dev overlay: `docker-compose.dev.yml`.
+## Packages
+- [Python SDK `zizkadb-sdk`](https://pypi.org/project/zizkadb-sdk/) (source: [sdk/python](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/sdk/python))
+- [TypeScript SDK `zizkadb-sdk`](https://www.npmjs.com/package/zizkadb-sdk) (source: [sdk/typescript](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/sdk/typescript))
+- [MCP server `zizkadb-mcp`](https://pypi.org/project/zizkadb-mcp/): `uvx zizkadb-mcp` (source: [mcp](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/mcp))
+- Integrations: [`zizkadb-langchain`](https://pypi.org/project/zizkadb-langchain/), [`zizkadb-crewai`](https://pypi.org/project/zizkadb-crewai/), [`zizkadb-langgraph`](https://pypi.org/project/zizkadb-langgraph/), [`zizkadb-livekit`](https://pypi.org/project/zizkadb-livekit/) (source: [integrations](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/integrations))
 
-## Key context files
+## Reference
+- [REST API](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/REST-API); live OpenAPI at http://localhost:8000/swagger
+- [Architecture](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Architecture)
+- [Architecture decisions (ADRs)](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/docs/adr): causal lineage, Postgres + Qdrant, audit chain
+- [Technical reference](https://db.zizka.ai/trust): data model, integrity, security, limits
+- [Telemetry and how to turn it off](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/docs/telemetry.md)
+- [Security policy](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/SECURITY.md)
 
-- [CLAUDE.md](CLAUDE.md) — Full AI onboarding: stack, conventions, invariants, test commands
-- [Dashboard Knowledge Base](dashboard/DASHBOARD_KNOWLEDGE_BASE.md) — source of truth for the dashboard module (~1,100 lines)
-- [Architecture Decisions](docs/adr/) — Why key design decisions were made
-- [CONNECT.md](CONNECT.md) — How to connect any agent to ZizkaDB
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guide
-- [Wiki: Architecture](wiki/Architecture.md) — System architecture overview
-- [Wiki: Self-Hosting](wiki/Self-Hosting.md) — Self-hosting guide
-- [redu.md](redu.md) — Deploy the single container on Redu Cloud
-- [docs/telemetry.md](docs/telemetry.md) — What ZizkaDB sends by default, and how to turn it off
-- [Wiki: REST API](wiki/REST-API.md) — API reference
-
-## API
-
-- Base URL (local): `http://localhost:8000`
-- Swagger UI: `http://localhost:8000/swagger`
-- OpenAPI schema: `http://localhost:8000/openapi.json`
-- Auth: `Authorization: Bearer <api_key_or_jwt>`
-- Dev key (local only): `zizkadb_dev_local`
-
-## Core SDK methods
+## Example
 
 ```python
-async with ZizkaDB(api_key="zizkadb_live_...") as db:
-    event = await db.log(agent="my-bot", event="user_message", data={...})
-    chain = await db.why(event.event_id)       # causal chain backward
-    state = await db.at(agent, timestamp)       # time-travel
-    ctx   = await db.context_for(agent, task)   # memory injection
-    hits  = await db.search("plain english query")
+from zizkadb import ZizkaDB
+
+async with ZizkaDB(host="http://localhost:8000") as db:
+    user = await db.log(agent="support-bot", event="user_message", data={"text": "Refund order 42"})
+    tool = await db.log(agent="support-bot", event="tool_call", data={"tool": "refund"}, parent_id=user.event_id)
+    chain = await db.why(tool.event_id)           # the decision path back to the user message
+    state = await db.at("support-bot", some_time)  # what the agent knew then
+    check = await db.verify_chain("support-bot")   # was the history changed?
 ```
 
-## Key design decisions
-
-- **Causal lineage**: `parent_event_id` on `events` table + recursive CTE (see [ADR-001](docs/adr/001-causal-lineage-parent-event-id.md))
-- **Dual-write**: Postgres (source of truth) + Qdrant (semantic search) (see [ADR-002](docs/adr/002-dual-write-postgres-qdrant.md))
-- **Billing stub**: always `has_access: True`, no payment provider wired (see [ADR-003](docs/adr/003-billing-stub.md))
-- **Auth split**: `get_tenant` (API keys + JWT) vs `require_dashboard_session` (JWT only) (see [ADR-004](docs/adr/004-auth-dependency-split.md))
-- **Rate limiting**: in-process Python dicts, single-worker only (see [ADR-005](docs/adr/005-in-process-rate-limiting.md))
-
-## Local dev
-
-```bash
-bash scripts/setup-local.sh
-# API: http://localhost:8000 | Dashboard: http://localhost:3001
-```
+## For contributors and coding agents
+- [CLAUDE.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CLAUDE.md) and [AGENTS.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/AGENTS.md): stack, conventions, invariants, test commands
+- [CONTRIBUTING.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONTRIBUTING.md)

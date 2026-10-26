@@ -383,6 +383,15 @@ The same features, hosted at [db.zizka.ai](https://db.zizka.ai). No Docker to ma
 <details open>
 <summary><strong>FAQ</strong></summary>
 
+**What is ZizkaDB?**  
+An open-source database built for AI agents. It records every agent action as an event linked to the event that caused it, so you can see why a decision was made (`why()`), what the agent knew at any past moment (`at()`), and prove the history wasn't changed (`verify_chain()`). It's the record of what the agent actually did, independent of the LLM.
+
+**Is ZizkaDB free?**  
+Self-hosting is free and open source (AGPL-3.0; the MCP server is MIT): one agent with one API key, data on your own servers. [ZizkaDB Cloud](https://db.zizka.ai) is the paid managed service, with multiple agents, agent fleets and agent-to-agent message recording.
+
+**Does ZizkaDB need an OpenAI key?**  
+No. Keyword search works with no embedding provider. Semantic and hybrid search can embed locally, use OpenAI, or use your own key.
+
 **Do I need to clone this repo?**  
 No. The curl quickstart downloads config and Docker images only.
 
