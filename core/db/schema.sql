@@ -161,11 +161,39 @@ CREATE TABLE event_tombstones (
     chain_hash  VARCHAR(64) NOT NULL,
     reason      VARCHAR(50) NOT NULL,
     deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- The deleted row's checksum, so the verifier can recompute this link.
+    -- NULL only on tombstones written before 0.6 (see tombstone_checksum_cutoff).
+    checksum    VARCHAR(64),
     PRIMARY KEY (tenant_id, event_id)
 );
 
 CREATE INDEX idx_event_tombstones_agent_seq
     ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
+
+-- When tombstones started carrying a checksum; init_db() records it once,
+-- after the trigger below exists. A tombstone without a checksum deleted after
+-- it is reported by the chain verifier (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    since     TIMESTAMPTZ NOT NULL
+);
+
+-- Fills a tombstone's checksum from the row being deleted when the writer did
+-- not: an older image (rolling deploy, downgrade) inserts the tombstone before
+-- deleting the row, so its tombstones stay checkable. Created only if missing
+-- by init_db(); a different body needs a new function name.
+CREATE OR REPLACE FUNCTION zizkadb_tombstone_checksum() RETURNS trigger AS $fn$
+BEGIN
+    IF NEW.checksum IS NULL THEN
+        SELECT checksum INTO NEW.checksum FROM events
+        WHERE tenant_id = NEW.tenant_id AND event_id = NEW.event_id;
+    END IF;
+    RETURN NEW;
+END
+$fn$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_tombstone_checksum BEFORE INSERT ON event_tombstones
+    FOR EACH ROW EXECUTE FUNCTION zizkadb_tombstone_checksum();
 
 -- Checksum verification pages an agent's events by sequence_no.
 CREATE INDEX idx_events_agent_seq
