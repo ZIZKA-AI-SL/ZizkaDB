@@ -38,6 +38,8 @@ async def test_retention_deletes_only_expired_and_keeps_the_chain(pg_db, monkeyp
     assert await pg_db.fetchval("SELECT COUNT(*) FROM events") == 1
     chain = await verify_chain(pg_db, tenant_id, AGENT)
     assert chain["intact"] is True and chain["summary"]["tombstones"] == 2
+    # Retention tombstones keep the checksum, so their links are checked too.
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM event_tombstones WHERE checksum IS NULL") == 0
     assert await pg_db.fetchval("SELECT event_count FROM agents") == 1
 
 
