@@ -335,15 +335,28 @@ async def _insert_event(
                 await previous_link(conn, tenant_id, agent), checksum
             )
 
+            # The same statement records the agent's newest link for the
+            # verifier, on the row the upsert above already holds. Only a real
+            # insert gets there: an idempotent duplicate returns before the
+            # transaction or rolls it back. The head is never read to compute
+            # a link.
             row = await conn.fetchrow(
                 """
-                INSERT INTO events (
-                    tenant_id, agent_id, event_type, data, parent_event_id, session_id,
-                    metadata, index_status, sequence_no, timestamp, checksum,
-                    idempotency_key, chain_hash
+                WITH ins AS (
+                    INSERT INTO events (
+                        tenant_id, agent_id, event_type, data, parent_event_id, session_id,
+                        metadata, index_status, sequence_no, timestamp, checksum,
+                        idempotency_key, chain_hash
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    RETURNING event_id, timestamp, sequence_no, chain_hash
+                ), head AS (
+                    UPDATE agents
+                    SET chain_head_seq = ins.sequence_no, chain_head_hash = ins.chain_hash
+                    FROM ins
+                    WHERE agents.tenant_id = $1 AND agents.agent_id = $2
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                RETURNING event_id, timestamp, sequence_no, chain_hash
+                SELECT event_id, timestamp, sequence_no, chain_hash FROM ins
                 """,
                 tenant_id,
                 agent,
