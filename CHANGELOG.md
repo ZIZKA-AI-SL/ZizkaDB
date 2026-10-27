@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Audit chain: erasures no longer restart the chain; exact erasure counts
+
+- **Tombstones are checked.** A tombstone now keeps the deleted event's checksum, and `GET /v1/events/chain` checks the tombstone's link like any other. Before, the chain restarted at every erasure, so an edit to the event just before a deleted one went unnoticed.
+- **Old tombstones.** Tombstones written by 0.5.0 before the upgrade have no checksum. They still verify and are counted as `legacy_tombstones`. A tombstone without a checksum written after the upgrade is reported as `tombstone_missing_checksum`.
+- **Exact counts.** Forget and retention delete and keep tombstones in one statement. When two forgets overlap, each reports only the events it actually deleted (before, both reported the full count).
+- **Rolling deploys and downgrades.** A database trigger fills in the checksum when an older image writes a tombstone, so 0.5.0 running on an upgraded database keeps working, and its erasures verify normally.
+- **Retention and forget no longer deadlock.** Retention now takes its per-event locks before touching any row, in the same order as forget and the embedding worker.
+- **Privacy.** A tombstone now keeps the deleted event's checksum, as well as its chain link. Someone with database access who already knows an erased event's exact content could use either to confirm that it existed; the content itself is gone.
+- **Compatibility.** The chain response only gains the `legacy_tombstones` summary field and the `tombstone_missing_checksum` problem kind; no route or SDK change.
+
 ### Python integrations republished for SDK 0.5.0
 
 - `zizkadb-langchain` 0.1.5, `zizkadb-crewai` 0.1.5, `zizkadb-langgraph` 0.1.2 and `zizkadb-livekit` 0.2.3 require `zizkadb-sdk>=0.5.0`, so installing any of them brings the new SDK methods.

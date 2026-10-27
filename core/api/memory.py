@@ -18,7 +18,7 @@ import logging
 
 from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
 from db.connection import get_pool, get_qdrant
-from services.audit_chain import tombstone_events
+from services.audit_chain import delete_and_tombstone, lock_events
 from api.search import vector_search
 from services.embeddings import generate_embedding
 from services.keyword_search import keyword_search
@@ -388,7 +388,6 @@ async def forget(
                 }
 
             event_ids = [r["event_id"] for r in rows]
-            deleted = len(event_ids)
 
             # Serialize against the embedding worker (#234): take the
             # per-event advisory lock (the codebase's pattern, cf.
@@ -397,10 +396,7 @@ async def forget(
             # recreate its vector once the deletion commits. Locks are
             # taken in sorted order so concurrent forgets cannot
             # deadlock, and released when the transaction ends.
-            for eid in sorted(event_ids, key=str):
-                await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))", str(eid)
-                )
+            await lock_events(conn, event_ids)
 
             # Vectors first: if the search index can't be cleaned, keep
             # the Postgres rows so a retry can still find (and delete)
@@ -413,21 +409,10 @@ async def forget(
                     "Search index unavailable; nothing was deleted. Retry forget shortly."
                 )
 
-            # Keep the deleted rows' chain links so the audit chain still verifies.
-            await tombstone_events(conn, tenant_id, event_ids, "forget")
-
-            # PostgreSQL does not support aggregate functions in RETURNING
-            # clauses. We already know the count from the SELECT above, so
-            # use that directly.
-            await conn.execute(
-                """
-                DELETE FROM events
-                WHERE tenant_id = $1
-                  AND event_id = ANY($2::uuid[])
-                """,
-                tenant_id,
-                event_ids,
-            )
+            # Delete and keep tombstones in one statement, so the chain still
+            # verifies and the count is what this call deleted: an overlapping
+            # forget may already have removed some of the selected rows.
+            deleted = await delete_and_tombstone(conn, tenant_id, event_ids, "forget")
 
     # Never log the forgotten value itself (it is usually personal data).
     log.info(

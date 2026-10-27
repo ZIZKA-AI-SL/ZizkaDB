@@ -103,6 +103,86 @@ def uses_default_db_password() -> bool:
     return password in _WELL_KNOWN_DB_PASSWORDS
 
 
+async def _ensure_tombstone_checksums() -> None:
+    """Tombstones keep the deleted row's checksum so their link can be checked (ADR-009 H1).
+
+    The column is nullable and a trigger fills it from the row being deleted,
+    so an older image running on this schema (rolling deploy, downgrade) still
+    writes checkable tombstones: it inserts the tombstone before it deletes the
+    row. Each object is created only when missing, so a normal start takes no
+    lock on ``event_tombstones``, which every event write reads; and a later
+    image that needs a different trigger body must use a new function name
+    instead of replacing this one, or older and newer images would keep
+    overwriting each other on restart.
+    """
+    has_column = await _pg_pool.fetchval(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'event_tombstones'
+          AND column_name = 'checksum'
+        """
+    )
+    if not has_column:
+        # First start after the upgrade only. Each try waits at most 10s for
+        # the lock, so a long reader of the table cannot make every event write
+        # queue behind this ALTER; a few tries ride out a long-running reader.
+        for attempt in range(1, 4):
+            try:
+                async with _pg_pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.execute("SET LOCAL lock_timeout = '10s'")
+                        await conn.execute(
+                            "ALTER TABLE event_tombstones ADD COLUMN IF NOT EXISTS checksum VARCHAR(64)"
+                        )
+                break
+            except asyncpg.exceptions.LockNotAvailableError:
+                if attempt == 3:
+                    raise RuntimeError(
+                        "Could not add event_tombstones.checksum: another session kept the "
+                        "table locked for 30s. Restart once the long-running query finishes."
+                    ) from None
+                logger.warning("event_tombstones is locked; retrying the checksum column (%s/3)", attempt)
+                await asyncio.sleep(2)
+    await _pg_pool.execute("""
+        CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            since     TIMESTAMPTZ NOT NULL
+        );
+        DO $do$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_proc
+                WHERE proname = 'zizkadb_tombstone_checksum'
+                  AND pronamespace = current_schema()::regnamespace
+            ) THEN
+                CREATE FUNCTION zizkadb_tombstone_checksum() RETURNS trigger AS $fn$
+                BEGIN
+                    IF NEW.checksum IS NULL THEN
+                        SELECT checksum INTO NEW.checksum FROM events
+                        WHERE tenant_id = NEW.tenant_id AND event_id = NEW.event_id;
+                    END IF;
+                    RETURN NEW;
+                END
+                $fn$ LANGUAGE plpgsql;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_tombstone_checksum'
+                  AND tgrelid = 'event_tombstones'::regclass
+            ) THEN
+                CREATE TRIGGER trg_tombstone_checksum BEFORE INSERT ON event_tombstones
+                    FOR EACH ROW EXECUTE FUNCTION zizkadb_tombstone_checksum();
+            END IF;
+        END $do$;
+    """)
+    # A separate statement, so it runs after the trigger is committed: every
+    # tombstone written from then on has a checksum, whichever image wrote it.
+    # Tombstones without one are accepted only if deleted before this.
+    await _pg_pool.execute(
+        "INSERT INTO tombstone_checksum_cutoff (since) VALUES (now()) "
+        "ON CONFLICT (singleton) DO NOTHING"
+    )
+
+
 async def _ensure_supersedes_index() -> None:
     """Lookup of explicit supersedes links (services/memory_rank.py)."""
     await _ensure_index_concurrently(
@@ -466,6 +546,8 @@ async def _run_migrations():
         CREATE INDEX IF NOT EXISTS idx_event_tombstones_agent_seq
             ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
     """)
+
+    await _ensure_tombstone_checksums()
 
     await _ensure_fts_index()
     await _ensure_supersedes_index()

@@ -282,7 +282,7 @@ From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.
 | | `db.search(query, mode=)` | Keyword search out of the box; hybrid keyword + vector with embeddings |
 | | `db.log(..., supersedes=, importance=)` | Replace an outdated fact; weight what matters |
 | **Audit** | `db.verify_chain(agent)` | Proof that no event was edited, removed or reordered |
-| | `db.forget(key, value)` | GDPR erasure, including the search index, leaving a tombstone |
+| | `db.forget(key, value)` | GDPR erasure, including the search index, leaving a tombstone (no content; its chain link and checksum let someone with database access confirm an exact guessed event) |
 | | `db.export_events(agent)` / `db.import_events(...)` | Portable NDJSON copy; move between self-host and Cloud |
 | **Operate** | `db.log(..., idempotency_key=)` / `db.log_batch(events)` | Safe retries; up to 500 events per request |
 | | `db.iter_events(agent)` | Every event, cursor-paged |

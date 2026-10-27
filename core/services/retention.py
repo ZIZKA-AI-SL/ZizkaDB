@@ -15,7 +15,7 @@ import asyncio
 import logging
 import os
 
-from services.audit_chain import tombstone_events
+from services.audit_chain import delete_and_tombstone, lock_events
 from services.entitlements import embeddings_enabled
 
 log = logging.getLogger(__name__)
@@ -61,32 +61,32 @@ async def purge_expired(pool, *, batch: int = PURGE_BATCH) -> int:
                           AND timestamp < NOW() - make_interval(days => $3)
                         ORDER BY sequence_no
                         LIMIT $4
-                        FOR UPDATE SKIP LOCKED
                         """,
                         agent["tenant_id"], agent["agent_id"], agent["days"], batch,
                     )]
                     if not ids:
                         break
-                    # Same lock as forget(), so the embed worker cannot
-                    # re-create a vector for a row being deleted.
-                    for eid in sorted(ids, key=str):
-                        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", str(eid))
+                    # Same locks as forget(), so the embed worker cannot
+                    # re-create a vector for a row being deleted. Taken before
+                    # any row lock, in forget()'s order, so a forget or the
+                    # embed worker makes this pass wait instead of deadlocking.
+                    # A row a concurrent forget deleted meanwhile is simply not
+                    # counted by delete_and_tombstone().
+                    await lock_events(conn, ids)
                     if embeddings_enabled() and not await _delete_vectors(ids, str(agent["tenant_id"])):
                         log.warning("Retention skipped a batch: search index unavailable")
                         return total
-                    await tombstone_events(conn, str(agent["tenant_id"]), ids, "retention")
-                    await conn.execute(
-                        "DELETE FROM events WHERE tenant_id = $1 AND event_id = ANY($2::uuid[])",
-                        agent["tenant_id"], ids,
+                    deleted = await delete_and_tombstone(
+                        conn, str(agent["tenant_id"]), ids, "retention"
                     )
                     await conn.execute(
                         """
                         UPDATE agents SET event_count = GREATEST(event_count - $3, 0)
                         WHERE tenant_id = $1 AND agent_id = $2
                         """,
-                        agent["tenant_id"], agent["agent_id"], len(ids),
+                        agent["tenant_id"], agent["agent_id"], deleted,
                     )
-            total += len(ids)
+            total += deleted
             if len(ids) < batch:
                 break
     return total
