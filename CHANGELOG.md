@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Audit chain: the newest events are covered too
+
+- Each agent now records its newest chain link, and `GET /v1/events/chain` checks it. Deleting an agent's newest events, or editing the newest one with its own link recomputed, was invisible before, because nothing linked after it. It is now reported as `head_mismatch`, once the agent has written since the upgrade and its recorded link is current. The report stays after later writes: the next write would otherwise link past the gap, so it records what it found.
+- **Older images.** The recorded link is only used for checking, never for writing. If an older version wrote after it (rolling deploy, downgrade), the summary shows `stale_head: 1`, which is not a break, and the next write records it again.
+- **Upgrades.** Agents from before this version have no recorded link until their next write, and are checked as before.
+- **Cost.** No measurable change in write latency: the link is recorded in the same statement as the event. The response only gains the `stale_head`, `head_checked` and `recorded_head_breaks` summary fields and the `head_mismatch` problem kind.
+
 ### Audit chain: erasures no longer restart the chain; exact erasure counts
 
 - **Tombstones are checked.** A tombstone now keeps the deleted event's checksum, and `GET /v1/events/chain` checks the tombstone's link like any other. Before, the chain restarted at every erasure, so an edit to the event just before a deleted one went unnoticed.

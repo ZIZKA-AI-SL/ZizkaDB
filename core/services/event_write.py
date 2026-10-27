@@ -17,7 +17,7 @@ from qdrant_client.models import PointStruct
 from services.embeddings import generate_embedding, event_to_text
 from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.agent_limits import assert_agent_slot
-from services.audit_chain import compute_chain_hash, previous_link
+from services.audit_chain import compute_chain_hash, latest_link, record_head_break
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request, payload_too_large
@@ -287,12 +287,15 @@ async def _insert_event(
                     raise bad_request(f"agent must be {AGENT_ID_RULE}")
                 await assert_agent_slot(conn, tenant_id=tenant_id, agent_id=agent)
 
-            await conn.execute(
+            # Returns the head this agent recorded so far (the upsert does not
+            # change it), checked against the chain below.
+            stored_head = await conn.fetchrow(
                 """
                 INSERT INTO agents (agent_id, tenant_id, event_count)
                 VALUES ($1, $2, 1)
                 ON CONFLICT (agent_id, tenant_id)
                 DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
+                RETURNING chain_head_seq, chain_head_hash
                 """,
                 agent,
                 tenant_id,
@@ -331,19 +334,34 @@ async def _insert_event(
             })
             # The agents upsert above holds this agent's row lock until commit,
             # so no other write for the agent can take the same previous link.
-            chain_hash = compute_chain_hash(
-                await previous_link(conn, tenant_id, agent), checksum
-            )
+            # If the newest events were removed outside an erasure, this event
+            # would link past the gap: keep the evidence first.
+            latest = await latest_link(conn, tenant_id, agent)
+            await record_head_break(conn, tenant_id, agent, stored_head, latest)
+            chain_hash = compute_chain_hash(latest[1] if latest else None, checksum)
 
+            # The same statement records the agent's newest link for the
+            # verifier, on the row the upsert above already holds. Only a real
+            # insert gets there: an idempotent duplicate returns before the
+            # transaction or rolls it back. The head is never read to compute
+            # a link.
             row = await conn.fetchrow(
                 """
-                INSERT INTO events (
-                    tenant_id, agent_id, event_type, data, parent_event_id, session_id,
-                    metadata, index_status, sequence_no, timestamp, checksum,
-                    idempotency_key, chain_hash
+                WITH ins AS (
+                    INSERT INTO events (
+                        tenant_id, agent_id, event_type, data, parent_event_id, session_id,
+                        metadata, index_status, sequence_no, timestamp, checksum,
+                        idempotency_key, chain_hash
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    RETURNING event_id, timestamp, sequence_no, chain_hash
+                ), head AS (
+                    UPDATE agents
+                    SET chain_head_seq = ins.sequence_no, chain_head_hash = ins.chain_hash
+                    FROM ins
+                    WHERE agents.tenant_id = $1 AND agents.agent_id = $2
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                RETURNING event_id, timestamp, sequence_no, chain_hash
+                SELECT event_id, timestamp, sequence_no, chain_hash FROM ins
                 """,
                 tenant_id,
                 agent,

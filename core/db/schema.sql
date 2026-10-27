@@ -23,6 +23,11 @@ CREATE TABLE agents (
     event_count BIGINT DEFAULT 0,
     metadata    JSONB,
     retention_days INTEGER,  -- NULL = EVENT_RETENTION_DAYS, else kept forever (services/retention.py)
+    -- Newest chain link, for the chain verifier only (services/audit_chain.py).
+    -- NULL until the agent's first write after the upgrade that added it;
+    -- never used to compute a link.
+    chain_head_seq  BIGINT,
+    chain_head_hash VARCHAR(64),
     PRIMARY KEY (agent_id, tenant_id)
 );
 
@@ -162,13 +167,30 @@ CREATE TABLE event_tombstones (
     reason      VARCHAR(50) NOT NULL,
     deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- The deleted row's checksum, so the verifier can recompute this link.
-    -- NULL only on tombstones written before 0.6 (see tombstone_checksum_cutoff).
+    -- NULL only on tombstones written before the upgrade that added it
+    -- (see tombstone_checksum_cutoff).
     checksum    VARCHAR(64),
     PRIMARY KEY (tenant_id, event_id)
 );
 
 CREATE INDEX idx_event_tombstones_agent_seq
     ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
+
+-- Kept when a write finds the agent's recorded newest link missing or changed:
+-- the newest events were removed or edited outside an erasure, and the new
+-- event would otherwise link past the gap (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS chain_head_breaks (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     UUID NOT NULL,
+    agent_id      VARCHAR(255) NOT NULL,
+    expected_seq  BIGINT NOT NULL,
+    expected_hash VARCHAR(64),
+    found_seq     BIGINT,
+    found_hash    VARCHAR(64),
+    detected_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (agent_id, tenant_id) REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_chain_head_breaks_agent ON chain_head_breaks (tenant_id, agent_id);
 
 -- When tombstones started carrying a checksum; init_db() records it once,
 -- after the trigger below exists. A tombstone without a checksum deleted after
