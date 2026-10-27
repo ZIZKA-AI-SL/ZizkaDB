@@ -103,6 +103,71 @@ def uses_default_db_password() -> bool:
     return password in _WELL_KNOWN_DB_PASSWORDS
 
 
+# A new column on a hot table: how long each try may wait for its lock (every
+# event write queues behind a pending ALTER meanwhile), and how many tries.
+ADD_COLUMN_LOCK_TIMEOUT = "2s"
+ADD_COLUMN_ATTEMPTS = 15
+
+
+async def _add_columns_once(table: str, columns: list[tuple[str, str]]) -> None:
+    """Add nullable columns to a table every event write touches, without stalling writes.
+
+    For these columns, a normal start only reads information_schema and takes
+    no lock. The first start after an upgrade adds whatever is missing in one
+    ALTER (one lock, never half done). Each try waits at most
+    ``ADD_COLUMN_LOCK_TIMEOUT`` for the lock, so event writes never queue long
+    behind it, and the tries together ride out a long-running query. Names and types are constants from
+    this module, never input.
+    """
+    present = {
+        r["column_name"]
+        for r in await _pg_pool.fetch(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = $1
+            """,
+            table,
+        )
+    }
+    missing = [(name, sql_type) for name, sql_type in columns if name not in present]
+    if not missing:
+        return
+    adds = ", ".join(f"ADD COLUMN IF NOT EXISTS {name} {sql_type}" for name, sql_type in missing)
+    for attempt in range(1, ADD_COLUMN_ATTEMPTS + 1):
+        try:
+            async with _pg_pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(f"SET LOCAL lock_timeout = '{ADD_COLUMN_LOCK_TIMEOUT}'")
+                    await conn.execute(f"ALTER TABLE {table} {adds}")
+            return
+        except asyncpg.exceptions.LockNotAvailableError:
+            if attempt == ADD_COLUMN_ATTEMPTS:
+                names = ", ".join(name for name, _ in missing)
+                raise RuntimeError(
+                    f"Could not add {names} to {table}: another session kept the table "
+                    "locked. Restart once the long-running query finishes."
+                ) from None
+            logger.warning(
+                "%s is locked; retrying its new columns (%s/%s)", table, attempt, ADD_COLUMN_ATTEMPTS
+            )
+            await asyncio.sleep(1)
+
+
+async def _ensure_chain_heads() -> None:
+    """Each agent's newest chain link, for the verifier only (ADR-009 H5).
+
+    The write path updates it on the agents row it already holds. It is never
+    used to compute a link: an older image does not maintain it, so after a
+    downgrade it can lag behind, which the verifier reports as a stale head.
+    """
+    # retention_days (services/retention.py) shares the guarded ALTER, so a
+    # normal start takes no lock on agents, which every event write updates.
+    await _add_columns_once(
+        "agents",
+        [("retention_days", "INTEGER"), ("chain_head_seq", "BIGINT"), ("chain_head_hash", "VARCHAR(64)")],
+    )
+
+
 async def _ensure_tombstone_checksums() -> None:
     """Tombstones keep the deleted row's checksum so their link can be checked (ADR-009 H1).
 
@@ -115,34 +180,7 @@ async def _ensure_tombstone_checksums() -> None:
     instead of replacing this one, or older and newer images would keep
     overwriting each other on restart.
     """
-    has_column = await _pg_pool.fetchval(
-        """
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = current_schema() AND table_name = 'event_tombstones'
-          AND column_name = 'checksum'
-        """
-    )
-    if not has_column:
-        # First start after the upgrade only. Each try waits at most 10s for
-        # the lock, so a long reader of the table cannot make every event write
-        # queue behind this ALTER; a few tries ride out a long-running reader.
-        for attempt in range(1, 4):
-            try:
-                async with _pg_pool.acquire() as conn:
-                    async with conn.transaction():
-                        await conn.execute("SET LOCAL lock_timeout = '10s'")
-                        await conn.execute(
-                            "ALTER TABLE event_tombstones ADD COLUMN IF NOT EXISTS checksum VARCHAR(64)"
-                        )
-                break
-            except asyncpg.exceptions.LockNotAvailableError:
-                if attempt == 3:
-                    raise RuntimeError(
-                        "Could not add event_tombstones.checksum: another session kept the "
-                        "table locked for 30s. Restart once the long-running query finishes."
-                    ) from None
-                logger.warning("event_tombstones is locked; retrying the checksum column (%s/3)", attempt)
-                await asyncio.sleep(2)
+    await _add_columns_once("event_tombstones", [("checksum", "VARCHAR(64)")])
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
             singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
@@ -548,6 +586,7 @@ async def _run_migrations():
     """)
 
     await _ensure_tombstone_checksums()
+    await _ensure_chain_heads()
 
     await _ensure_fts_index()
     await _ensure_supersedes_index()
@@ -558,7 +597,6 @@ async def _run_migrations():
     # link would change its checksum.
     await _pg_pool.execute("""
         ALTER TABLE events DROP CONSTRAINT IF EXISTS events_parent_event_id_fkey;
-        ALTER TABLE agents ADD COLUMN IF NOT EXISTS retention_days INTEGER;
     """)
 
     # API key scope (read_write / read_only) and optional expiry.
