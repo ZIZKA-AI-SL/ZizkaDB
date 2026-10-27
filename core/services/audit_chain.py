@@ -134,6 +134,7 @@ async def verify_chain(
         "unchained_legacy": 0,
         "tombstones": 0,
         "legacy_tombstones": 0,
+        "stale_head": 0,
         "checksum_mismatch": 0,
         "breaks": 0,
     }
@@ -144,20 +145,15 @@ async def verify_chain(
     cursor = after_seq or 0
     # Tombstones without a checksum are accepted only from before this point.
     checksum_since = await pool.fetchval("SELECT since FROM tombstone_checksum_cutoff")
+    # The recorded head is read before and after the walk, and compared only
+    # if it did not change in between: a write, an agent delete or re-create
+    # during the check is not evidence of tampering.
+    stored_head = await _stored_head(pool, tenant_id, agent_id)
+    anchor_ok = True
 
     if anchor is not None and after_seq is not None:
-        anchored = await pool.fetchval(
-            """
-            SELECT 1 FROM events
-            WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no = $3 AND chain_hash = $4
-            UNION ALL
-            SELECT 1 FROM event_tombstones
-            WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no = $3 AND chain_hash = $4
-            LIMIT 1
-            """,
-            tenant_id, agent_id, after_seq, anchor,
-        )
-        if not anchored:
+        if await _link_hash_at(pool, tenant_id, agent_id, after_seq) != anchor:
+            anchor_ok = False
             summary["breaks"] += 1
             problems.append({
                 "sequence_no": after_seq,
@@ -192,6 +188,12 @@ async def verify_chain(
             cursor = r["sequence_no"]
         if len(rows) < CHAIN_PAGE_SIZE:
             break
+
+    last_link = head
+    if last_link is None and anchor is not None and after_seq is not None and anchor_ok:
+        last_link = {"sequence_no": after_seq, "chain_hash": anchor}
+    if anchor_ok and stored_head == await _stored_head(pool, tenant_id, agent_id):
+        await _check_stored_head(pool, tenant_id, agent_id, stored_head, last_link, summary, problems)
 
     return {
         "agent": agent_id,
@@ -275,3 +277,68 @@ def _check_tombstone(
             "detail": "The tombstone's link does not follow the previous one: a row "
                       "before it was removed, inserted or changed, or the tombstone was changed.",
         })
+
+
+async def _link_hash_at(pool, tenant_id: str, agent_id: str, sequence_no: int) -> str | None:
+    """The agent's link at this sequence number, from an event or a tombstone."""
+    return await pool.fetchval(
+        """
+        SELECT chain_hash FROM events
+        WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no = $3
+        UNION ALL
+        SELECT chain_hash FROM event_tombstones
+        WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no = $3
+        LIMIT 1
+        """,
+        tenant_id,
+        agent_id,
+        sequence_no,
+    )
+
+
+async def _stored_head(pool, tenant_id: str, agent_id: str) -> tuple | None:
+    row = await pool.fetchrow(
+        "SELECT chain_head_seq, chain_head_hash FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+        tenant_id,
+        agent_id,
+    )
+    return None if row is None else (row["chain_head_seq"], row["chain_head_hash"])
+
+
+async def _check_stored_head(
+    pool,
+    tenant_id: str,
+    agent_id: str,
+    stored_head: tuple | None,
+    last_link: Mapping[str, Any] | None,
+    summary: dict,
+    problems: list,
+) -> None:
+    """Compare the head the write path recorded with the last link walked.
+
+    A head that points to an existing link with the same hash, but not the
+    last one, is stale: an older image (which does not record heads) wrote
+    after it. That is not a break, but on a deployment that never ran an older
+    image it means the head was moved back. (A write during the check changes
+    the head between the two reads, so the comparison is skipped instead.) A
+    head whose link is missing or has a different hash means the newest events
+    were removed or changed without going through an erasure.
+    """
+    if stored_head is None or stored_head[0] is None:
+        return  # Not recorded yet: no write since the upgrade that added it.
+    seq, expected = stored_head
+    if last_link is not None and last_link["sequence_no"] == seq and last_link["chain_hash"] == expected:
+        return
+
+    found = await _link_hash_at(pool, tenant_id, agent_id, seq)
+    if found == expected and last_link is not None and seq < last_link["sequence_no"]:
+        summary["stale_head"] = 1
+        return
+
+    summary["breaks"] += 1
+    problems.append({
+        "sequence_no": seq,
+        "problem": "head_mismatch",
+        "detail": "The agent's recorded newest link is missing or different: the newest "
+                  "events were removed or changed without going through an erasure.",
+    })
