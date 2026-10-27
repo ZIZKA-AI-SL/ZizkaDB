@@ -422,7 +422,8 @@ async def _stored_head(pool, tenant_id: str) -> tuple:
     """What the verifier reads as the head."""
     from services.audit_chain import _stored_head as read_head
 
-    return await read_head(pool, tenant_id, AGENT)
+    head = await read_head(pool, tenant_id, AGENT)
+    return head[:2]   # (seq, hash); the third value is first_seen
 
 
 async def test_each_write_records_the_agents_newest_link(pg_db):
@@ -601,8 +602,10 @@ async def test_concurrent_writers_leave_the_head_on_the_last_link(pg_db):
 async def test_upgrade_adds_the_head_columns_once(pg_db):
     import db.connection as connection
 
+    await pg_db.execute("DROP TABLE chain_head_breaks")
     await pg_db.execute("ALTER TABLE agents DROP COLUMN chain_head_seq, DROP COLUMN chain_head_hash")
     await connection._run_migrations()
+    assert await pg_db.fetchval("SELECT to_regclass('chain_head_breaks') IS NOT NULL")
     tenant_id, written = await _setup(pg_db, n=2)
     assert await _stored_head(pg_db, tenant_id) == (written[-1]["sequence_no"], written[-1]["chain_hash"])
 
@@ -618,8 +621,7 @@ async def test_a_locked_table_fails_the_upgrade_clearly_and_adds_nothing(pg_db, 
 
     monkeypatch.setattr(connection, "ADD_COLUMN_LOCK_TIMEOUT", "100ms")
     monkeypatch.setattr(connection, "ADD_COLUMN_ATTEMPTS", 2)
-    real_sleep = asyncio.sleep
-    monkeypatch.setattr(connection.asyncio, "sleep", lambda _s: real_sleep(0))
+    monkeypatch.setattr(connection, "ADD_COLUMN_RETRY_DELAY", 0)
     await pg_db.execute("ALTER TABLE agents DROP COLUMN chain_head_seq, DROP COLUMN chain_head_hash")
 
     async with pg_db.acquire() as reader, reader.transaction():
@@ -632,3 +634,135 @@ async def test_a_locked_table_fails_the_upgrade_clearly_and_adds_nothing(pg_db, 
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'agents'"
     )}
     assert not {"chain_head_seq", "chain_head_hash"} & columns   # never half done
+
+
+# ── A tail removed before the next write stays reported ───────────────────────
+
+async def test_a_deleted_tail_stays_reported_after_the_next_write(pg_db):
+    """The next event links past the gap, so the write keeps the evidence."""
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute("DELETE FROM events WHERE event_id = $1", written[-1]["event_id"])
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is False
+    assert [p["problem"] for p in result["problems"]] == ["head_mismatch"]
+    assert result["problems"][0]["sequence_no"] == written[-1]["sequence_no"]
+    assert result["summary"]["recorded_head_breaks"] == 1
+
+
+async def test_an_edited_newest_event_stays_reported_after_the_next_write(pg_db):
+    tenant_id, written = await _setup(pg_db)
+    await _rewrite_event(pg_db, written[-1]["event_id"], {"i": 4, "user": "forged"},
+                         written[-2]["chain_hash"])
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is False
+    assert result["summary"]["recorded_head_breaks"] == 1
+
+
+async def test_writing_after_an_older_images_writes_records_nothing(pg_db):
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute(   # what an older image leaves: the head on an older link
+        "UPDATE agents SET chain_head_seq = $2, chain_head_hash = $3 WHERE tenant_id = $1",
+        tenant_id, written[2]["sequence_no"], written[2]["chain_hash"],
+    )
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM chain_head_breaks") == 0
+    assert (await verify_chain(pg_db, tenant_id, AGENT))["intact"] is True
+
+
+async def test_writing_after_forgetting_the_newest_event_records_nothing(pg_db):
+    tenant_id, _ = await _setup(pg_db)
+    await _forget(tenant_id, "u4")
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM chain_head_breaks") == 0
+    assert (await verify_chain(pg_db, tenant_id, AGENT))["intact"] is True
+
+
+async def test_the_summary_says_whether_the_head_was_checked(pg_db):
+    tenant_id, _ = await _setup(pg_db)
+    assert (await verify_chain(pg_db, tenant_id, AGENT))["summary"]["head_checked"] == 1
+    await pg_db.execute(
+        "UPDATE agents SET chain_head_seq = NULL, chain_head_hash = NULL WHERE tenant_id = $1", tenant_id
+    )
+    assert (await verify_chain(pg_db, tenant_id, AGENT))["summary"]["head_checked"] == 0
+
+
+async def test_a_wrong_anchor_does_not_hide_a_deleted_tail(pg_db):
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute("DELETE FROM events WHERE event_id = $1", written[-1]["event_id"])
+    result = await verify_chain(pg_db, tenant_id, AGENT, after_seq=written[-2]["sequence_no"],
+                                anchor="f" * 64)
+    assert [p["problem"] for p in result["problems"]] == ["anchor_mismatch", "head_mismatch"]
+
+
+async def test_a_deleted_tail_is_caught_even_if_the_head_moves_during_the_check(pg_db):
+    """The head read before the walk is still checked when it changes meanwhile."""
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute("DELETE FROM events WHERE event_id = $1", written[-1]["event_id"])
+
+    async def move_head():   # moves the head without recording a break
+        await pg_db.execute(
+            "UPDATE agents SET chain_head_seq = $2, chain_head_hash = $3 WHERE tenant_id = $1",
+            tenant_id, written[-2]["sequence_no"], written[-2]["chain_hash"],
+        )
+
+    result = await verify_chain(_PoolThatActsDuringTheCheck(pg_db, move_head), tenant_id, AGENT)
+    assert result["intact"] is False
+    assert [p["problem"] for p in result["problems"]] == ["head_mismatch"]
+    assert result["summary"]["recorded_head_breaks"] == 0
+
+
+async def test_one_deleted_tail_is_counted_once(pg_db):
+    """Seen by the live check and recorded by a write during the check: one problem."""
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute("DELETE FROM events WHERE event_id = $1", written[-1]["event_id"])
+
+    async def write():
+        await write_event(tenant_id=tenant_id, agent=AGENT, event="meanwhile", data={})
+
+    result = await verify_chain(_PoolThatActsDuringTheCheck(pg_db, write), tenant_id, AGENT)
+    assert [p["problem"] for p in result["problems"]] == ["head_mismatch"]
+    assert result["summary"]["breaks"] == 1
+
+
+async def test_rows_inserted_outside_the_write_path_do_not_record_a_break(pg_db):
+    """Seed scripts insert rows without a link; the next write links past them."""
+    tenant_id, _ = await _setup(pg_db)
+    await pg_db.execute(
+        "INSERT INTO events (tenant_id, agent_id, event_type, data, checksum) VALUES ($1, $2, 'seeded', '{}', 'x')",
+        tenant_id, AGENT,
+    )
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM chain_head_breaks") == 0
+    kinds = {p["problem"] for p in (await verify_chain(pg_db, tenant_id, AGENT))["problems"]}
+    # The seeded row itself is reported (no link; its fake checksum), never as a missing tail.
+    assert "unchained_after_chain_start" in kinds and "head_mismatch" not in kinds
+
+
+async def test_resuming_past_a_recorded_incident_comes_back_clean(pg_db):
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute("DELETE FROM events WHERE event_id = $1", written[-1]["event_id"])
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+    seen = await verify_chain(pg_db, tenant_id, AGENT)
+    assert seen["summary"]["recorded_head_breaks"] == 1
+
+    head = seen["chain_head"]          # the auditor stores it after reviewing the incident
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="next", data={})
+    resumed = await verify_chain(pg_db, tenant_id, AGENT,
+                                 after_seq=head["sequence_no"], anchor=head["chain_hash"])
+    assert resumed["intact"] is True and resumed["summary"]["recorded_head_breaks"] == 0
+
+
+async def test_recorded_head_breaks_go_with_their_agent(pg_db):
+    tenant_id, written = await _setup(pg_db)
+    await pg_db.execute("DELETE FROM events WHERE event_id = $1", written[-1]["event_id"])
+    await write_event(tenant_id=tenant_id, agent=AGENT, event="later", data={})
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM chain_head_breaks") == 1
+
+    await pg_db.execute("DELETE FROM events WHERE tenant_id = $1", tenant_id)
+    await pg_db.execute("DELETE FROM event_tombstones WHERE tenant_id = $1", tenant_id)
+    await pg_db.execute("DELETE FROM agents WHERE tenant_id = $1", tenant_id)
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM chain_head_breaks") == 0

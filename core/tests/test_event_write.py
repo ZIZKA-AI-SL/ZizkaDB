@@ -299,12 +299,13 @@ async def test_agent_upsert_and_event_insert_share_one_transaction(mock_pool):
 
     conn = mock_pool.conn
     conn.transaction.assert_called_once()
-    upsert_sql = conn.execute.await_args_list[0].args[0]
-    assert "INSERT INTO agents" in upsert_sql
+    sql = [c.args[0] for c in conn.fetchrow.await_args_list]
+    upsert = next(i for i, q in enumerate(sql) if "INSERT INTO agents" in q)
+    canonical = next(i for i, q in enumerate(sql) if "nextval" in q)
+    insert = next(i for i, q in enumerate(sql) if "INSERT INTO events" in q)
     # the first event of a new agent must count itself (event_count = 1, not 0)
-    assert "VALUES ($1, $2, 1)" in upsert_sql
-    assert "nextval" in conn.fetchrow.await_args_list[0].args[0]
-    assert "INSERT INTO events" in conn.fetchrow.await_args_list[1].args[0]
+    assert "VALUES ($1, $2, 1)" in sql[upsert]
+    assert upsert < canonical < insert
     # nothing touches the agents table outside the transaction
     for call in mock_pool.execute.await_args_list:
         assert "INSERT INTO agents" not in call.args[0]
@@ -315,10 +316,14 @@ async def test_failed_event_insert_propagates_so_the_transaction_rolls_back(mock
     """The agent upsert and the event INSERT sit in one transaction, so an
     INSERT failure must propagate out of ``conn.transaction()`` (which then
     rolls the counter bump back) instead of being swallowed."""
-    mock_pool.conn.fetchrow.side_effect = [
-        mock_pool.conn.fetchrow.return_value,
-        RuntimeError("insert failed"),
-    ]
+    row = mock_pool.conn.fetchrow.return_value
+
+    async def fail_the_event_insert(sql, *args):
+        if "INSERT INTO events" in sql:
+            raise RuntimeError("insert failed")
+        return row
+
+    mock_pool.conn.fetchrow.side_effect = fail_the_event_insert
 
     with pytest.raises(RuntimeError, match="insert failed"):
         await write_event(
@@ -411,8 +416,9 @@ async def test_write_event_inserts_v2_checksum_of_canonical_values(
     )
     assert result["checksum"] == expected
 
-    select_call, insert_call = mock_pool.conn.fetchrow.await_args_list
-    assert "nextval" in select_call.args[0]
+    calls = mock_pool.conn.fetchrow.await_args_list
+    assert sum("nextval" in c.args[0] for c in calls) == 1
+    insert_call, = [c for c in calls if "INSERT INTO events" in c.args[0]]
     insert_sql, *insert_args = insert_call.args
     assert "INSERT INTO events" in insert_sql
     assert insert_args[8:12] == [7, canonical["timestamp"], expected, None]
