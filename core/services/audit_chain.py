@@ -40,13 +40,15 @@ def compute_chain_hash(prev_chain_hash: str | None, checksum: str) -> str:
     return hashlib.sha256(f"{prev_chain_hash or ''}:{checksum}".encode()).hexdigest()
 
 
-async def previous_link(conn, tenant_id: str, agent_id: str) -> str | None:
-    """The agent's latest link: its newest event or tombstone, by sequence_no."""
-    return await conn.fetchval(
+async def latest_link(conn, tenant_id: str, agent_id: str) -> tuple[int, str] | None:
+    """The agent's latest link as (sequence_no, chain_hash): its newest chained
+    event or tombstone. Rows without a link (inserted outside the write path)
+    are skipped, as the verifier does when it follows the chain."""
+    row = await conn.fetchrow(
         """
-        SELECT chain_hash FROM (
+        SELECT sequence_no, chain_hash FROM (
             (SELECT sequence_no, chain_hash FROM events
-             WHERE tenant_id = $1 AND agent_id = $2
+             WHERE tenant_id = $1 AND agent_id = $2 AND chain_hash IS NOT NULL
              ORDER BY sequence_no DESC LIMIT 1)
             UNION ALL
             (SELECT sequence_no, chain_hash FROM event_tombstones
@@ -58,6 +60,45 @@ async def previous_link(conn, tenant_id: str, agent_id: str) -> str | None:
         """,
         tenant_id,
         agent_id,
+    )
+    if row is None or row.get("chain_hash") is None:
+        return None
+    return row["sequence_no"], row["chain_hash"]
+
+
+async def record_head_break(conn, tenant_id: str, agent_id: str, stored_head, latest) -> None:
+    """Keep evidence when a write finds the agent's recorded head gone (ADR-009 H5).
+
+    Called by the write path under the agent's row lock, before it links the
+    new event to ``latest``. If the recorded head's link is missing or has a
+    different hash, the newest events were removed or changed outside an
+    erasure; the new event would link past the gap and hide it for good, so the
+    discrepancy is stored and the verifier keeps reporting it. A head that is
+    an existing older link was left behind by an older image: not a break.
+    """
+    if not stored_head or stored_head.get("chain_head_seq") is None:
+        return
+    seq, expected = stored_head["chain_head_seq"], stored_head["chain_head_hash"]
+    if latest is not None and latest == (seq, expected):
+        return
+    if (
+        latest is not None
+        and seq < latest[0]
+        and await _link_hash_at(conn, tenant_id, agent_id, seq) == expected
+    ):
+        return
+    await conn.execute(
+        """
+        INSERT INTO chain_head_breaks
+            (tenant_id, agent_id, expected_seq, expected_hash, found_seq, found_hash)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        tenant_id,
+        agent_id,
+        seq,
+        expected,
+        latest[0] if latest else None,
+        latest[1] if latest else None,
     )
 
 
@@ -135,6 +176,8 @@ async def verify_chain(
         "tombstones": 0,
         "legacy_tombstones": 0,
         "stale_head": 0,
+        "head_checked": 0,
+        "recorded_head_breaks": 0,
         "checksum_mismatch": 0,
         "breaks": 0,
     }
@@ -145,9 +188,7 @@ async def verify_chain(
     cursor = after_seq or 0
     # Tombstones without a checksum are accepted only from before this point.
     checksum_since = await pool.fetchval("SELECT since FROM tombstone_checksum_cutoff")
-    # The recorded head is read before and after the walk, and compared only
-    # if it did not change in between: a write, an agent delete or re-create
-    # during the check is not evidence of tampering.
+    # The recorded head is read before and after the walk (see _check_stored_head).
     stored_head = await _stored_head(pool, tenant_id, agent_id)
     anchor_ok = True
 
@@ -192,8 +233,8 @@ async def verify_chain(
     last_link = head
     if last_link is None and anchor is not None and after_seq is not None and anchor_ok:
         last_link = {"sequence_no": after_seq, "chain_hash": anchor}
-    if anchor_ok and stored_head == await _stored_head(pool, tenant_id, agent_id):
-        await _check_stored_head(pool, tenant_id, agent_id, stored_head, last_link, summary, problems)
+    recorded = await _report_recorded_head_breaks(pool, tenant_id, agent_id, after_seq, summary, problems)
+    await _check_stored_head(pool, tenant_id, agent_id, stored_head, last_link, recorded, summary, problems)
 
     return {
         "agent": agent_id,
@@ -297,48 +338,93 @@ async def _link_hash_at(pool, tenant_id: str, agent_id: str, sequence_no: int) -
 
 
 async def _stored_head(pool, tenant_id: str, agent_id: str) -> tuple | None:
+    """(head seq, head hash, first_seen), or None when the agent row is gone."""
     row = await pool.fetchrow(
-        "SELECT chain_head_seq, chain_head_hash FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+        """
+        SELECT chain_head_seq, chain_head_hash, first_seen
+        FROM agents WHERE tenant_id = $1 AND agent_id = $2
+        """,
         tenant_id,
         agent_id,
     )
-    return None if row is None else (row["chain_head_seq"], row["chain_head_hash"])
+    return None if row is None else (row["chain_head_seq"], row["chain_head_hash"], row["first_seen"])
 
 
 async def _check_stored_head(
     pool,
     tenant_id: str,
     agent_id: str,
-    stored_head: tuple | None,
+    before: tuple | None,
     last_link: Mapping[str, Any] | None,
+    recorded_seqs: set,
     summary: dict,
     problems: list,
 ) -> None:
-    """Compare the head the write path recorded with the last link walked.
+    """Check the head the write path recorded, as read before the walk.
 
-    A head that points to an existing link with the same hash, but not the
-    last one, is stale: an older image (which does not record heads) wrote
-    after it. That is not a break, but on a deployment that never ran an older
-    image it means the head was moved back. (A write during the check changes
-    the head between the two reads, so the comparison is skipped instead.) A
-    head whose link is missing or has a different hash means the newest events
-    were removed or changed without going through an erasure.
+    Its link must still exist with the same hash: forget and retention keep a
+    tombstone with it, so only removing or changing the newest events outside
+    an erasure loses it. That holds even if a write moved the head during the
+    walk. The head is read again only after the link lookup, and the check is
+    skipped when the agent row disappeared or was re-created meanwhile
+    (``first_seen`` changed), or when no head was recorded yet (no write since
+    the upgrade). A discrepancy a write already recorded is not counted twice.
+
+    A head that is an existing older link, unchanged during the check, is
+    stale: an older image (which does not record heads) wrote after it. Not a
+    break, but on a deployment that never ran an older image it means the head
+    was moved back.
     """
-    if stored_head is None or stored_head[0] is None:
+    if before is None or before[0] is None:
         return  # Not recorded yet: no write since the upgrade that added it.
-    seq, expected = stored_head
-    if last_link is not None and last_link["sequence_no"] == seq and last_link["chain_hash"] == expected:
-        return
-
+    seq, expected = before[0], before[1]
     found = await _link_hash_at(pool, tenant_id, agent_id, seq)
-    if found == expected and last_link is not None and seq < last_link["sequence_no"]:
-        summary["stale_head"] = 1
+    after = await _stored_head(pool, tenant_id, agent_id)
+    if after is None or after[2] != before[2]:
+        return  # The agent was deleted or re-created during the check.
+    summary["head_checked"] = 1
+    if found != expected:
+        if seq not in recorded_seqs:
+            summary["breaks"] += 1
+            problems.append({
+                "sequence_no": seq,
+                "problem": "head_mismatch",
+                "detail": "The agent's recorded newest link is missing or different: the newest "
+                          "events were removed or changed without going through an erasure.",
+            })
         return
+    if after == before and last_link is not None and seq < last_link["sequence_no"]:
+        summary["stale_head"] = 1
 
-    summary["breaks"] += 1
-    problems.append({
-        "sequence_no": seq,
-        "problem": "head_mismatch",
-        "detail": "The agent's recorded newest link is missing or different: the newest "
-                  "events were removed or changed without going through an erasure.",
-    })
+
+async def _report_recorded_head_breaks(
+    pool, tenant_id: str, agent_id: str, after_seq: int | None, summary: dict, problems: list
+) -> set:
+    """Discrepancies a later write found and kept (see record_head_break).
+
+    A check resumed from an anchor (``after_seq``) reports only those about
+    links after it, so an incident the caller already saw doesn't block every
+    later incremental check. Returns the reported head sequence numbers.
+    """
+    rows = await pool.fetch(
+        """
+        SELECT expected_seq, found_seq, detected_at FROM chain_head_breaks
+        WHERE tenant_id = $1 AND agent_id = $2 AND expected_seq > $3
+        ORDER BY expected_seq
+        """,
+        tenant_id,
+        agent_id,
+        after_seq or 0,
+    )
+    for r in rows:
+        summary["breaks"] += 1
+        summary["recorded_head_breaks"] += 1
+        problems.append({
+            "sequence_no": r["expected_seq"],
+            "problem": "head_mismatch",
+            "detail": "When a later event was written, the agent's recorded newest link was "
+                      "missing or different: the newest events had been removed or changed "
+                      f"without going through an erasure (found sequence {r['found_seq']}, "
+                      f"detected {r['detected_at'].isoformat()}).",
+        })
+    return {r["expected_seq"] for r in rows}
