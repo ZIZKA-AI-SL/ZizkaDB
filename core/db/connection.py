@@ -106,7 +106,8 @@ def uses_default_db_password() -> bool:
 # A new column on a hot table: how long each try may wait for its lock (every
 # event write queues behind a pending ALTER meanwhile), and how many tries.
 ADD_COLUMN_LOCK_TIMEOUT = "2s"
-ADD_COLUMN_ATTEMPTS = 15
+ADD_COLUMN_ATTEMPTS = 6
+ADD_COLUMN_RETRY_DELAY = 1.0  # seconds between tries
 
 
 async def _add_columns_once(table: str, columns: list[tuple[str, str]]) -> None:
@@ -116,8 +117,9 @@ async def _add_columns_once(table: str, columns: list[tuple[str, str]]) -> None:
     no lock. The first start after an upgrade adds whatever is missing in one
     ALTER (one lock, never half done). Each try waits at most
     ``ADD_COLUMN_LOCK_TIMEOUT`` for the lock, so event writes never queue long
-    behind it, and the tries together ride out a long-running query. Names and types are constants from
-    this module, never input.
+    behind it, and the tries together (about 17s per table at most) ride out a
+    long-running query. Names and types are constants from this module, never
+    input.
     """
     present = {
         r["column_name"]
@@ -133,24 +135,27 @@ async def _add_columns_once(table: str, columns: list[tuple[str, str]]) -> None:
     if not missing:
         return
     adds = ", ".join(f"ADD COLUMN IF NOT EXISTS {name} {sql_type}" for name, sql_type in missing)
+    names = ", ".join(name for name, _ in missing)
+    await _ddl_with_lock_timeout(table, f"ALTER TABLE {table} {adds}", what=f"add {names} to {table}")
+
+
+async def _ddl_with_lock_timeout(table: str, ddl: str, *, what: str | None = None) -> None:
+    """Run DDL that locks a hot table, each try waiting at most ADD_COLUMN_LOCK_TIMEOUT."""
     for attempt in range(1, ADD_COLUMN_ATTEMPTS + 1):
         try:
             async with _pg_pool.acquire() as conn:
                 async with conn.transaction():
                     await conn.execute(f"SET LOCAL lock_timeout = '{ADD_COLUMN_LOCK_TIMEOUT}'")
-                    await conn.execute(f"ALTER TABLE {table} {adds}")
+                    await conn.execute(ddl)
             return
         except asyncpg.exceptions.LockNotAvailableError:
             if attempt == ADD_COLUMN_ATTEMPTS:
-                names = ", ".join(name for name, _ in missing)
                 raise RuntimeError(
-                    f"Could not add {names} to {table}: another session kept the table "
+                    f"Could not {what or 'migrate ' + table}: another session kept {table} "
                     "locked. Restart once the long-running query finishes."
                 ) from None
-            logger.warning(
-                "%s is locked; retrying its new columns (%s/%s)", table, attempt, ADD_COLUMN_ATTEMPTS
-            )
-            await asyncio.sleep(1)
+            logger.warning("%s is locked; retrying the migration (%s/%s)", table, attempt, ADD_COLUMN_ATTEMPTS)
+            await asyncio.sleep(ADD_COLUMN_RETRY_DELAY)
 
 
 async def _ensure_chain_heads() -> None:
@@ -166,6 +171,28 @@ async def _ensure_chain_heads() -> None:
         "agents",
         [("retention_days", "INTEGER"), ("chain_head_seq", "BIGINT"), ("chain_head_hash", "VARCHAR(64)")],
     )
+    # Evidence a write keeps when it finds the recorded head gone. Removed with
+    # its agent (agent delete, account delete through agents). Its foreign key
+    # locks agents while it is created, so that only happens when it is missing,
+    # with the same bounded wait as a new column.
+    if not await _pg_pool.fetchval("SELECT to_regclass('chain_head_breaks') IS NOT NULL"):
+        await _ddl_with_lock_timeout("agents", CHAIN_HEAD_BREAKS_DDL)
+
+
+CHAIN_HEAD_BREAKS_DDL = """
+        CREATE TABLE IF NOT EXISTS chain_head_breaks (
+            id            BIGSERIAL PRIMARY KEY,
+            tenant_id     UUID NOT NULL,
+            agent_id      VARCHAR(255) NOT NULL,
+            expected_seq  BIGINT NOT NULL,
+            expected_hash VARCHAR(64),
+            found_seq     BIGINT,
+            found_hash    VARCHAR(64),
+            detected_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            FOREIGN KEY (agent_id, tenant_id) REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_chain_head_breaks_agent ON chain_head_breaks (tenant_id, agent_id);
+"""
 
 
 async def _ensure_tombstone_checksums() -> None:

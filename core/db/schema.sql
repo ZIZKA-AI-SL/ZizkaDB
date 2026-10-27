@@ -176,6 +176,22 @@ CREATE TABLE event_tombstones (
 CREATE INDEX idx_event_tombstones_agent_seq
     ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
 
+-- Kept when a write finds the agent's recorded newest link missing or changed:
+-- the newest events were removed or edited outside an erasure, and the new
+-- event would otherwise link past the gap (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS chain_head_breaks (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     UUID NOT NULL,
+    agent_id      VARCHAR(255) NOT NULL,
+    expected_seq  BIGINT NOT NULL,
+    expected_hash VARCHAR(64),
+    found_seq     BIGINT,
+    found_hash    VARCHAR(64),
+    detected_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (agent_id, tenant_id) REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_chain_head_breaks_agent ON chain_head_breaks (tenant_id, agent_id);
+
 -- When tombstones started carrying a checksum; init_db() records it once,
 -- after the trigger below exists. A tombstone without a checksum deleted after
 -- it is reported by the chain verifier (services/audit_chain.py).
