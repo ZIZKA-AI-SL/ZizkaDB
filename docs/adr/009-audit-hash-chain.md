@@ -96,10 +96,22 @@ Keep the per-agent chain, the route and the SDK methods. Every change below is a
 - **Single image.** A key generated into `/data/secrets.env` sits next to the database and does not protect against someone holding the whole volume. If it is wired into `infra/allinone/`, update `redu.md`, the README single-container section and `wiki/Self-Hosting.md` in the same PR.
 - **ZizkaDB Cloud** should set a key held outside the database host.
 
-### H5. Store the agent's head
+### H5. Store the agent's head (done)
 
-- Add `chain_head_seq` and `chain_head_hash` to `agents`, updated in the write that already updates `event_count`, so it costs no extra row lock.
-- The verifier reports `head_mismatch` when the last link is not the stored head. That catches a tail deleted without also editing the head. The head is unkeyed, so a full rollback is still caught only by an anchor.
+- Add `chain_head_seq` and `chain_head_hash` to `agents`, nullable.
+  - The write path updates them in the same statement as the event `INSERT` (a data-modifying CTE), on the `agents` row its upsert already holds: no extra lock and no extra round trip.
+  - Only a real insert reaches that update: an idempotent duplicate returns before the transaction or rolls it back.
+  - Measured cost: none within run-to-run noise (1,000 writes, 1 writer: about 3.1 ms median on both; 20 writers on one agent: about 510 writes/s on both). A separate `UPDATE` cost about +0.5 ms median, which is why it was folded into the insert.
+  - Known cost: each write now leaves two new versions of the agent's row (the upsert and the head) instead of one, so busy agents give autovacuum more work. Folding both into one update means restructuring the write path's locking (#328).
+- **Verification only.** The head is never read to compute a link (`previous_link()` is unchanged). The previous image doesn't maintain it, so after a downgrade it lags behind, and trusting it in the write path would corrupt the chain.
+- **The verifier reads the stored head before walking**, then compares it with the last link:
+  - the same link: fine;
+  - an existing link with the same hash, but not the last: `stale_head` (counted, not a break). An older image wrote after it, and the next write heals it. On a deployment that never ran an older image, it means the head was moved back to an older link, which only an anchor proves either way;
+  - a missing link or a different hash: `head_mismatch`;
+  - no head recorded yet (no write since the upgrade): skipped;
+  - the head changed during the check (a write, or the agent deleted or re-created): skipped, because that's not evidence of tampering;
+  - an anchor that failed its own check is not used as the last link.
+- **What it catches without a key:** deleting the newest events, or editing the newest event with its own link recomputed, when the head is left alone. The head is unkeyed, so a database writer who also rolls the head back is still caught only by an anchor.
 
 ### Fixes this plan depends on, already filed
 
@@ -114,19 +126,22 @@ Keep the per-agent chain, the route and the SDK methods. Every change below is a
 
 **What the chain detects.** "DB writer" means anyone who can change rows in the database. "Anchor" means a `chain_head` the caller stored outside ZizkaDB.
 
-| Change by a DB writer | Today (#310) | After H1–H3, no key | After H1–H5, with key |
+| Change by a DB writer | Today (#310) | After H1–H3 and H5, no key | After H1–H5, with key |
 |---|---|---|---|
 | Edit of a chained event, later links left alone | ✔ | ✔ | ✔ |
+| Edit of the newest event, own link recomputed, head left alone | ✘ | ✔ with H5, if the head is recorded and current¹ | ✔¹ |
 | Edit just before a tombstone, own link recomputed | ✘ | ✔ | ✔ |
 | Deleted event in the middle | ✔ | ✔ | ✔ |
 | Deletion dressed up as an erasure | ✘ | ✘ a forged receipt passes | ✔ |
 | Fabricated event appended at the end | ✘ | ✘ | ✔ |
-| Deleted newest events, head left alone | only with an anchor | only with an anchor | ✔ `head_mismatch` |
+| Deleted newest events, head left alone | only with an anchor | ✔ with H5 `head_mismatch`, if the head is recorded and current¹ | ✔¹ |
 | Deleted newest events, head rolled back | only with an anchor | only with an anchor | only with an anchor |
 | Full rewrite of an agent's chain | only with an anchor | only with an anchor | ✔ |
 | Row added without a link after the chain started | ✔ | ✔ | ✔ |
 | Backdated row among events from before the chain | ✘ | ✘ | ✘ |
 | Reordering across agents | ✘ | ✘ | ✘ |
+
+¹ The head is recorded by every write since the upgrade that added it. It is missing for an agent with no write since then, and stale after an older image wrote; in both cases the newest events are covered only by an anchor until this version writes again.
 
 Without a key, the chain protects against accidental and partial changes, and against anyone who does not recompute it. It does not protect against a deliberate database writer. The README and trust pages must say exactly that.
 
@@ -149,7 +164,7 @@ Without a key, the chain protects against accidental and partial changes, and ag
 ## Implementation order
 
 1. **H1 and H2** (done, #321): schema column and trigger, `delete_and_tombstone()` from `DELETE … RETURNING` (replacing `tombstone_events()`), verifier change, retention lock order, real-Postgres tests for the reproduced gaps, overlapping erasures, upgrade and downgrade.
-2. **H5**: head columns and `head_mismatch`.
+2. **H5** (done): head columns, `head_mismatch` and `stale_head`.
 3. **H3**: receipts, after #305 and #306 are fixed, with a real-Postgres deadlock test for forget against concurrent writes.
 4. **H4**: key option, docs and the single-image rule.
 5. **Docs**: README and trust-page wording that matches the table above.

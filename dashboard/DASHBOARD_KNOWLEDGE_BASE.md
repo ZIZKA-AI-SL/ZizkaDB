@@ -673,8 +673,8 @@ The dashboard **reads and visualizes** data that the **rest of the ecosystem wri
 - **SDKs** (`sdk/python`, `sdk/typescript`), **integrations** (`integrations/langchain`, `integrations/crewai`), and **MCP** (`mcp/`) call **POST `/v1/events`** (`events.py:35`), `POST /v1/memory/context` (`memory.py:46`), `POST /v1/telemetry` (`telemetry.py:27`).
 - The dashboard's Agents / Sessions / Search / Memory-diff / Baseline views read those rows back through the GET endpoints above.
 - **Audit chain (SDK / auditor only, not called by the dashboard):** GET `/v1/events/chain?agent=&after_seq=&anchor=` (`events.py`, `get_tenant` + `assert_agent_allowed`; `core/services/audit_chain.py::verify_chain`) walks the agent's events and tombstones by `sequence_no` and returns `{agent, intact, summary, problems (≤100), chain_head}`.
-  - `summary`: `events`, `chained`, `unchained_legacy`, `tombstones`, `legacy_tombstones`, `checksum_mismatch`, `breaks`.
-  - Problem kinds: `checksum_mismatch` / `checksum_missing`, `chain_break` (events and tombstones), `unchained_after_chain_start`, `tombstone_missing_checksum`, `anchor_mismatch`.
+  - `summary`: `events`, `chained`, `unchained_legacy`, `tombstones`, `legacy_tombstones`, `stale_head` (0/1: the stored head is an older link: an older image wrote after it, or the head was moved back; not a break), `checksum_mismatch`, `breaks`.
+  - Problem kinds: `checksum_mismatch` / `checksum_missing`, `chain_break` (events and tombstones), `unchained_after_chain_start`, `tombstone_missing_checksum`, `head_mismatch` (the newest events were removed or changed outside an erasure), `anchor_mismatch`.
   - SDKs: Python `verify_chain()`, TypeScript `verifyChain()`.
 - **Audit verification (SDK / auditor only, not called by the dashboard):** GET `/v1/events/verify?agent=&limit=&before=&after=&before_seq=` (pages by `sequence_no`, returns `next_before_seq`) and GET `/v1/events/{id}/verify` (404 for an unbound API key) (`events.py`, `get_tenant` + `assert_agent_allowed`) recompute event checksums (`core/services/checksum.py`) and report `valid` (v2: tenant, agent, type, data, parent, session, timestamp, sequence_no, metadata) / `valid_legacy` (v1: type + data only, only for rows at or below `checksum_v2_cutoff.legacy_until_seq`) / `mismatch` / `missing`. Status and version only; no hashes in the response.
 
@@ -1003,7 +1003,7 @@ Schema sources: `core/db/schema.sql` (base DDL, Docker init) + named migrations 
 | Table | Key columns | Purpose |
 |-------|-------------|---------|
 | `tenants` | `tenant_id` (PK), `name`, `embedding_provider`, `embedding_model`, `embedding_use_platform_key`, `embedding_api_key_encrypted` | Root of multi-tenant isolation; per-tenant embedding config (Fernet-encrypted BYOK key) |
-| `agents` | `(agent_id, tenant_id)` (PK), `first_seen`, `last_seen`, `event_count`, `metadata` | Registered agent identities; upserted on every event write |
+| `agents` | `(agent_id, tenant_id)` (PK), `first_seen`, `last_seen`, `event_count`, `metadata`, `retention_days`, `chain_head_seq` / `chain_head_hash` (newest chain link, for the verifier only; NULL until the agent's first write after the upgrade that added them) | Registered agent identities; upserted on every event write |
 | `api_keys` | `key_id` (PK), `tenant_id`, `agent_id` (NULL = unassigned until first use, set = bound to one agent), `key_hash` (SHA-256, unique), `key_prefix`, `revoked`, `last_used` | API-key auth; hashed only, prefix for display |
 | `users` | `user_id` (PK), `email` (unique), `tenant_id`, **billing cols** (see §21.2), `gdpr_consent_at`, `marketing_consent`, `last_login` | Dashboard users (passwordless OTP). **All billing state lives here.** |
 | `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used`, `attempts` | Passwordless login OTPs (15-min expiry); `attempts` counts wrong guesses, code burned at 5 (`OTP_MAX_ATTEMPTS`) |
