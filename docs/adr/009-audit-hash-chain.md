@@ -83,7 +83,7 @@ Keep the per-agent chain, the route and the SDK methods. Every change below is a
 - `erased_digest` is SHA-256 over `"<sequence_no>:<chain_hash>\n"` for each tombstone in `sequence_no` order, then `"<reason>\n<erased_count>"`. Tombstones gain `receipt_id`.
 - The verifier accepts a tombstone only if a later receipt covers it with a matching count and digest, and reports `unsealed_tombstone` otherwise.
 - `reason` is a fixed value: `forget` or `retention`. It never contains the forget filter, which is usually personal data.
-- **Lock order.** Forget already holds per-event advisory locks when it takes the agent row lock for the receipt. The write path takes the agent row lock and no per-event advisory lock (a new agent also takes the tenant advisory lock from `agent_limits`). Retention runs one agent per transaction. Forget across several agents must lock their `agents` rows in sorted `agent_id` order. A real-Postgres test must show no deadlock between a forget and concurrent writes before this ships.
+- **Lock order.** Forget already holds per-event advisory locks when it takes the agent row lock for the receipt. The write path updates the agent row and takes no per-event advisory lock; a new agent (including one whose row an agent delete just removed) takes the tenant advisory lock from `agent_limits` before its row exists. Agent delete locks the agent row `FOR UPDATE` before its events. Forget and retention lock the affected agents' rows (`FOR NO KEY UPDATE`, in `agent_id` order) inside `delete_and_tombstone()`, after their advisory locks and vector deletion. Account delete takes the tenant advisory lock, then the tenant's `api_keys` rows, then its `agents` rows in `agent_id` order, and only then the tenant row; key creation for an existing agent takes the tenant lock, then the agent row (`FOR KEY SHARE`) (#305, #306). Retention runs one agent per transaction. Forget across several agents must lock their `agents` rows in sorted `agent_id` order. A real-Postgres test must show no deadlock between a forget and concurrent writes before this ships.
 - **Honest limit.** Without a key, anyone with database write access can forge a receipt too. Receipts only make a fake erasure detectable with a key (H4).
 
 ### H4. Optional key held outside the database
@@ -118,8 +118,8 @@ Keep the per-agent chain, the route and the SDK methods. Every change below is a
 
 ### Fixes this plan depends on, already filed
 
-- #305: agent delete returns a 500 if the agent writes an event at the same moment.
-- #306: account delete can deadlock with a concurrent write.
+- #305 (fixed): agent delete returned a 500 if the agent wrote an event at the same moment.
+- #306 (fixed): account delete could deadlock with a concurrent write.
 - #307: `checksum_v2_cutoff` is taken from `MAX(sequence_no)` and can be recorded below an in-flight write. The chain relies on that cutoff for legacy checksums.
 - #223: forget and agent delete of an event with causal children. Children keep the erased parent's id, so their checksum and link stay valid.
 

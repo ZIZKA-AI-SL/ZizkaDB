@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Agent and account deletes during live writes
+
+- **Agent delete** no longer fails with a 500 when the agent writes an event at the same moment. The delete waits for the write in flight and removes its event too. A write that arrives during the delete waits, then creates the agent again, through the plan's agent cap like any new agent (on self-hosted that is a 409 if another agent already holds the slot).
+- **Account delete** (ZizkaDB Cloud) no longer deadlocks with an agent that is still writing, with a forget or retention pass, or with an API key being created or used for the first time; it waits for them to finish.
+- **Forget and retention** now lock the affected agents' rows before deleting their events, the same order the deletes use. Writes to those agents wait while the rows are deleted (about 10 ms per 1,000 events); the search-index call happens before the lock.
+- Account delete removes the account's search vectors after the data is gone, so vectors from a write that finished during the delete are removed too.
+- Agent delete reports the number of events it actually deleted (`events_deleted`), not the agent's running counter, which forget does not lower.
+- Ordinary write latency is unchanged (measured with 1 and 20 concurrent writers). No schema, route or response shape change.
+
 ### Audit chain: the newest events are covered too
 
 - Each agent now records its newest chain link, and `GET /v1/events/chain` checks it. Deleting an agent's newest events, or editing the newest one with its own link recomputed, was invisible before, because nothing linked after it. It is now reported as `head_mismatch`, once the agent has written since the upgrade and its recorded link is current. The report stays after later writes: the next write would otherwise link past the gap, so it records what it found.
