@@ -20,7 +20,7 @@ from services.agent_limits import assert_agent_slot
 from services.audit_chain import compute_chain_hash, latest_link, record_head_break
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
-from services.exceptions import bad_request, payload_too_large
+from services.exceptions import bad_request, not_found, payload_too_large
 from services.redaction import redact
 
 logger = logging.getLogger(__name__)
@@ -273,33 +273,44 @@ async def _insert_event(
                         f"parent_id '{parent_id}' does not exist or belongs to a different tenant"
                     )
 
-            # A new agent name creates an agent: check the plan has room for it.
-            # Inside the transaction so a failed event insert leaves no agent row.
-            agent_exists = await conn.fetchval(
-                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+            # Both statements return the head this agent recorded so far
+            # (neither changes it), checked against the chain below.
+            # An existing agent: a plain UPDATE, not an upsert. If an agent
+            # delete holds the row, this waits for it, then matches nothing,
+            # and the agent is created below like any new one.
+            stored_head = await conn.fetchrow(
+                """
+                UPDATE agents SET last_seen = NOW(), event_count = event_count + 1
+                WHERE tenant_id = $1 AND agent_id = $2
+                RETURNING chain_head_seq, chain_head_hash
+                """,
                 tenant_id,
                 agent,
             )
-            if not agent_exists:
-                # A new agent must be reachable through /v1/agents/{id}. Agents
-                # stored before this rule existed keep accepting events.
+            if stored_head is None:
+                # A new agent name creates an agent: check the plan has room for
+                # it. Inside the transaction so a failed event insert leaves no
+                # agent row. A new agent must be reachable through
+                # /v1/agents/{id}; agents stored before this rule existed keep
+                # accepting events.
                 if not is_valid_agent_id(agent):
                     raise bad_request(f"agent must be {AGENT_ID_RULE}")
                 await assert_agent_slot(conn, tenant_id=tenant_id, agent_id=agent)
-
-            # Returns the head this agent recorded so far (the upsert does not
-            # change it), checked against the chain below.
-            stored_head = await conn.fetchrow(
-                """
-                INSERT INTO agents (agent_id, tenant_id, event_count)
-                VALUES ($1, $2, 1)
-                ON CONFLICT (agent_id, tenant_id)
-                DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
-                RETURNING chain_head_seq, chain_head_hash
-                """,
-                agent,
-                tenant_id,
-            )
+                try:
+                    stored_head = await conn.fetchrow(
+                        """
+                        INSERT INTO agents (agent_id, tenant_id, event_count)
+                        VALUES ($1, $2, 1)
+                        ON CONFLICT (agent_id, tenant_id)
+                        DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
+                        RETURNING chain_head_seq, chain_head_hash
+                        """,
+                        agent,
+                        tenant_id,
+                    )
+                except asyncpg.ForeignKeyViolationError:
+                    # The account was deleted while this write waited.
+                    raise not_found("Account not found") from None
 
             # The v2 checksum covers timestamp and sequence_no, so take both
             # from Postgres up front, along with the JSONB / UUID values in the

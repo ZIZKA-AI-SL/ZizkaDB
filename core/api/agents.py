@@ -26,7 +26,7 @@ from services.rate_limiter import (
 )
 from services import reports, token_optimization, token_usage
 from services.actions import action_breakdown, action_distribution
-from services.agent_limits import assert_agent_slot
+from services.agent_limits import assert_agent_slot, lock_agent_row
 from services import token_optimization_config
 from services.ai import config as ai_config
 from services.ai.provider import AIProviderError
@@ -323,20 +323,19 @@ async def delete_agent(
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
 
-    row = await pool.fetchrow(
-        "SELECT event_count FROM agents WHERE tenant_id = $1 AND agent_id = $2",
-        tenant_id, agent_id,
-    )
-    if not row:
-        raise not_found("Agent not found")
-
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "UPDATE events SET parent_event_id = NULL WHERE tenant_id = $1 AND agent_id = $2",
+            # Lock the agent first. A write in flight finishes before the
+            # delete goes on, and a write arriving later waits, then finds the
+            # agent gone and creates it again under the plan's agent cap.
+            exists = await conn.fetchval(
+                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2 FOR UPDATE",
                 tenant_id, agent_id,
             )
-            await conn.execute(
+            if not exists:
+                raise not_found("Agent not found")
+            # The rows actually deleted: event_count is not lowered by forget.
+            status = await conn.execute(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
             )
@@ -356,7 +355,7 @@ async def delete_agent(
     return {
         "deleted": True,
         "agent": agent_id,
-        "events_deleted": int(row["event_count"] or 0),
+        "events_deleted": int(status.split()[-1]),
     }
 
 
@@ -424,14 +423,18 @@ async def create_agent_api_key(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            exists = await conn.fetchrow(
+            if not await conn.fetchval(
                 "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
-            )
-            if not exists:
+            ):
                 raise not_found("Agent not found")
-
+            # The tenant lock (when caps are enforced), then the agent row
+            # (KEY SHARE, held until the key is inserted): account delete takes
+            # them in this order, and the key's foreign key would otherwise
+            # take the tenant row first. The agent may be gone by now.
             await assert_and_reserve_api_key_slot(conn, tenant_id=tenant_id)
+            if not await lock_agent_row(conn, tenant_id, agent_id):
+                raise not_found("Agent not found")
 
             return await create_api_key_record(
                 conn,

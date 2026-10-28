@@ -151,7 +151,15 @@ async def test_delete_managed_account_purges_data(monkeypatch):
     await delete_managed_account(user_id=_USER_ID, tenant_id=_TENANT_ID)
 
     qdrant.delete.assert_awaited_once()
-    assert conn.execute.await_count == 3
+    sql = [c.args[0] for c in conn.execute.await_args_list]
+    assert len(sql) == 6
+    # Lock order: tenant advisory lock, agents rows, key rows, then the deletes.
+    assert "pg_advisory_xact_lock" in sql[0]
+    assert "FROM agents" in sql[1] and "FOR UPDATE" in sql[1]
+    assert "FROM api_keys" in sql[2] and "FOR UPDATE" in sql[2]
+    assert "DELETE FROM tenants" in sql[5]
+    # Vectors are purged after the transaction, once the data is gone.
+    assert qdrant.delete.await_count == 1
 
 
 @pytest.mark.asyncio

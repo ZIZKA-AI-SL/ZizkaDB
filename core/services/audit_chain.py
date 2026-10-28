@@ -132,7 +132,27 @@ async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: st
     One statement, so the tombstones and the count come from the rows this call
     actually deleted: an erasure that overlaps another one (which already
     deleted some of the rows) neither tombstones nor counts them twice.
+
+    First locks the affected agents' rows, in ``agent_id`` order, the order
+    agent and account delete use (agent rows, then their events): an erasure
+    that deleted event rows before its agent row would deadlock with them.
+    Call it after ``lock_events()`` and any network call, since writers to
+    these agents wait until the transaction ends.
     """
+    await conn.execute(
+        """
+        SELECT 1 FROM agents
+        WHERE tenant_id = $1
+          AND agent_id IN (
+              SELECT agent_id FROM events
+              WHERE tenant_id = $1 AND event_id = ANY($2::uuid[])
+          )
+        ORDER BY agent_id COLLATE "C"
+        FOR NO KEY UPDATE
+        """,
+        tenant_id,
+        event_ids,
+    )
     return await conn.fetchval(
         """
         WITH gone AS (
