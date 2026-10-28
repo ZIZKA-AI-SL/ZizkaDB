@@ -8,6 +8,7 @@ from uuid import UUID
 from services.exceptions import bad_request, conflict
 
 from services.agent_ids import AGENT_ID_RULE, is_storable, is_valid_agent_id
+from services.agent_limits import lock_tenant
 from services.auth import generate_api_key
 from services.billing import fetch_effective_plan
 from services.entitlements import api_key_limit_for_plan, limits_enforced
@@ -48,7 +49,7 @@ async def assert_and_reserve_api_key_slot(conn, *, tenant_id: str) -> None:
         return
 
     # Serialize creates for this tenant within the surrounding transaction.
-    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", tenant_id)
+    await lock_tenant(conn, tenant_id)
 
     try:
         # Read plan on the guard's own connection so it stays inside the

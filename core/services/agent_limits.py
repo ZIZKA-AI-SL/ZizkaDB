@@ -26,6 +26,16 @@ UNCOUNTED_AGENTS = frozenset({"support-bot", "dashboard-connection-test"})
 _CLOUD_URL = "https://db.zizka.ai"
 
 
+async def lock_tenant(conn, tenant_id: str) -> None:
+    """Take the tenant's transaction-level advisory lock.
+
+    Account delete always takes it, before any key or agent row (see
+    services/account.py). Agent and API key creation take it only while plan
+    limits are enforced (always on self-hosted), and then before any row lock.
+    """
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", tenant_id)
+
+
 async def count_agents(conn, tenant_id: str) -> int:
     """Agents that count toward the plan cap."""
     return int(
@@ -49,7 +59,7 @@ async def assert_agent_slot(conn, *, tenant_id: str, agent_id: str) -> None:
     if not limits_enforced() or agent_id in UNCOUNTED_AGENTS:
         return
 
-    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", tenant_id)
+    await lock_tenant(conn, tenant_id)
 
     exists = await conn.fetchval(
         "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
