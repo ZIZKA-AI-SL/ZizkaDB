@@ -323,20 +323,19 @@ async def delete_agent(
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
 
-    row = await pool.fetchrow(
-        "SELECT event_count FROM agents WHERE tenant_id = $1 AND agent_id = $2",
-        tenant_id, agent_id,
-    )
-    if not row:
-        raise not_found("Agent not found")
-
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "UPDATE events SET parent_event_id = NULL WHERE tenant_id = $1 AND agent_id = $2",
+            # Lock the agent first. A write in flight finishes before the
+            # delete goes on, and a write arriving later waits, then finds the
+            # agent gone and creates it again under the plan's agent cap.
+            exists = await conn.fetchval(
+                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2 FOR UPDATE",
                 tenant_id, agent_id,
             )
-            await conn.execute(
+            if not exists:
+                raise not_found("Agent not found")
+            # The rows actually deleted: event_count is not lowered by forget.
+            status = await conn.execute(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
             )
@@ -356,7 +355,7 @@ async def delete_agent(
     return {
         "deleted": True,
         "agent": agent_id,
-        "events_deleted": int(row["event_count"] or 0),
+        "events_deleted": int(status.split()[-1]),
     }
 
 
