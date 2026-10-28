@@ -247,12 +247,12 @@ async def test_account_delete_racing_writes_never_deadlocks(pg_db, monkeypatch, 
         )
         assert not isinstance(results[0], BaseException), repr(results[0])
         for r in results[1:]:
-            # A write that starts after the tenant is gone fails its FK check;
-            # on self-hosted the new agent is over the cap.
+            # A write that waited out the delete finds the account gone (404);
+            # on self-hosted a new agent can also be over the cap (409).
             if isinstance(r, HTTPException):
-                assert mode == "self_hosted" and r.status_code == 409
-            elif isinstance(r, BaseException):
-                assert isinstance(r, asyncpg.ForeignKeyViolationError), repr(r)
+                assert r.status_code == 404 or (mode == "self_hosted" and r.status_code == 409), r
+            else:
+                assert not isinstance(r, BaseException), repr(r)
         assert await pg_db.fetchval(
             "SELECT COUNT(*) FROM events WHERE tenant_id = $1", tenant_id
         ) == 0
@@ -333,7 +333,7 @@ async def test_key_claimed_during_account_delete_does_not_deadlock(pg_db, monkey
 
     conn, tx, delete = await _account_delete_blocked_on_users(pg_db, tenant_id, user_id)
     try:
-        # First use of the key binds it: key row, then the agent row (its FK).
+        # First use of the key binds it: the agent row, then the key row.
         claim = asyncio.create_task(claim_unassigned_api_key(
             key_id=str(key["key_id"]), tenant_id=tenant_id, agent_id="bot", pool=pg_db,
         ))
@@ -385,7 +385,7 @@ async def test_forget_racing_account_delete_never_deadlocks(pg_db, monkeypatch):
             """
             INSERT INTO events (tenant_id, agent_id, event_type, data, checksum, chain_hash)
             SELECT $1, 'bot', 'x', '{"user": "u1"}'::jsonb, md5(g::text), md5(g::text)
-            FROM generate_series(1, 4000) g  -- under #324's lock-table limit
+            FROM generate_series(1, 2000) g  -- well under #324's lock-table limit
             """,
             tenant_id,
         )
@@ -402,3 +402,158 @@ async def test_forget_racing_account_delete_never_deadlocks(pg_db, monkeypatch):
         )
         for r in results:
             assert not isinstance(r, BaseException), (delay, repr(r))
+
+
+async def test_write_waiting_on_account_delete_gets_404(pg_db, monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    tenant_id = await _tenant(pg_db)
+    user_id = await _user(pg_db, tenant_id)
+    await _log(tenant_id, "bot")
+
+    conn, tx, delete = await _account_delete_blocked_on_users(pg_db, tenant_id, user_id)
+    try:
+        write = asyncio.create_task(_log(tenant_id, "bot"))
+        assert await _still_waiting(write)
+    finally:
+        await tx.commit()
+        await pg_db.release(conn)
+
+    await asyncio.wait_for(delete, 5)
+    with pytest.raises(HTTPException) as exc:
+        await asyncio.wait_for(write, 5)
+    assert exc.value.status_code == 404
+
+
+async def test_agent_delete_and_account_delete_do_not_deadlock_over_keys(pg_db, monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    tenant_id = await _tenant(pg_db)
+    user_id = await _user(pg_db, tenant_id)
+    await _log(tenant_id, "bot")
+    await create_api_key_record(pg_db, tenant_id=tenant_id, name="bound", agent_id="bot")
+
+    # Stop agent delete after it locked the agent, at its DELETE FROM events.
+    async with pg_db.acquire() as conn:
+        tx = conn.transaction()
+        await tx.start()
+        await conn.execute("SELECT 1 FROM events WHERE tenant_id = $1 FOR UPDATE", tenant_id)
+        agent_delete = asyncio.create_task(
+            agents_api.delete_agent("bot", tenant={"tenant_id": tenant_id})
+        )
+        assert await _still_waiting(agent_delete)
+        account_delete = asyncio.create_task(
+            account.delete_managed_account(user_id=user_id, tenant_id=tenant_id)
+        )
+        assert await _still_waiting(account_delete)
+        await tx.commit()
+
+    # The agent delete cascades to the bound key; the account delete must not
+    # be holding it.
+    await asyncio.wait_for(agent_delete, 5)
+    await asyncio.wait_for(account_delete, 5)
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM tenants WHERE tenant_id = $1", tenant_id) == 0
+
+
+async def test_key_claim_racing_agent_delete_recreates_the_agent(pg_db, monkeypatch):
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    tenant_id = await _tenant(pg_db)
+    await pg_db.execute("INSERT INTO agents (agent_id, tenant_id) VALUES ('bot', $1)", tenant_id)
+    key = await create_api_key_record(pg_db, tenant_id=tenant_id, name="unassigned")
+
+    async with pg_db.acquire() as conn:
+        tx = conn.transaction()
+        await tx.start()
+        await conn.execute(
+            "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = 'bot' FOR UPDATE", tenant_id
+        )
+        claim = asyncio.create_task(claim_unassigned_api_key(
+            key_id=str(key["key_id"]), tenant_id=tenant_id, agent_id="bot", pool=pg_db,
+        ))
+        assert await _still_waiting(claim)
+        await conn.execute("DELETE FROM agents WHERE tenant_id = $1 AND agent_id = 'bot'", tenant_id)
+        await tx.commit()
+
+    assert await asyncio.wait_for(claim, 5) == "bot"
+    assert await pg_db.fetchval(
+        "SELECT agent_id FROM api_keys WHERE key_id = $1", key["key_id"]
+    ) == "bot"
+
+
+async def test_key_created_and_claimed_during_account_delete_does_not_deadlock(pg_db, monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    tenant_id = await _tenant(pg_db)
+    user_id = await _user(pg_db, tenant_id)
+    await _log(tenant_id, "bot")
+
+    conn, tx, delete = await _account_delete_blocked_on_users(pg_db, tenant_id, user_id)
+    try:
+        # A key created after the delete took its locks, then used.
+        key = await asyncio.wait_for(
+            create_api_key_record(pg_db, tenant_id=tenant_id, name="late"), 5
+        )
+        claim = asyncio.create_task(claim_unassigned_api_key(
+            key_id=str(key["key_id"]), tenant_id=tenant_id, agent_id="bot", pool=pg_db,
+        ))
+        assert await _still_waiting(claim)
+    finally:
+        await tx.commit()
+        await pg_db.release(conn)
+
+    await asyncio.wait_for(delete, 5)
+    assert await asyncio.wait_for(claim, 5) is None
+
+
+async def test_key_for_a_missing_agent_is_404_even_with_the_key_cap_full(pg_db):
+    tenant_id = await _tenant(pg_db)  # self-hosted: one key
+    await _log(tenant_id, "bot")
+    await create_api_key_record(pg_db, tenant_id=tenant_id, name="the one key", agent_id="bot")
+
+    with pytest.raises(HTTPException) as exc:
+        await agents_api.create_agent_api_key(
+            "typo", agents_api.CreateAgentKeyBody(), session={"tenant_id": tenant_id},
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("agent", ["newbot", "support-bot"])
+async def test_key_claimed_for_a_new_agent_during_account_delete(pg_db, monkeypatch, agent):
+    """Creating the agent waits on the tenant lock even where no cap applies."""
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    tenant_id = await _tenant(pg_db)
+    user_id = await _user(pg_db, tenant_id)
+    await _log(tenant_id, "bot")
+    key = await create_api_key_record(pg_db, tenant_id=tenant_id, name="unassigned")
+
+    conn, tx, delete = await _account_delete_blocked_on_users(pg_db, tenant_id, user_id)
+    try:
+        claim = asyncio.create_task(claim_unassigned_api_key(
+            key_id=str(key["key_id"]), tenant_id=tenant_id, agent_id=agent, pool=pg_db,
+        ))
+        assert await _still_waiting(claim)
+    finally:
+        await tx.commit()
+        await pg_db.release(conn)
+
+    await asyncio.wait_for(delete, 5)
+    assert await asyncio.wait_for(claim, 5) is None
+
+
+async def test_losing_claim_does_not_leave_the_agent_it_created(pg_db, monkeypatch):
+    monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
+    tenant_id = await _tenant(pg_db)
+    key = await create_api_key_record(pg_db, tenant_id=tenant_id, name="unassigned")
+    assert await claim_unassigned_api_key(
+        key_id=str(key["key_id"]), tenant_id=tenant_id, agent_id="a", pool=pg_db,
+    ) == "a"
+
+    # A second first-use request named another agent: it sees the winner and
+    # rolls back the agent it had created.
+    assert await claim_unassigned_api_key(
+        key_id=str(key["key_id"]), tenant_id=tenant_id, agent_id="b", pool=pg_db,
+    ) == "a"
+    assert await pg_db.fetchval(
+        "SELECT array_agg(agent_id) FROM agents WHERE tenant_id = $1", tenant_id
+    ) == ["a"]
