@@ -8,7 +8,6 @@ runs the other side, then lets the first one finish.
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-import asyncpg
 import pytest
 from fastapi import HTTPException
 
