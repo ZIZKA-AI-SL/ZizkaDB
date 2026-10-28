@@ -18,7 +18,6 @@ from api.memory import ForgetRequest, forget
 import services.retention as retention
 from services import account
 from services.api_keys import claim_unassigned_api_key, create_api_key_record
-from services.event_write import write_event
 
 pytestmark = pytest.mark.postgres
 
@@ -52,7 +51,7 @@ async def _user(pool, tenant_id: str) -> str:
 
 
 async def _log(tenant_id: str, agent: str) -> dict:
-    return await write_event(tenant_id=tenant_id, agent=agent, event="ping", data={"ok": True})
+    return await event_write.write_event(tenant_id=tenant_id, agent=agent, event="ping", data={"ok": True})
 
 
 @pytest.fixture
@@ -83,7 +82,7 @@ async def pause_write(pg_db, monkeypatch):
 async def _seed_expired(pool, tenant_id: str, agent: str, n: int = 3) -> None:
     old = datetime.now(timezone.utc) - timedelta(days=30)
     for _ in range(n):
-        await write_event(tenant_id=tenant_id, agent=agent, event="old", data={}, occurred_at=old)
+        await event_write.write_event(tenant_id=tenant_id, agent=agent, event="old", data={}, occurred_at=old)
     await pool.execute("UPDATE agents SET retention_days = 7 WHERE tenant_id = $1", tenant_id)
 
 
@@ -121,10 +120,13 @@ async def test_agent_delete_waits_for_a_write_in_flight(pg_db, pause_write):
     assert await _still_waiting(delete)
 
     release.set()
-    await write
+    written = await asyncio.wait_for(write, 5)
     result = await asyncio.wait_for(delete, 5)
 
     # The delete saw the write's event and removed it with the agent.
+    assert not await pg_db.fetchval(
+        "SELECT 1 FROM events WHERE event_id = $1::uuid", written["event_id"]
+    )
     assert result["events_deleted"] == 2
     assert await pg_db.fetchval("SELECT COUNT(*) FROM agents WHERE tenant_id = $1", tenant_id) == 0
     assert await pg_db.fetchval("SELECT COUNT(*) FROM events WHERE tenant_id = $1", tenant_id) == 0
