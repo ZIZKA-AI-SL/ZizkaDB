@@ -115,25 +115,26 @@ async def delete_managed_account(*, user_id: str, tenant_id: str) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
             # Lock order shared with writes, erasures, agent delete and key
-            # creation: the tenant lock, then its key and agent rows in a fixed
+            # binding: the tenant lock, then its agent and key rows in a fixed
             # order, and only then the tenant row (via the deletes). Taking
             # the tenant row first deadlocks with a write that holds an agents
             # row and still has to insert its event.
             await lock_tenant(conn, tid)
-            # Keys before agents: binding a key on first use updates the key
-            # row, then its foreign key needs the agent row.
-            await conn.execute(
-                """
-                SELECT 1 FROM api_keys WHERE tenant_id = $1::uuid
-                ORDER BY key_id
-                FOR UPDATE
-                """,
-                tid,
-            )
             await conn.execute(
                 """
                 SELECT 1 FROM agents WHERE tenant_id = $1::uuid
                 ORDER BY agent_id COLLATE "C"
+                FOR UPDATE
+                """,
+                tid,
+            )
+            # Agents before keys: agent delete reaches its keys through the
+            # cascade after the agent row, and binding a key locks the agent
+            # row before the key row.
+            await conn.execute(
+                """
+                SELECT 1 FROM api_keys WHERE tenant_id = $1::uuid
+                ORDER BY key_id
                 FOR UPDATE
                 """,
                 tid,
@@ -143,8 +144,9 @@ async def delete_managed_account(*, user_id: str, tenant_id: str) -> None:
             await conn.execute("DELETE FROM tenants WHERE tenant_id = $1::uuid", tid)
 
     # After the commit: a write that finished while the delete waited may have
-    # added a vector, and once the tenant is gone no write can add another.
-    # A failed delete leaves its data's vectors in place.
+    # added a vector, and once the tenant is gone no new event can. (The embed
+    # worker can still upsert one for a deleted row: #330.) A failed delete
+    # leaves its data's vectors in place.
     await _purge_tenant_vectors(tid)
 
     log.info("Managed account deleted user_id=%s tenant_id=%s", user_id, tid)
