@@ -37,6 +37,13 @@ class _FakeConn:
             return None
         return {"agent_id": self.bound_agent}
 
+    async def fetchval(self, sql, *args):
+        assert "FOR KEY SHARE" in sql  # the agent row is locked before the key row
+        return 1
+
+    def transaction(self):
+        return _Acquire(None)
+
 
 class _FakePool:
     def __init__(self, conn):
@@ -221,7 +228,8 @@ async def test_claim_does_not_look_up_a_valid_name(monkeypatch):
             calls.append(sql)
             raise AssertionError("stop here")
 
-    monkeypatch.setattr("services.agent_limits.reserve_agent_slot", AsyncMock(side_effect=RuntimeError("reserved")))
+        def acquire(self):
+            raise RuntimeError("reserved")  # the next step after validation
     with pytest.raises(RuntimeError, match="reserved"):
         await api_keys.claim_unassigned_api_key(
             key_id="k", tenant_id="t", agent_id="my-bot", pool=_Pool(exists=False)
