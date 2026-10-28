@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from db.connection import get_pool, get_qdrant, QDRANT_COLLECTION
+from services.agent_limits import lock_tenant
 from services.billing import fetch_user_billing
 
 log = logging.getLogger(__name__)
@@ -111,12 +112,39 @@ async def delete_managed_account(*, user_id: str, tenant_id: str) -> None:
     email = row["email"]
     tid = str(row["tenant_id"])
 
-    await _purge_tenant_vectors(tid)
-
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Lock order shared with writes, erasures, agent delete and key
+            # creation: the tenant lock, then its key and agent rows in a fixed
+            # order, and only then the tenant row (via the deletes). Taking
+            # the tenant row first deadlocks with a write that holds an agents
+            # row and still has to insert its event.
+            await lock_tenant(conn, tid)
+            # Keys before agents: binding a key on first use updates the key
+            # row, then its foreign key needs the agent row.
+            await conn.execute(
+                """
+                SELECT 1 FROM api_keys WHERE tenant_id = $1::uuid
+                ORDER BY key_id
+                FOR UPDATE
+                """,
+                tid,
+            )
+            await conn.execute(
+                """
+                SELECT 1 FROM agents WHERE tenant_id = $1::uuid
+                ORDER BY agent_id COLLATE "C"
+                FOR UPDATE
+                """,
+                tid,
+            )
             await conn.execute("DELETE FROM users WHERE user_id = $1::uuid", user_id)
             await conn.execute("DELETE FROM auth_otps WHERE email = $1", email)
             await conn.execute("DELETE FROM tenants WHERE tenant_id = $1::uuid", tid)
+
+    # After the commit: a write that finished while the delete waited may have
+    # added a vector, and once the tenant is gone no write can add another.
+    # A failed delete leaves its data's vectors in place.
+    await _purge_tenant_vectors(tid)
 
     log.info("Managed account deleted user_id=%s tenant_id=%s", user_id, tid)

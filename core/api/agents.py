@@ -423,14 +423,16 @@ async def create_agent_api_key(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # The tenant lock, then the agent row (KEY SHARE, held until the
+            # key is inserted): account delete takes them in this order, and
+            # the key's foreign key would otherwise take the tenant row first.
+            await assert_and_reserve_api_key_slot(conn, tenant_id=tenant_id)
             exists = await conn.fetchrow(
-                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2 FOR KEY SHARE",
                 tenant_id, agent_id,
             )
             if not exists:
                 raise not_found("Agent not found")
-
-            await assert_and_reserve_api_key_slot(conn, tenant_id=tenant_id)
 
             return await create_api_key_record(
                 conn,
