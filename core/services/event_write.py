@@ -20,7 +20,7 @@ from services.agent_limits import assert_agent_slot
 from services.audit_chain import compute_chain_hash, latest_link, record_head_break
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
-from services.exceptions import bad_request, payload_too_large
+from services.exceptions import bad_request, not_found, payload_too_large
 from services.redaction import redact
 
 logger = logging.getLogger(__name__)
@@ -296,17 +296,21 @@ async def _insert_event(
                 if not is_valid_agent_id(agent):
                     raise bad_request(f"agent must be {AGENT_ID_RULE}")
                 await assert_agent_slot(conn, tenant_id=tenant_id, agent_id=agent)
-                stored_head = await conn.fetchrow(
-                    """
-                    INSERT INTO agents (agent_id, tenant_id, event_count)
-                    VALUES ($1, $2, 1)
-                    ON CONFLICT (agent_id, tenant_id)
-                    DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
-                    RETURNING chain_head_seq, chain_head_hash
-                    """,
-                    agent,
-                    tenant_id,
-                )
+                try:
+                    stored_head = await conn.fetchrow(
+                        """
+                        INSERT INTO agents (agent_id, tenant_id, event_count)
+                        VALUES ($1, $2, 1)
+                        ON CONFLICT (agent_id, tenant_id)
+                        DO UPDATE SET last_seen = NOW(), event_count = agents.event_count + 1
+                        RETURNING chain_head_seq, chain_head_hash
+                        """,
+                        agent,
+                        tenant_id,
+                    )
+                except asyncpg.ForeignKeyViolationError:
+                    # The account was deleted while this write waited.
+                    raise not_found("Account not found") from None
 
             # The v2 checksum covers timestamp and sequence_no, so take both
             # from Postgres up front, along with the JSONB / UUID values in the

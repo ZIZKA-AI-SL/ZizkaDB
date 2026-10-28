@@ -26,7 +26,7 @@ from services.rate_limiter import (
 )
 from services import reports, token_optimization, token_usage
 from services.actions import action_breakdown, action_distribution
-from services.agent_limits import assert_agent_slot
+from services.agent_limits import assert_agent_slot, lock_agent_row
 from services import token_optimization_config
 from services.ai import config as ai_config
 from services.ai.provider import AIProviderError
@@ -423,15 +423,17 @@ async def create_agent_api_key(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # The tenant lock, then the agent row (KEY SHARE, held until the
-            # key is inserted): account delete takes them in this order, and
-            # the key's foreign key would otherwise take the tenant row first.
-            await assert_and_reserve_api_key_slot(conn, tenant_id=tenant_id)
-            exists = await conn.fetchrow(
-                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2 FOR KEY SHARE",
+            if not await conn.fetchval(
+                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
-            )
-            if not exists:
+            ):
+                raise not_found("Agent not found")
+            # The tenant lock (when caps are enforced), then the agent row
+            # (KEY SHARE, held until the key is inserted): account delete takes
+            # them in this order, and the key's foreign key would otherwise
+            # take the tenant row first. The agent may be gone by now.
+            await assert_and_reserve_api_key_slot(conn, tenant_id=tenant_id)
+            if not await lock_agent_row(conn, tenant_id, agent_id):
                 raise not_found("Agent not found")
 
             return await create_api_key_record(
