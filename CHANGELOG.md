@@ -12,6 +12,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Account delete** (ZizkaDB Cloud) no longer deadlocks with an agent that is still writing, with a forget or retention pass, or with an API key being created or used for the first time; it waits for them to finish.
 - **Forget and retention** now lock the affected agents' rows before deleting their events, the same order the deletes use. Writes to those agents wait while the rows are deleted (about 10 ms per 1,000 events); the search-index call happens before the lock.
 - Account delete removes the account's search vectors after the data is gone, so vectors from a write that finished during the delete are removed too.
+- **Binding a key on first use** while its agent is being deleted now re-creates the agent through the agent cap, like an event write, instead of failing with a 500.
+- A write that waited out an account delete gets a 404 (the account is gone), and a key binding is simply refused, instead of a 500.
 - Agent delete reports the number of events it actually deleted (`events_deleted`), not the agent's running counter, which forget does not lower.
 - Ordinary write latency is unchanged (measured with 1 and 20 concurrent writers). No schema, route or response shape change.
 
