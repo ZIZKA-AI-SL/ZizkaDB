@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Dependencies
+
+- Fixed the open npm security alerts in the dashboard and the TypeScript SDK: vitest 4.1.12 (with `@vitest/mocker` and `@vitest/coverage-v8`), vite, esbuild, zod and postcss-selector-parser. All are test or build tools; nothing shipped to users changes. `npm audit` reports 0 vulnerabilities in both.
+
 ### Project
 
 - Dependabot checks the Python, npm, Docker and GitHub Actions dependencies of the shipped packages weekly and opens security updates as they appear.
