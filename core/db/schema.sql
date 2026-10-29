@@ -172,7 +172,7 @@ CREATE TABLE event_tombstones (
     checksum    VARCHAR(64),
     -- Erasure receipts (reason 'erasure_receipt', ADR-009 H3) are rows here too,
     -- so older images link past them: checksum holds the digest of the
-    -- tombstones they cover, erased_count how many; each covered tombstone
+    -- tombstones they cover, erased_count how many tombstones; each covered tombstone
     -- names its receipt in receipt_id.
     erased_count INTEGER,
     receipt_id   UUID,
