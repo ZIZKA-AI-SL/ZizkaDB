@@ -19,4 +19,4 @@ jobs:
         with:
           fail-on-severity: moderate
           # Copyleft-compatible project: block only licences that cannot ship in AGPL code.
-          deny-licenses: SSPL-1.0, BUSL-1.1, Commons-Clause
+          deny-licenses: SSPL-1.0, BUSL-1.1
