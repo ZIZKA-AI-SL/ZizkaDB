@@ -10,7 +10,7 @@ ZizkaDB is an operational database for AI agents. It stores event history, API k
 | Latest [GitHub release](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) | Yes |
 | Older releases | Best effort — upgrade recommended |
 
-Managed cloud at **db.zizka.ai** runs the latest stable deployment from this repository.
+ZizkaDB Cloud (**db.zizka.ai**) is a separate managed product that is not built from this repository. Report issues in it to the same address below.
 
 ## Reporting a vulnerability
 

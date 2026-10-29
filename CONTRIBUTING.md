@@ -313,6 +313,8 @@ Target the `main` branch on [ZIZKA-AI-SL/ZizkaDB](https://github.com/ZIZKA-AI-SL
 3. **Areas touched** (API / schema / SDK / dashboard / MCP)
 4. **Breaking changes** (if any)
 
+**Tests are required.** New features and bug fixes must come with automated tests that cover them (a bug fix adds a test that fails without the fix). PRs without tests are accepted only for docs, comments and other changes with no runtime behaviour; say so in the PR.
+
 **CI must pass** before merge (Python lint + tests, TS SDK tests, dashboard lint + vitest + build, doc drift).
 
 Keep PRs small and reviewable. Split large work into stacked PRs when you can.
