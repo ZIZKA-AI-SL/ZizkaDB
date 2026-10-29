@@ -10,9 +10,8 @@ on:
         required: false
         default: ""
 
-permissions:
-  contents: read
-  packages: write
+# No workflow-wide grants; each job asks only for what it uses (OSPS-AC-04.02).
+permissions: {}
 
 env:
   REGISTRY: ghcr.io
@@ -35,6 +34,9 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -53,13 +55,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Each image is pushed by digest only; the merge job tags the
-      # multi-platform manifest once every platform has built.
+      # multi-platform manifest once every platform has built. Every build
+      # attaches an SBOM and a SLSA provenance attestation to its image.
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         id: api
         name: Build API
         with:
           context: core
           platforms: ${{ matrix.platform }}
+          sbom: true
+          provenance: mode=max
           outputs: type=image,name=${{ env.API_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -72,6 +77,8 @@ jobs:
             NEXT_PUBLIC_API_URL=http://localhost:8000
             NEXT_PUBLIC_DEV_MODE=false
             NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted
+          sbom: true
+          provenance: mode=max
           outputs: type=image,name=${{ env.DASHBOARD_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -81,6 +88,8 @@ jobs:
           context: .
           file: infra/allinone/Dockerfile
           platforms: ${{ matrix.platform }}
+          sbom: true
+          provenance: mode=max
           outputs: type=image,name=${{ env.ALLINONE_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Record digests
@@ -100,6 +109,10 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing (Sigstore OIDC)
     steps:
       - name: Docker meta
         id: meta
@@ -147,6 +160,20 @@ jobs:
           publish api "$API_IMAGE"
           publish dashboard "$DASHBOARD_IMAGE"
           publish allinone "$ALLINONE_IMAGE"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Keyless signature bound to this workflow's identity; verify with the
+      # command in docs/security/release-verification.md.
+      - name: Sign images
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for image in "$API_IMAGE" "$DASHBOARD_IMAGE" "$ALLINONE_IMAGE"; do
+            digest="$(docker buildx imagetools inspect "${image}:${TAGS%% *}" --format '{{json .Manifest}}' | jq -r .digest)"
+            cosign sign --yes --recursive "${image}@${digest}"
+          done
 
       - name: Make GHCR packages public (required for curl quickstart)
         env:

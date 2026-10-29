@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security process (OpenSSF OSPS Baseline Level 3)
+
+- **Signed images with SBOM and provenance.** Release images are signed with Sigstore cosign (keyless, bound to the publish workflow) and carry an SPDX SBOM and SLSA provenance. How to verify: `docs/security/release-verification.md`. Applies from the next release; 0.5.0 and older images are unsigned.
+- **Merge gates.** New *Dependency review* check blocks PRs that add vulnerable (moderate+) or malicious packages, or licences incompatible with AGPL. New *DCO* check requires `Signed-off-by` on every commit (`git commit -s`).
+- **Least-privilege workflows.** Every workflow grants only the permissions each job needs. The contributors workflow now opens a pull request instead of pushing to `main`.
+- **Policies and docs.** SECURITY.md states the support period (each minor line until the next minor release), advisories, a VEX document and SCA/SAST remediation thresholds. New `MAINTAINERS.md` (access, roles, granting access), `docs/security/` (threat model, release verification, secrets policy), and CONTRIBUTING sections on DCO, when tests run, and dependency selection.
+
 ### Dependencies
 
 - Fixed the open npm security alerts in the dashboard and the TypeScript SDK: vitest 4.1.12 (with `@vitest/mocker` and `@vitest/coverage-v8`), vite, esbuild, zod and postcss-selector-parser. All are test or build tools; nothing shipped to users changes. `npm audit` reports 0 vulnerabilities in both.

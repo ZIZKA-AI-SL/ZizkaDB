@@ -46,32 +46,34 @@ Create a new ruleset (or let `github-setup.sh` create **main-protection**):
 | Rule | Setting |
 |------|---------|
 | Target | Default branch (`main`) |
-| Pull request | Required, **1** approval |
+| Bypass list | **Empty** (admins follow the rules too) |
+| Pull request | Required, **1** approval (the author cannot approve their own PR; needs a second maintainer) |
 | Dismiss stale approvals | On |
-| Require code owner review | **Off** (early stage) |
-| Required status checks | `python`, `typescript-sdk`, `dashboard` |
+| Require approval of the most recent push | On |
+| Require code owner review | Off |
+| Required status checks | `python`, `python-postgres`, `typescript-sdk`, `dashboard`, `dependency-review`, `dco`, `Analyze (python)`, `Analyze (javascript-typescript)`, `Analyze (actions)` |
 | Require branches up to date | On |
+| Require code scanning results | **CodeQL**: alerts **Errors**, security alerts **High or higher** |
 | Block force pushes | On |
 | Block deletions | On |
 | Require conversation resolution | On |
 
-**Do NOT enable (Phase 2+):**
+These settings meet OpenSSF OSPS Baseline controls AC-03.01/02 (no direct commits or deletion of `main`), QA-03.01 (checks must pass), QA-07.01 (non-author approval), VM-05.03 (dependency gate) and VM-06.02 (SAST gate). See [docs/security/README.md](../security/README.md).
 
-- Required signed commits
-- Code Scanning merge gate
-- Code quality merge gate
-- Linear history
-- Tag protection (`v*`)
+Also, at the **organization** level: Settings → Authentication security → **Require two-factor authentication**; Member privileges → Base permissions **Read**; Actions → General → Workflow permissions **Read repository contents** and **Allow GitHub Actions to create pull requests** (the contributors workflow opens a PR).
+
+**Not enabled:** required signed commits (the DCO check covers contributor sign-off), linear history.
 
 ### 4. Verify status check names
 
 After the first CI run on a PR, open the **Checks** tab. If names differ (e.g. `CI / python` instead of `python`), update the ruleset to match **exactly**.
 
-### 5. Optional (enable later)
+### 5. Security features (turn on)
 
-- **Dependabot alerts** — Settings → Code security → Dependabot
-- **Secret scanning** — org/repo security settings
-- **CodeQL** — after [.github/workflows/codeql.yml](../../.github/workflows/codeql.yml) is stable (non-blocking for 2+ weeks first)
+- **Dependabot alerts and security updates:** Settings → Code security → Dependabot (on)
+- **Secret scanning and push protection:** Settings → Code security (on)
+- **Private vulnerability reporting:** Settings → Code security (on)
+- **Tag ruleset for `v*`:** only maintainers can create, update or delete release tags
 
 ---
 
@@ -101,7 +103,7 @@ No signed commits, no Code Scanning merge gate.
 | Symptom | Fix |
 |---------|-----|
 | `GH013: Cannot update protected ref` | Disable ruleset 18095491 |
-| `Waiting for Code Scanning results` | Remove code scanning from ruleset |
+| `Waiting for Code Scanning results` | CodeQL has not finished on the PR's latest commit; wait for `codeql.yml`, or re-run it |
 | `gpg: signing failed` | Remove required signed commits from ruleset |
 | PR blocked but CI green | Status check names in ruleset don't match Checks tab |
 | Skipped CI jobs block merge | Don't use path filters on required jobs until optional checks exist |
