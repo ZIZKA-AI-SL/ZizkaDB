@@ -152,7 +152,7 @@ async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: st
     Call it after ``lock_events()`` and any network call, since writers to
     these agents wait until the transaction ends.
 
-    Then appends one receipt per agent that got tombstones (``_append_receipt``).
+    Then seals each agent's tombstones with a receipt (``_append_receipts``).
     """
     await conn.execute(
         """
@@ -188,66 +188,76 @@ async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: st
             ON CONFLICT DO NOTHING
             RETURNING agent_id, receipt_id, sequence_no, chain_hash
         )
-        SELECT NULL AS agent_id, NULL::uuid AS receipt_id, NULL::bigint AS sequence_no,
-               NULL AS chain_hash, (SELECT COUNT(*) FROM gone) AS deleted
+        -- The digest of each agent's sealed links, as erasure_digest() computes it.
+        SELECT NULL AS agent_id, NULL::uuid AS receipt_id, NULL::int AS erased_count,
+               NULL AS digest, (SELECT COUNT(*) FROM gone) AS deleted
         UNION ALL
-        SELECT agent_id, receipt_id, sequence_no, chain_hash, NULL FROM kept
+        SELECT agent_id, receipt_id, COUNT(*)::int,
+               encode(sha256(convert_to(
+                   string_agg(sequence_no || ':' || chain_hash || E'\\n', '' ORDER BY sequence_no)
+                   || $3 || E'\\n' || COUNT(*), 'UTF8')), 'hex'),
+               NULL
+        FROM kept GROUP BY agent_id, receipt_id
         """,
         tenant_id,
         event_ids,
         reason,
     )
-    deleted = 0
-    sealed: dict[str, tuple[Any, list[tuple[int, str]]]] = {}
-    for r in rows:
-        if r["deleted"] is not None:
-            deleted = r["deleted"]
-            continue
-        sealed.setdefault(r["agent_id"], (r["receipt_id"], []))[1].append(
-            (r["sequence_no"], r["chain_hash"])
-        )
-    for agent_id in sorted(sealed):
-        receipt_id, links = sealed[agent_id]
-        await _append_receipt(conn, tenant_id, agent_id, receipt_id, sorted(links), reason)
+    deleted = next(r["deleted"] for r in rows if r["deleted"] is not None)
+    sealed = [r for r in rows if r["deleted"] is None]
+    if sealed:
+        await _append_receipts(conn, tenant_id, sealed)
     return deleted
 
 
-async def _append_receipt(
-    conn, tenant_id: str, agent_id: str, receipt_id, links: list[tuple[int, str]], reason: str
-) -> None:
-    """Seal an erasure's tombstones for one agent with a chained receipt (ADR-009 H3).
+async def _append_receipts(conn, tenant_id: str, sealed: list) -> None:
+    """Seal an erasure's tombstones with one chained receipt per agent (ADR-009 H3).
 
-    The receipt is a row in ``event_tombstones`` whose checksum is the digest
-    of the tombstones it covers (``links``, in sequence order), linked like any
-    other row. Older images read it as a tombstone, so they link after it and
-    their verifier accepts it. The caller holds the agent's row lock, so no
-    write takes a later ``sequence_no`` first, and the receipt becomes the
-    agent's newest link (recorded as the head, ADR-009 H5).
+    A receipt is a row in ``event_tombstones`` whose checksum is the digest of
+    the tombstones it seals, linked like any other row. Older images read it as
+    a tombstone, so they link after it and their verifier accepts it. The
+    caller holds each agent's row lock (every event has one: ``fk_agent``), so
+    no write takes a later ``sequence_no`` first, and the receipt becomes the agent's newest link (recorded as the head, ADR-009 H5).
+    One statement for all agents; the link is computed as compute_chain_hash().
     """
-    digest = erasure_digest(links, reason)
-    prev = await latest_link(conn, tenant_id, agent_id)
-    chain_hash = compute_chain_hash(prev[1] if prev else None, digest)
     await conn.execute(
         """
-        WITH receipt AS (
+        WITH s AS (
+            SELECT * FROM unnest($2::text[], $3::uuid[], $4::int[], $5::text[])
+                AS s(agent_id, receipt_id, erased_count, digest)
+        ), receipt AS (
             INSERT INTO event_tombstones
                 (tenant_id, agent_id, event_id, sequence_no, chain_hash, checksum,
                  reason, erased_count)
-            VALUES ($1, $2, $3, nextval(pg_get_serial_sequence('events', 'sequence_no')),
-                    $4, $5, $6, $7)
-            RETURNING sequence_no
+            SELECT $1, s.agent_id, s.receipt_id,
+                   nextval(pg_get_serial_sequence('events', 'sequence_no')),
+                   encode(sha256(convert_to(COALESCE(prev.chain_hash, '') || ':' || s.digest, 'UTF8')), 'hex'),
+                   s.digest, $6, s.erased_count
+            FROM s
+            LEFT JOIN LATERAL (
+                SELECT chain_hash FROM (
+                    (SELECT sequence_no, chain_hash FROM events
+                     WHERE tenant_id = $1 AND agent_id = s.agent_id AND chain_hash IS NOT NULL
+                     ORDER BY sequence_no DESC LIMIT 1)
+                    UNION ALL
+                    (SELECT sequence_no, chain_hash FROM event_tombstones
+                     WHERE tenant_id = $1 AND agent_id = s.agent_id
+                     ORDER BY sequence_no DESC LIMIT 1)
+                ) latest
+                ORDER BY sequence_no DESC LIMIT 1
+            ) prev ON TRUE
+            RETURNING agent_id, sequence_no, chain_hash
         )
-        UPDATE agents SET chain_head_seq = receipt.sequence_no, chain_head_hash = $4
+        UPDATE agents SET chain_head_seq = receipt.sequence_no, chain_head_hash = receipt.chain_hash
         FROM receipt
-        WHERE agents.tenant_id = $1 AND agents.agent_id = $2
+        WHERE agents.tenant_id = $1 AND agents.agent_id = receipt.agent_id
         """,
         tenant_id,
-        agent_id,
-        receipt_id,
-        chain_hash,
-        digest,
+        [r["agent_id"] for r in sealed],
+        [r["receipt_id"] for r in sealed],
+        [r["erased_count"] for r in sealed],
+        [r["digest"] for r in sealed],
         RECEIPT_REASON,
-        len(links),
     )
 
 
