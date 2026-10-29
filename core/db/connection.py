@@ -207,7 +207,12 @@ async def _ensure_tombstone_checksums() -> None:
     instead of replacing this one, or older and newer images would keep
     overwriting each other on restart.
     """
-    await _add_columns_once("event_tombstones", [("checksum", "VARCHAR(64)")])
+    # erased_count and receipt_id: erasure receipts (ADR-009 H3), in the same
+    # ALTER, so an upgrade locks the table once.
+    await _add_columns_once(
+        "event_tombstones",
+        [("checksum", "VARCHAR(64)"), ("erased_count", "INTEGER"), ("receipt_id", "UUID")],
+    )
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
             singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
@@ -614,10 +619,6 @@ async def _run_migrations():
 
     await _ensure_tombstone_checksums()
     await _ensure_chain_heads()
-    # Erasure receipts (ADR-009 H3): nullable, so older images keep writing.
-    await _add_columns_once(
-        "event_tombstones", [("erased_count", "INTEGER"), ("receipt_id", "UUID")]
-    )
 
     await _ensure_fts_index()
     await _ensure_supersedes_index()
