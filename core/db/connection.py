@@ -614,6 +614,10 @@ async def _run_migrations():
 
     await _ensure_tombstone_checksums()
     await _ensure_chain_heads()
+    # Erasure receipts (ADR-009 H3): nullable, so older images keep writing.
+    await _add_columns_once(
+        "event_tombstones", [("erased_count", "INTEGER"), ("receipt_id", "UUID")]
+    )
 
     await _ensure_fts_index()
     await _ensure_supersedes_index()
