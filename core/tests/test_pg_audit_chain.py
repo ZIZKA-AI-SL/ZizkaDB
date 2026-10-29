@@ -78,7 +78,7 @@ async def test_forget_leaves_tombstones_and_the_chain_verifies(pg_db):
     assert result["intact"] is True
     assert result["summary"]["tombstones"] == 1
     assert result["summary"]["events"] == 4
-    row = await pg_db.fetchrow("SELECT * FROM event_tombstones")
+    row = await pg_db.fetchrow("SELECT * FROM event_tombstones WHERE reason <> 'erasure_receipt'")
     assert row["reason"] == "forget" and row["chain_hash"] == written[2]["chain_hash"]
 
     # Writing after a forget of the newest event continues from its tombstone.
@@ -158,7 +158,7 @@ async def _rewrite_event(pool, event_id, data: dict, prev_chain_hash: str) -> No
 async def test_tombstones_keep_the_deleted_rows_checksum(pg_db):
     tenant_id, written = await _setup(pg_db)
     await _forget(tenant_id, "u2")
-    row = await pg_db.fetchrow("SELECT checksum, chain_hash FROM event_tombstones")
+    row = await pg_db.fetchrow("SELECT checksum, chain_hash FROM event_tombstones WHERE reason <> 'erasure_receipt'")
     assert row["checksum"] == written[2]["checksum"]
     assert row["chain_hash"] == compute_chain_hash(written[1]["chain_hash"], row["checksum"])
 
@@ -179,7 +179,9 @@ async def test_edit_just_before_a_tombstone_is_detected(pg_db):
 async def test_tampered_tombstone_checksum_is_detected(pg_db):
     tenant_id, written = await _setup(pg_db)
     await _forget(tenant_id, "u2")
-    await pg_db.execute("UPDATE event_tombstones SET checksum = repeat('a', 64)")
+    await pg_db.execute(
+        "UPDATE event_tombstones SET checksum = repeat('a', 64) WHERE reason <> 'erasure_receipt'"
+    )
 
     result = await verify_chain(pg_db, tenant_id, AGENT)
     assert result["intact"] is False
@@ -230,7 +232,9 @@ async def test_a_checksum_blanked_after_the_cutoff_is_detected(pg_db):
     """Blanking a new tombstone's checksum must not turn it into a legacy one."""
     tenant_id, written = await _setup(pg_db)
     await _forget(tenant_id, "u2")
-    await pg_db.execute("UPDATE event_tombstones SET checksum = NULL")
+    await pg_db.execute(
+        "UPDATE event_tombstones SET checksum = NULL WHERE reason <> 'erasure_receipt'"
+    )
 
     result = await verify_chain(pg_db, tenant_id, AGENT)
     assert result["intact"] is False
@@ -289,7 +293,13 @@ async def test_overlapping_forgets_count_each_row_once(pg_db, monkeypatch):
     results = await asyncio.gather(first, second)
 
     assert sorted(r["deleted_events"] for r in results) == [0, 3]
-    assert await pg_db.fetchval("SELECT COUNT(*) FROM event_tombstones") == 3
+    assert await pg_db.fetchval(
+        "SELECT COUNT(*) FROM event_tombstones WHERE reason <> 'erasure_receipt'"
+    ) == 3
+    # Only the forget that deleted rows seals them.
+    assert await pg_db.fetchval(
+        "SELECT COUNT(*) FROM event_tombstones WHERE reason = 'erasure_receipt'"
+    ) == 1
     assert (await verify_chain(pg_db, tenant_id, AGENT))["intact"] is True
 
 
@@ -362,6 +372,7 @@ async def test_upgrade_from_0_5_0_adds_the_trigger_and_keeps_old_tombstones(pg_d
         DROP FUNCTION zizkadb_tombstone_checksum();
         DROP TABLE tombstone_checksum_cutoff;
         ALTER TABLE event_tombstones DROP COLUMN checksum;
+        ALTER TABLE event_tombstones DROP COLUMN erased_count, DROP COLUMN receipt_id;
     """)
     await _old_style_forget(pg_db, tenant_id, written[1]["event_id"])   # erased under 0.5.0
 
@@ -383,6 +394,7 @@ async def test_upgrade_from_0_5_0_adds_the_trigger_and_keeps_old_tombstones(pg_d
     assert result["intact"] is True, result["problems"]
     assert result["summary"]["legacy_tombstones"] == 1
     assert result["summary"]["tombstones"] == 3
+    assert result["summary"]["receipts"] == 1   # the new image's forget, after the upgrade
 
 
 async def test_erasure_locks_use_the_embed_workers_key(pg_db):

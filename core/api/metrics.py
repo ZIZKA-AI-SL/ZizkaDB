@@ -63,7 +63,7 @@ async def collect(version: str) -> str:
             GROUP BY index_status
             """
         ))
-        tombstones = await pool.fetchval("SELECT COUNT(*) FROM event_tombstones")
+        tombstones = await pool.fetchval("SELECT COUNT(*) FROM event_tombstones WHERE reason <> 'erasure_receipt'")
         db_bytes = await pool.fetchval("SELECT pg_database_size(current_database())")
         db_up = 1
     except Exception:

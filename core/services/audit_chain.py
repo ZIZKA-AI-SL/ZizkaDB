@@ -126,6 +126,19 @@ async def lock_events(conn, event_ids: list) -> None:
     )
 
 
+RECEIPT_REASON = "erasure_receipt"
+
+
+def erasure_digest(links: list[tuple[int, str]], reason: str) -> str:
+    """What a receipt commits to: its tombstones' links in sequence order, the
+    erasure's reason and how many there are (ADR-009 H3)."""
+    h = hashlib.sha256()
+    for sequence_no, chain_hash in links:
+        h.update(f"{sequence_no}:{chain_hash}\n".encode())
+    h.update(f"{reason}\n{len(links)}".encode())
+    return h.hexdigest()
+
+
 async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: str) -> int:
     """Delete events, keeping a tombstone for each chained one; returns how many were deleted.
 
@@ -138,6 +151,8 @@ async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: st
     that deleted event rows before its agent row would deadlock with them.
     Call it after ``lock_events()`` and any network call, since writers to
     these agents wait until the transaction ends.
+
+    Then appends one receipt per agent that got tombstones (``_append_receipt``).
     """
     await conn.execute(
         """
@@ -153,25 +168,86 @@ async def delete_and_tombstone(conn, tenant_id: str, event_ids: list, reason: st
         tenant_id,
         event_ids,
     )
-    return await conn.fetchval(
+    rows = await conn.fetch(
         """
         WITH gone AS (
             DELETE FROM events
             WHERE tenant_id = $1 AND event_id = ANY($2::uuid[])
             RETURNING tenant_id, agent_id, event_id, sequence_no, chain_hash, checksum
+        ), receipts AS (
+            SELECT agent_id, gen_random_uuid() AS receipt_id
+            FROM gone WHERE chain_hash IS NOT NULL
+            GROUP BY agent_id
         ), kept AS (
             INSERT INTO event_tombstones
-                (tenant_id, agent_id, event_id, sequence_no, chain_hash, checksum, reason)
-            SELECT tenant_id, agent_id, event_id, sequence_no, chain_hash, checksum, $3
-            FROM gone
-            WHERE chain_hash IS NOT NULL
+                (tenant_id, agent_id, event_id, sequence_no, chain_hash, checksum, reason, receipt_id)
+            SELECT g.tenant_id, g.agent_id, g.event_id, g.sequence_no, g.chain_hash, g.checksum,
+                   $3, r.receipt_id
+            FROM gone g JOIN receipts r USING (agent_id)
+            WHERE g.chain_hash IS NOT NULL
             ON CONFLICT DO NOTHING
+            RETURNING agent_id, receipt_id, sequence_no, chain_hash
         )
-        SELECT COUNT(*) FROM gone
+        SELECT NULL AS agent_id, NULL::uuid AS receipt_id, NULL::bigint AS sequence_no,
+               NULL AS chain_hash, (SELECT COUNT(*) FROM gone) AS deleted
+        UNION ALL
+        SELECT agent_id, receipt_id, sequence_no, chain_hash, NULL FROM kept
         """,
         tenant_id,
         event_ids,
         reason,
+    )
+    deleted = 0
+    sealed: dict[str, tuple[Any, list[tuple[int, str]]]] = {}
+    for r in rows:
+        if r["deleted"] is not None:
+            deleted = r["deleted"]
+            continue
+        sealed.setdefault(r["agent_id"], (r["receipt_id"], []))[1].append(
+            (r["sequence_no"], r["chain_hash"])
+        )
+    for agent_id in sorted(sealed):
+        receipt_id, links = sealed[agent_id]
+        await _append_receipt(conn, tenant_id, agent_id, receipt_id, sorted(links), reason)
+    return deleted
+
+
+async def _append_receipt(
+    conn, tenant_id: str, agent_id: str, receipt_id, links: list[tuple[int, str]], reason: str
+) -> None:
+    """Seal an erasure's tombstones for one agent with a chained receipt (ADR-009 H3).
+
+    The receipt is a row in ``event_tombstones`` whose checksum is the digest
+    of the tombstones it covers (``links``, in sequence order), linked like any
+    other row. Older images read it as a tombstone, so they link after it and
+    their verifier accepts it. The caller holds the agent's row lock, so no
+    write takes a later ``sequence_no`` first, and the receipt becomes the
+    agent's newest link (recorded as the head, ADR-009 H5).
+    """
+    digest = erasure_digest(links, reason)
+    prev = await latest_link(conn, tenant_id, agent_id)
+    chain_hash = compute_chain_hash(prev[1] if prev else None, digest)
+    await conn.execute(
+        """
+        WITH receipt AS (
+            INSERT INTO event_tombstones
+                (tenant_id, agent_id, event_id, sequence_no, chain_hash, checksum,
+                 reason, erased_count)
+            VALUES ($1, $2, $3, nextval(pg_get_serial_sequence('events', 'sequence_no')),
+                    $4, $5, $6, $7)
+            RETURNING sequence_no
+        )
+        UPDATE agents SET chain_head_seq = receipt.sequence_no, chain_head_hash = $4
+        FROM receipt
+        WHERE agents.tenant_id = $1 AND agents.agent_id = $2
+        """,
+        tenant_id,
+        agent_id,
+        receipt_id,
+        chain_hash,
+        digest,
+        RECEIPT_REASON,
+        len(links),
     )
 
 
@@ -194,6 +270,7 @@ async def verify_chain(
         "chained": 0,
         "unchained_legacy": 0,
         "tombstones": 0,
+        "receipts": 0,
         "legacy_tombstones": 0,
         "stale_head": 0,
         "head_checked": 0,
@@ -314,9 +391,11 @@ def _check_tombstone(
     prev: str | None,
     checksum_since: Any,
 ) -> None:
-    """A tombstone's link is checked like an event's, from the checksum it kept."""
-    summary["tombstones"] += 1
-    if r["checksum"] is None:
+    """A tombstone's link is checked like an event's, from the checksum it kept.
+    A receipt's checksum is its erasure digest, so its link is checked the same way."""
+    is_receipt = r["reason"] == RECEIPT_REASON
+    summary["receipts" if is_receipt else "tombstones"] += 1
+    if r["checksum"] is None and not is_receipt:
         # The timestamp column carries deleted_at for tombstones.
         if checksum_since is None or r["timestamp"] < checksum_since:
             summary["legacy_tombstones"] += 1
@@ -330,7 +409,8 @@ def _check_tombstone(
             })
         return
 
-    if r["chain_hash"] != compute_chain_hash(prev, r["checksum"]):
+    # Receipts are newer than the checksum cutoff, so they always need one.
+    if r["chain_hash"] != compute_chain_hash(prev, r["checksum"] or ""):
         summary["breaks"] += 1
         problems.append({
             **where,
