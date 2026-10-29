@@ -5,8 +5,9 @@ neither set means events are kept forever (the default). A background task in
 the API (``retention_loop``) purges every ``RETENTION_INTERVAL_SECONDS``; an
 advisory lock makes only one worker run each pass.
 
-Each deleted event leaves an audit-chain tombstone (reason ``retention``) and
-its vector is removed, exactly like a GDPR forget.
+Each deleted event leaves an audit-chain tombstone (reason ``retention``), the
+batch seals them with a receipt, and its vector is removed, exactly like a
+GDPR forget.
 """
 
 from __future__ import annotations

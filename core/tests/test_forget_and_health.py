@@ -37,19 +37,20 @@ class _FakeConn:
     def transaction(self):
         return _FakeTxn()
 
-    async def fetch(self, query, *args):
-        return self.rows
-
     async def execute(self, query, *args):
         self.executed.append((query, args))
         if self._on_execute is not None:
             self._on_execute(query, args)
         return "OK"
 
-    async def fetchval(self, query, *args):
-        # The delete-and-tombstone statement returns how many rows it deleted.
+    async def fetch(self, query, *args):
+        if "DELETE FROM events" not in query:
+            return self.rows
+        # The delete-and-tombstone statement returns how many rows it deleted,
+        # plus the tombstones to seal with a receipt (none here: the
+        # real-Postgres tests cover receipts).
         await self.execute(query, *args)
-        return self.deleted if "DELETE FROM events" in query else None
+        return [{"deleted": self.deleted}]
 
     def delete_count(self):
         return sum(1 for q, _ in self.executed if "DELETE FROM events" in q)
