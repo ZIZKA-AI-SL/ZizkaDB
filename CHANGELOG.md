@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Audit chain: erasure receipts
+
+- Each forget, and each retention batch, now adds one **erasure receipt** to the chain of every agent it erased from. The receipt records how many events were erased and a digest of their chain links, never the forget filter or any content. `GET /v1/events/chain` counts receipts in the new `summary.receipts` field, separately from `tombstones`, and checks their links like any other.
+- The next PR makes the check report a tombstone that no receipt covers. Without a key (ADR-009 H4), a database writer could still forge a receipt.
+- **Older images and SDKs.** Receipts are stored as tombstone rows, so 0.5.0 (rolling deploy or downgrade) links after them and reports the chain as intact. Older SDKs pass the new summary field through. Upgrading adds two nullable columns to `event_tombstones` (`erased_count`, `receipt_id`).
+- **Cost.** One extra row per erasure per agent, written while the erasure already holds that agent's row. A 2,000-event forget took the same time as before within noise. The `zizkadb_event_tombstones` metric still counts only deleted events.
+
 ### Agent and account deletes during live writes
 
 - **Agent delete** no longer fails with a 500 when the agent writes an event at the same moment. The delete waits for the write in flight and removes its event too. A write that arrives during the delete waits, then creates the agent again, through the plan's agent cap like any new agent (on self-hosted that is a 409 if another agent already holds the slot).
