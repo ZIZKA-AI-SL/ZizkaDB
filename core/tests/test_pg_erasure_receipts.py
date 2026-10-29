@@ -89,6 +89,8 @@ async def test_a_forget_across_two_agents_writes_one_receipt_each(pg_db, monkeyp
     for agent in ("alpha", "beta"):
         [receipt] = await _receipts(pg_db, tenant_id, agent)
         assert receipt["erased_count"] == 2
+        links = await _sealed_links(pg_db, tenant_id, receipt["event_id"])
+        assert receipt["checksum"] == erasure_digest(links, "forget")
         assert (await verify_chain(pg_db, tenant_id, agent))["intact"] is True
 
 
@@ -209,3 +211,4 @@ async def test_forgets_racing_writes_keep_one_verifiable_chain(pg_db):
     assert len(await _receipts(pg_db, tenant_id)) == 10
     result = await verify_chain(pg_db, tenant_id, AGENT)
     assert result["intact"] is True, result["problems"]
+
