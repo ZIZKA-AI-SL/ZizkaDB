@@ -96,7 +96,7 @@ Use these for load balancer probes and post-deploy smoke tests.
 
 ## Managed cloud (db.zizka.ai)
 
-The public managed service runs the same open-source runtime from this repository. Operator runbooks (EC2, nginx, PM2 dashboard) are maintained separately — OSS users only need the self-host steps above.
+ZizkaDB Cloud (db.zizka.ai) is a separate managed product that is not built from this repository. OSS users only need the self-host steps above.
 
 ---
 

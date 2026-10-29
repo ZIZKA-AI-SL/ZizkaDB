@@ -1,0 +1,49 @@
+# Dependency updates and security alerts for the shipped code.
+# Examples and SDK project templates are left out: they pin loose ranges on purpose.
+# Minor and patch updates are grouped into one PR per ecosystem per week;
+# security updates always open their own PR.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /core
+      - /sdk/python
+      - /mcp
+      - /integrations/crewai
+      - /integrations/langchain
+      - /integrations/langgraph
+      - /integrations/livekit
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directories:
+      - /dashboard
+      - /sdk/typescript
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /core
+      - /dashboard
+      - /infra/allinone
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

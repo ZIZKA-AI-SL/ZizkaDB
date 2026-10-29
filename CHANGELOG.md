@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Project
+
+- Dependabot checks the Python, npm, Docker and GitHub Actions dependencies of the shipped packages weekly and opens security updates as they appear.
+- CONTRIBUTING and the PR template now require automated tests for new features and bug fixes.
+- SECURITY.md and the Production Deployment wiki page no longer say ZizkaDB Cloud is built from this repository; it is a separate product.
+
 ### Audit chain: erasure receipts
 
 - Each forget, and each retention batch, now adds one **erasure receipt** to the chain of every agent it erased from. The receipt records how many chained events it seals (events from before the chain have no link and are not counted, so this can be lower than `deleted_events`) and a digest of their links, never the forget filter or any content. `GET /v1/events/chain` counts receipts in the new `summary.receipts` field, separately from `tombstones`, and checks their links like any other.
