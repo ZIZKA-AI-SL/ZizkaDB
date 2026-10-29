@@ -12,7 +12,7 @@
 # Build from the repo root:
 #   docker build -f infra/allinone/Dockerfile -t zizkadb .
 
-FROM node:20-bookworm-slim AS dashboard
+FROM node:25-bookworm-slim AS dashboard
 WORKDIR /app
 COPY dashboard/package.json dashboard/package-lock.json* ./
 RUN npm ci --legacy-peer-deps
