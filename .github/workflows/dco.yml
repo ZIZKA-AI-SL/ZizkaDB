@@ -1,0 +1,39 @@
+name: DCO
+
+# Every commit in a pull request must carry a Signed-off-by line matching its
+# author (Developer Certificate of Origin, CONTRIBUTING.md). Bot commits
+# (Dependabot, GitHub Actions) are exempt.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Check Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            email="$(git log -1 --format='%ae' "$sha")"
+            case "$email" in *'[bot]@users.noreply.github.com') continue ;; esac
+            if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qiF "<$email>"; then
+              echo "::error::$(git log -1 --format='%h %s' "$sha") has no 'Signed-off-by: ... <$email>'"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Sign off with 'git commit -s' (fix existing commits: git rebase --signoff origin/main)."
+            exit 1
+          fi

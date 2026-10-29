@@ -1,0 +1,22 @@
+name: Dependency review
+
+# Blocks a pull request that adds a dependency with a known vulnerability of
+# moderate severity or higher, or a known-malicious package (GitHub advisories
+# include malware). Policy: SECURITY.md "Dependency and code scanning".
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          # Copyleft-compatible project: block only licences that cannot ship in AGPL code.
+          deny-licenses: SSPL-1.0, BUSL-1.1

@@ -54,7 +54,15 @@ ZizkaDB is open source with a split license:
 
 By contributing code, you agree that your contributions are licensed under the same license as the files you modify. If you contribute to AGPL-covered code, downstream users who run a modified network-facing version must comply with AGPL obligations (source availability, etc.).
 
-For significant contributions, we may ask you to confirm you have the right to submit the work (employer IP, etc.).
+### Developer Certificate of Origin (sign-off required)
+
+Every commit must be signed off. Signing off certifies the [Developer Certificate of Origin](https://developercertificate.org/): you wrote the change, or otherwise have the right to submit it under the project's license. Add the line with `git commit -s`:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+The name and email must match the commit author. The **DCO** check fails a pull request with an unsigned commit; fix existing commits with `git rebase --signoff origin/main` and force-push. Bot commits (Dependabot, GitHub Actions) are exempt.
 
 ---
 
@@ -298,6 +306,7 @@ git checkout -b docs/181-what-you-changed     # documentation only
 
 - One logical change per commit when possible
 - Use clear messages: `fix(api): reject events without tenant scope`
+- Sign off every commit: `git commit -s` (see [DCO](#developer-certificate-of-origin-sign-off-required))
 - Put `Fixes #123` in the **PR description** (GitHub closes the issue on merge)
 
 ### 5. Open a pull request
@@ -395,6 +404,19 @@ Rules:
 
 **CI runs the Python + dashboard gates on every PR.** Match the row for the area you changed. `pre-commit install` is optional locally.
 
+When each automated check runs (all in `.github/workflows/`):
+
+| Workflow | Runs on | What it checks |
+|----------|---------|----------------|
+| `ci.yml` | every PR and every push to `main` | ruff, doc drift, core unit tests, real-Postgres tests, Python SDK, MCP, TypeScript SDK, dashboard lint + tests + build |
+| `golden-path.yml` | every PR and push to `main` | the documented quickstart end to end |
+| `codeql.yml` | every PR, push to `main`, weekly | static analysis (SAST) of Python, JS/TS and workflows |
+| `dependency-review.yml` | every PR | new dependencies with known vulnerabilities, malware or blocked licences |
+| `dco.yml` | every PR | `Signed-off-by` on every commit |
+| `integration.yml` | weekly and on demand | full Docker stack integration tests |
+
+A PR merges only when the required checks pass and another maintainer has approved it.
+
 ```bash
 bash scripts/smoke-test.sh
 cd core && pytest -m "not integration"
@@ -402,6 +424,16 @@ cd core && pytest    # with Docker up
 ```
 
 Mark slow or Docker-dependent tests with `@pytest.mark.integration`. Mark tests that need real SQL (not a mocked pool) with `@pytest.mark.postgres` and use the `pg_db` fixture from `core/tests/conftest.py`.
+
+---
+
+## Dependencies
+
+How dependencies are chosen, obtained and tracked:
+
+- **Choosing.** Prefer the standard library or a dependency the project already uses. A new dependency must be actively maintained, widely used, under a licence compatible with AGPL-3.0 (MIT for `mcp/`), and justified in the PR description. Never add a package to save a few lines.
+- **Obtaining.** Only from the official registries (PyPI, npm, Docker Hub / GHCR official images) over HTTPS, through the standard tooling: `pip` with `requirements*.txt` / `pyproject.toml`, `npm` with a committed `package-lock.json` (CI installs with `npm ci`), and pinned base images. GitHub Actions are pinned to a full commit SHA.
+- **Tracking.** Direct dependencies are declared in those manifest files. Dependabot (`.github/dependabot.yml`) proposes updates weekly and security fixes as they appear; the **Dependency review** check blocks a PR that adds a vulnerable or malicious package. Thresholds: [SECURITY.md](SECURITY.md#dependency-and-code-scanning).
 
 ---
 
@@ -449,7 +481,7 @@ We value consistency with surrounding code over strict formatting rules.
 
 Maintainers will:
 
-1. Review for correctness, security, and tenant isolation
+1. Review for correctness, security, and tenant isolation; every change to `main` needs an approving review from a maintainer who is not its author (see [MAINTAINERS.md](MAINTAINERS.md))
 2. Run CI / smoke tests
 3. Squash-merge or merge with clean history
 4. Cut releases for PyPI (`zizkadb-sdk`, `zizkadb-mcp`) and npm (`zizkadb-sdk`) on their own schedule

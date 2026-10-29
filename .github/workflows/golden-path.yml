@@ -13,6 +13,10 @@ concurrency:
 env:
   ZIZKADB_TELEMETRY: "false"
 
+
+permissions:
+  contents: read
+
 jobs:
   golden-path:
     name: golden-path
