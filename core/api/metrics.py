@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse
 
 from db.connection import check_redis, get_pool
+from services.audit_chain import RECEIPT_REASON
 from services.exceptions import not_found, unauthorized
 
 router = APIRouter()
@@ -63,7 +64,9 @@ async def collect(version: str) -> str:
             GROUP BY index_status
             """
         ))
-        tombstones = await pool.fetchval("SELECT COUNT(*) FROM event_tombstones WHERE reason <> 'erasure_receipt'")
+        tombstones = await pool.fetchval(
+            "SELECT COUNT(*) FROM event_tombstones WHERE reason <> $1", RECEIPT_REASON
+        )
         db_bytes = await pool.fetchval("SELECT pg_database_size(current_database())")
         db_up = 1
     except Exception:
