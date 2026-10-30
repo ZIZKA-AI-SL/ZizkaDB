@@ -14,6 +14,7 @@
 | **What's officially supported** | [frameworks.md](frameworks.md) |
 | **LiveKit voice agents** | [integrations/livekit.md](../integrations/livekit.md) |
 | **Copy-paste quickstart** | [CONNECT.md](../../CONNECT.md) |
+| **GitHub Actions (CI)** | [github-actions.md](github-actions.md): ZizkaDB Why and ZizkaDB Audit |
 
 ## Minimal Python (local)
 

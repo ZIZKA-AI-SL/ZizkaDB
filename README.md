@@ -186,6 +186,8 @@ Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troub
 
 Works with the agent framework you already use — add one package and every step is logged with its cause.
 
+**In CI:** [ZizkaDB Why](https://github.com/ZIZKA-AI-SL/zizkadb-why-action) explains agent test failures in your PR, and [ZizkaDB Audit](https://github.com/ZIZKA-AI-SL/zizkadb-audit-action) proves the recorded history is intact. [How it works](docs/integrate/github-actions.md).
+
 <p align="center">
   <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/python/3776AB" alt="Python" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt="TypeScript" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#langchain"><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="LangChain" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#crewai"><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="CrewAI" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#livekit-agents-voice"><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="LiveKit" height="40"/></a> &nbsp;&nbsp; <a href="mcp/README.md"><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="MCP" height="40"/></a> &nbsp;&nbsp; <a href="https://db.zizka.ai/swagger"><img src="https://cdn.simpleicons.org/swagger/85EA2D" alt="REST API" height="40"/></a>
 </p>
