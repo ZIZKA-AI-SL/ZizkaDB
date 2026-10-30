@@ -69,13 +69,18 @@ case ",${LISTEN_ADDR}," in
     exit 1 ;;
 esac
 
-# ── Packages: PGDG repository (Postgres 16 and its pgvector build) ───────────
+# ── Packages: the distro's Postgres 16 + pgvector, else the PGDG repository ─
+# Ubuntu 24.04 ships both, which keeps the download small and adds no apt
+# repository; other releases fall back to PGDG.
+free_mb() { df -Pm / | awk 'NR==2 {print $4}'; }
 if ! command -v "/usr/lib/postgresql/${PG_MAJOR}/bin/postgres" >/dev/null 2>&1; then
-  log "Installing Postgres ${PG_MAJOR} and pgvector..."
+  log "Installing Postgres ${PG_MAJOR} and pgvector ($(free_mb) MB free on /)..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -q
-  apt-get install -y -q --no-install-recommends postgresql-common ca-certificates
-  /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+  if ! apt-cache show "postgresql-${PG_MAJOR}-pgvector" >/dev/null 2>&1; then
+    apt-get install -y -q --no-install-recommends postgresql-common ca-certificates
+    /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+  fi
   apt-get install -y -q --no-install-recommends \
     "postgresql-${PG_MAJOR}" "postgresql-${PG_MAJOR}-pgvector"
   apt-get clean
@@ -149,4 +154,12 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 SQL
 
+# Room for data: about 4 KB per event with its indexes. WAL may take up to
+# max_wal_size (256 MB) on top, so that much is kept aside.
+FREE_MB="$(free_mb)"
+DATA_MB=$(( FREE_MB > 256 ? FREE_MB - 256 : 0 ))
 log "Ready on ${LISTEN_ADDR}:5432 for ${APP_CIDR}."
+log "Disk: ${FREE_MB} MB free on /, room for about $(( DATA_MB * 256 )) events."
+if [ "$FREE_MB" -lt 400 ]; then
+  log "Warning: under 400 MB free. Set EVENT_RETENTION_DAYS on the app, or use a larger disk."
+fi
