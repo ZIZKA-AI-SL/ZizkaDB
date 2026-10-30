@@ -18,6 +18,8 @@ quirks:
   - "Choose the full dname up front and pass ZIZKADB_PUBLIC_URL=https://<dname>."
   - "Never pass ENV=development: it enables a public demo key and one-click sign-in."
   - "/health/deep returns 200 with qdrant required:false; only a 503 is a failure."
+  - "Separate database VPS: run infra/redu-db/setup.sh there and pass DATABASE_URL with its private IP; see 'Two machines'."
+  - "Never add EVENT_RETENTION_DAYS to an existing install without the owner's yes: it deletes older events."
 ---
 
 # ZizkaDB on Redu Cloud
@@ -67,12 +69,44 @@ The open-source edition runs one agent per key. The first agent name you log wit
 
 Ask your agent to deploy the repository again under the same name. It rebuilds on the same machine and keeps your URL, data and admin token.
 
+## Two machines: a website VPS and a private database VPS
+
+ZizkaDB also runs on two small machines, with Postgres on its own VPS that only the website VPS can reach. It needs image version 0.6.0 or later.
+
+| | Website VPS | Database VPS |
+| --- | --- | --- |
+| Size | 1 vCPU, 2 GB RAM, 10 GB disk | 1 vCPU, 1 GB RAM, 2 GB disk |
+| Runs | The container: Redis, API and dashboard | Postgres 16 with pgvector |
+| Network | Public HTTPS URL | Private network only |
+
+1. **Prepare the database VPS.** Copy `infra/redu-db/setup.sh` to it and run it as root. It installs Postgres, tunes it for 1 GB of RAM and a small disk, listens on the private address only, and accepts only the website VPS range.
+
+   ```bash
+   ZIZKADB_DB_PASSWORD='<long random password>' APP_CIDR=10.0.0.0/8 bash setup.sh
+   ```
+
+2. **Deploy the container on the website VPS** as in step 1, with these extra settings. Percent-encode special characters in the password.
+
+   ```bash
+   DATABASE_URL=postgresql://zizkadb:<password>@<database VPS private IP>:5432/zizkadb
+   WEB_CONCURRENCY=1
+   ```
+
+   On first start the container loads the schema into the empty database. It never runs the schema again once the tables exist, even with a new `/data`.
+
+3. **Keep the database disk bounded.** Each event takes about 4 KB with its indexes, so 1 GB holds roughly 250,000 events. On a new install, set `EVENT_RETENTION_DAYS` (for example `30`) to delete older events automatically.
+
+Measured on these sizes: the website container uses about 180 MB of RAM and Postgres about 80 MB. The dashboard build fits in 2 GB without swap. The server sends nothing out by default, so the 5 GB monthly egress covers only your own dashboard and API traffic.
+
+Back up two things: the database VPS, and `/data/secrets.env` on the website VPS. If `secrets.env` is lost, the admin token and sign-in sessions change, but your data stays in the database.
+
 ## Troubleshooting
 
 | You see | Fix |
 | --- | --- |
 | "Invalid API key" | The key must come from this deployment's **Settings**. Check that `ZIZKADB_HOST` is your Redu URL. |
 | The login page asks for a token you don't have | Read it over SSH (step 2). |
+| "The external database ... is not reachable" or "Could not prepare the external database" | Check the private IP, `APP_CIDR` and password, then re-run `setup.sh` on the database VPS. |
 | A health check fails | Open `https://<your URL>/health/deep`. Postgres and Redis must be `ok`. Qdrant is not included, so a `qdrant` error is expected. |
 
 ## Notes

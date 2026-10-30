@@ -113,6 +113,8 @@ The single-container image deploys to [Redu Cloud](https://redu.cloud) from this
 - `/data` kept between deploys
 - `ZIZKADB_PUBLIC_URL` set to the deployment URL, and `TRUSTED_PROXIES` covering the platform proxy
 
+Postgres can also live on its own private VPS (1 vCPU, 1 GB RAM is enough). Run `infra/redu-db/setup.sh` there, then pass `DATABASE_URL` with its private IP and `WEB_CONCURRENCY=1` to the container. The container runs no local Postgres in that case and loads the schema once into the empty database. Details are under "Two machines" in `redu.md`.
+
 After it is live:
 
 1. Read the admin token over SSH: `sudo podman exec redu-app sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`.
