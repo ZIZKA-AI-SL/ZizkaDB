@@ -14,6 +14,11 @@ set -euo pipefail
 
 : "${ZIZKADB_DB_PASSWORD:?Set ZIZKADB_DB_PASSWORD to a long random password}"
 : "${APP_CIDR:?Set APP_CIDR to the app VPS private address range, e.g. 10.0.0.0/8}"
+case "$APP_CIDR" in
+  0.0.0.0/*|::/*|*/0)
+    echo "[zizkadb-db] APP_CIDR=${APP_CIDR} allows any address. Use the app VPS private range."
+    exit 1 ;;
+esac
 PG_MAJOR=16
 
 log() { echo "[zizkadb-db] $*"; }
