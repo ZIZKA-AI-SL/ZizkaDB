@@ -129,6 +129,8 @@ The single container has two modes:
 
   Put it behind HTTPS, and set `ZIZKADB_PUBLIC_URL=https://your-domain` so the links it generates are correct. If a reverse proxy on the same host forwards to it, add `-e TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12` so sign-in rate limits see each visitor.
 
+To keep Postgres on another machine, pass `-e DATABASE_URL=postgresql://user:pass@db-host:5432/zizkadb`. The container then runs no Postgres of its own and loads the schema into that database once, when its tables do not exist yet. The role must own the database, and the `vector` and `uuid-ossp` extensions must exist unless the role is a superuser. [`infra/redu-db/setup.sh`](infra/redu-db/setup.sh) prepares such a database on a small VPS.
+
 The single container runs without Qdrant: search and `context_for()` use keyword search there (no setup, no OpenAI key). For vector search, use the full stack below with embeddings on.
 
 The self-hosted dashboard is just your dashboard: no signup, no email, no account. Accounts and plans exist only on [ZizkaDB Cloud](https://db.zizka.ai).

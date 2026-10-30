@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Single-container image: external database
+
+- **`DATABASE_URL` to another host now works.** When its host is not the container itself, the image starts no local Postgres, waits up to 2 minutes for the external database, and loads the schema once if the `events` table does not exist yet (one transaction, under an advisory lock, so parallel starts load it once). Before, the image still ran its own Postgres and never prepared the external one. A `DATABASE_URL` that cannot be read, an unreachable or half-prepared database, and missing extensions each stop the start with their own message, which never quotes the URL. With no `DATABASE_URL`, or one pointing at `127.0.0.1`/`localhost`, nothing changes.
+- **New `infra/redu-db/setup.sh`** prepares a small private VPS (1 vCPU, 1 GB RAM, 2 GB disk) as the database: Postgres 16 with pgvector, a small WAL, private listen address, and access only from the app's range (`APP_CIDR` must be a private IPv4 range). Re-runs restart Postgres only when a setting changed. `redu.md` documents the two-machine layout.
+
 ### Security process (OpenSSF OSPS Baseline Level 3)
 
 - **Signed images with SBOM and provenance.** Release images are signed with Sigstore cosign (keyless, bound to the publish workflow) and carry an SPDX SBOM and SLSA provenance. How to verify: `docs/security/release-verification.md`. Applies from the next release; 0.5.0 and older images are unsigned.
