@@ -15,7 +15,6 @@ The fifteen routers mounted in `main.py` (`app.include_router`):
 | `api/auth.py` | `/v1/auth` | mixed (public OTP + JWT-only key mgmt) |
 | `api/events.py` | `/v1/events` | `get_tenant` (+ `assert_agent_allowed` on `/why`, `/impact`, `/at`, `/verify`, `/chain`, `/{id}/verify`) |
 | `api/agents.py` | `/v1/agents` | mixed (see below) |
-| `api/a2a.py` | `/v1/a2a` | `get_tenant` |
 | `api/search.py` | `/v1/search` | `get_tenant` + `assert_agent_allowed` |
 | `api/memory.py` | `/v1/memory` | `get_tenant` + `assert_agent_allowed` (agent-scoped) |
 | `api/telemetry.py` | `/v1/telemetry` | `get_tenant` |
@@ -33,22 +32,6 @@ Under `/v1/agents`: per-agent analytics (`/stats`, `/sessions`, `/baseline`, `/b
 `/api-keys` list/create/revoke) use `require_dashboard_session`.
 
 Swagger UI: `http://localhost:8000/swagger` · OpenAPI schema: `/openapi.json`
-
-### A2A (`POST /v1/a2a/messages`)
-
-**Managed cloud only**: on `DEPLOYMENT_MODE=self_hosted` the route returns 403 (self-hosted is single-agent, see `services/agent_limits.py`).
-
-SDK-only. Auth is `get_tenant`, but a **tenant-wide key or JWT without `agent_id` is 403** — the sender is never a request field.
-
-| Rule | Result |
-|---|---|
-| Sender | `tenant["agent_id"]` from an agent-scoped API key |
-| Extra JSON (`sender_agent`, `from`, …) | Ignored; does not change sender |
-| Recipient | Must exist in the **same** `tenant_id` (`agents` lookup binds both) |
-| Unknown / other-tenant recipient | **404**, no `write_event` |
-| Self-send (`sender == recipient`) | **400** |
-
-Coverage: `core/tests/test_a2a.py`.
 
 ---
 

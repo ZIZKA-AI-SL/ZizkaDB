@@ -15,7 +15,6 @@ alwaysApply: false
 | SDK-callable (events, search, memory, telemetry) | `Depends(get_tenant)` |
 | Dashboard-only (keys, billing, settings, account, delete) | `Depends(require_dashboard_session)` |
 | Per-agent analytics + scoped SDK reads (`why`, `memory/context`, `memory/diff`, stats, sessions, baseline, report, token-*, suggestions) | `get_tenant` + `assert_agent_allowed` first line |
-| A2A `POST /v1/a2a/messages` | `get_tenant`; **scoped API key required** (tenant-wide/JWT → 403) |
 
 Never trust client-supplied tenant IDs (§24).
 
