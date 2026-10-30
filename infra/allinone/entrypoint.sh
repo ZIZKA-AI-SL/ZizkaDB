@@ -178,10 +178,12 @@ export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 if [ "$DB_REMOTE" = true ]; then
   log "Using the external database at ${PGHOST}:${PGPORT}."
   db_up=0
-  for _ in $(seq 1 120); do
+  db_deadline=$((SECONDS + 120))
+  while [ "$SECONDS" -lt "$db_deadline" ]; do
     if pg_isready -q -t 2 >/dev/null 2>&1; then db_up=1; break; fi
     sleep 1
   done
+  unset db_deadline
   if [ "$db_up" -ne 1 ]; then
     log "The external database at ${PGHOST}:${PGPORT} is not reachable after 2 minutes."
     exit 1
@@ -192,7 +194,7 @@ SET client_min_messages = warning;
 SELECT pg_advisory_xact_lock(7301884223);
 SELECT to_regclass('public.events') IS NULL AS need_schema \gset
 \if :need_schema
-\echo '[zizkadb] Loading the schema into the external database...'
+\warn '[zizkadb] Loading the schema into the external database...'
 \i /opt/zizkadb/schema.sql
 \endif
 SQL
