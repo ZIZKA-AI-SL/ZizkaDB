@@ -97,6 +97,38 @@ PY
   unset url_pw
 fi
 export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0.1:5432/zizkadb}"
+# External database: a DATABASE_URL whose host is not this container. Then no
+# local Postgres runs; the schema is loaded into the external database once.
+# The URL is split into libpq's PG* variables so psql never gets the password
+# on its command line, and it is never logged.
+DB_REMOTE=false
+eval "$(python - <<'PY'
+import os
+import shlex
+from urllib.parse import parse_qsl, unquote, urlsplit
+
+u = urlsplit(os.environ["DATABASE_URL"])
+host = u.hostname or ""
+if host and host not in ("127.0.0.1", "localhost", "::1"):
+    out = {
+        "DB_REMOTE": "true",
+        "PGHOST": host,
+        "PGPORT": str(u.port or 5432),
+        "PGUSER": unquote(u.username or ""),
+        "PGPASSWORD": unquote(u.password or ""),
+        "PGDATABASE": unquote(u.path.lstrip("/")) or unquote(u.username or ""),
+    }
+    for key, value in parse_qsl(u.query):
+        if key == "sslmode":
+            out["PGSSLMODE"] = value
+    for key, value in out.items():
+        print(f"{key}={shlex.quote(value)}")
+PY
+)"
+if [ "$DB_REMOTE" = true ]; then
+  export PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
+  [ -n "${PGSSLMODE:-}" ] && export PGSSLMODE
+fi
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
@@ -138,7 +170,42 @@ fi
 # accepts the well-known dev key. Set CORS_ALLOWED_ORIGINS to allow others.
 export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 
+# ── External database: wait for it, load the schema once ─────────────────────
+# The check runs in the database, not against a marker file, so a new or wiped
+# /data never reloads the schema over existing data (schema.sql is not
+# re-runnable). One transaction under an advisory lock: two containers starting
+# together load it once, and a failed load leaves nothing half-made.
+if [ "$DB_REMOTE" = true ]; then
+  log "Using the external database at ${PGHOST}:${PGPORT}."
+  db_up=0
+  for _ in $(seq 1 120); do
+    if pg_isready -q -t 2 >/dev/null 2>&1; then db_up=1; break; fi
+    sleep 1
+  done
+  if [ "$db_up" -ne 1 ]; then
+    log "The external database at ${PGHOST}:${PGPORT} is not reachable after 2 minutes."
+    exit 1
+  fi
+  unset db_up
+  if ! as_app psql -q -X -1 -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+SET client_min_messages = warning;
+SELECT pg_advisory_xact_lock(7301884223);
+SELECT to_regclass('public.events') IS NULL AS need_schema \gset
+\if :need_schema
+\echo '[zizkadb] Loading the schema into the external database...'
+\i /opt/zizkadb/schema.sql
+\endif
+SQL
+  then
+    log "Could not prepare the external database. Check the DATABASE_URL password."
+    log "  The role must own the database, and the vector and uuid-ossp extensions"
+    log "  must already exist unless the role is a superuser (see infra/redu-db/setup.sh)."
+    exit 1
+  fi
+fi
+
 # ── Postgres: create the cluster and schema on first start ───────────────────
+if [ "$DB_REMOTE" != true ]; then
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
   log "First start: creating the database (about 10 seconds)..."
   as_pg initdb -D "$PGDATA" -U postgres -E UTF8 \
@@ -180,10 +247,12 @@ SQL
   fi
   as_pg pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null
 fi
+fi
 unset PG_PASSWORD PG_PASSWORD_HASH
 
 # ── Run everything ───────────────────────────────────────────────────────────
 PIDS=()
+PG_PID=""
 
 shutdown() {
   trap - TERM INT
@@ -192,27 +261,33 @@ shutdown() {
     [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true
   done
   # Fast shutdown: disconnect clients and flush, without waiting on them.
-  as_pg pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+  if [ "$DB_REMOTE" != true ]; then
+    as_pg pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+  fi
   wait || true
 }
 trap 'shutdown; exit 0' TERM INT
 
 # Started with exec (not through the as_* functions) so $! is the service
 # itself and signals reach it.
-( exec "${PG_USER[@]}" postgres -D "$PGDATA" \
-    -c listen_addresses=127.0.0.1 \
-    -c jit=off \
-    -c unix_socket_directories=/var/run/postgresql ) &
-PG_PID=$!
+if [ "$DB_REMOTE" != true ]; then
+  ( exec "${PG_USER[@]}" postgres -D "$PGDATA" \
+      -c listen_addresses=127.0.0.1 \
+      -c jit=off \
+      -c unix_socket_directories=/var/run/postgresql ) &
+  PG_PID=$!
+fi
 
 ( exec "${APP_USER[@]}" redis-server --bind 127.0.0.1 --port 6379 --dir "$DATA/redis" \
     --appendonly yes --daemonize no --logfile "" >/dev/null ) &
 PIDS+=($!)
 
-for _ in $(seq 1 60); do
-  pg_isready -q -h 127.0.0.1 -U zizkadb -d zizkadb && break
-  sleep 0.5
-done
+if [ "$DB_REMOTE" != true ]; then
+  for _ in $(seq 1 60); do
+    pg_isready -q -h 127.0.0.1 -U zizkadb -d zizkadb && break
+    sleep 0.5
+  done
+fi
 
 log "Starting API and dashboard..."
 ( cd /app/api && exec "${APP_USER[@]}" \
@@ -287,7 +362,7 @@ BANNER_PID=$!
 
 # Exit as soon as any service dies so Docker's restart policy can act on it.
 set +e
-wait -n "$PG_PID" "${PIDS[@]}"
+wait -n ${PG_PID:+"$PG_PID"} "${PIDS[@]}"
 code=$?
 set -e
 log "A service exited (status $code); shutting down."
