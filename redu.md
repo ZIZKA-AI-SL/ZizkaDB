@@ -82,10 +82,12 @@ ZizkaDB also runs on two small machines, with Postgres on its own VPS that only 
 1. **Prepare the database VPS.** Copy `infra/redu-db/setup.sh` to it and run it as root. It installs Postgres, tunes it for 1 GB of RAM and a small disk, listens on the private address only, and accepts only the website VPS range.
 
    ```bash
-   ZIZKADB_DB_PASSWORD='<long random password>' APP_CIDR=10.0.0.0/8 bash setup.sh
+   ZIZKADB_DB_PASSWORD="$(openssl rand -hex 24)" APP_CIDR=10.0.0.0/8 bash setup.sh
    ```
 
-2. **Deploy the container on the website VPS** as in step 1, with these extra settings. Percent-encode special characters in the password.
+   Keep the password: the container needs it next. `APP_CIDR` must be a private range that contains the website VPS. Re-running the script is safe, and it restarts Postgres only when a setting changed.
+
+2. **Deploy the container on the website VPS** as in step 1, with these extra settings. A hex password like the one above needs no encoding; percent-encode any other special characters.
 
    ```bash
    DATABASE_URL=postgresql://zizkadb:<password>@<database VPS private IP>:5432/zizkadb
