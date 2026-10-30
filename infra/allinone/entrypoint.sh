@@ -80,55 +80,100 @@ else
   SELFHOST_ADMIN_TOKEN="$GEN_SELFHOST_ADMIN_TOKEN"
 fi
 export SELFHOST_ADMIN_TOKEN
-# The local role's password: the generated one, or the one in an
-# operator-supplied DATABASE_URL that points at this container's database.
+# DATABASE_URL, read once. Local (no host, a loopback host, or the local
+# socket): this container runs Postgres and the URL may set the zizkadb role's
+# password. External (any other host): no local Postgres runs, and psql and
+# pg_isready get the same URL without its password (DB_CONNINFO) plus the
+# password on their own environment only (DB_PASSWORD), so every connection
+# setting asyncpg uses also applies to them and the password reaches no argv.
+# A URL that cannot be read stops the start with a message that quotes no part
+# of it: it holds the password.
 PG_PASSWORD="$GEN_PG_PASSWORD"
-if [ -n "${DATABASE_URL:-}" ]; then
-  url_pw="$(python - <<'PY'
-import os
-from urllib.parse import unquote, urlsplit
-
-u = urlsplit(os.environ["DATABASE_URL"])
-if u.hostname in ("127.0.0.1", "localhost", "::1") and u.username == "zizkadb" and u.password:
-    print(unquote(u.password), end="")
-PY
-)"
-  [ -n "$url_pw" ] && PG_PASSWORD="$url_pw"
-  unset url_pw
-fi
-export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0.1:5432/zizkadb}"
-# External database: a DATABASE_URL whose host is not this container. Then no
-# local Postgres runs; the schema is loaded into the external database once.
-# The URL is split into libpq's PG* variables so psql never gets the password
-# on its command line, and it is never logged.
 DB_REMOTE=false
-eval "$(python - <<'PY'
+DB_CONNINFO=""
+DB_PASSWORD=""
+if [ -n "${DATABASE_URL:-}" ]; then
+  if ! db_env="$(python - <<'PY'
 import os
 import shlex
-from urllib.parse import parse_qsl, unquote, urlsplit
+import sys
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
-u = urlsplit(os.environ["DATABASE_URL"])
-host = u.hostname or ""
-if host and host not in ("127.0.0.1", "localhost", "::1"):
-    out = {
-        "DB_REMOTE": "true",
-        "PGHOST": host,
-        "PGPORT": str(u.port or 5432),
-        "PGUSER": unquote(u.username or ""),
-        "PGPASSWORD": unquote(u.password or ""),
-        "PGDATABASE": unquote(u.path.lstrip("/")) or unquote(u.username or ""),
-    }
-    for key, value in parse_qsl(u.query):
-        if key == "sslmode":
-            out["PGSSLMODE"] = value
-    for key, value in out.items():
-        print(f"{key}={shlex.quote(value)}")
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+# Query keys libpq and asyncpg both read. Others are asyncpg server settings,
+# which libpq would refuse and the schema load does not need.
+LIBPQ_KEYS = {
+    "host", "port", "dbname", "user", "passfile", "sslmode", "sslrootcert",
+    "sslcert", "sslkey", "sslcrl", "sslpassword", "ssl_min_protocol_version",
+    "ssl_max_protocol_version", "target_session_attrs", "connect_timeout",
+    "application_name", "options", "krbsrvname", "gsslib",
+}
+
+
+def fail(reason):
+    print(f"[zizkadb] DATABASE_URL {reason}. Percent-encode special characters "
+          "in the user name and password (for example / as %2F, @ as %40).", file=sys.stderr)
+    sys.exit(1)
+
+
+try:
+    u = urlsplit(os.environ["DATABASE_URL"].strip())
+    query = parse_qsl(u.query, keep_blank_values=True)
+except ValueError:
+    fail("could not be read")
+if u.scheme not in ("postgresql", "postgres"):
+    fail("must start with postgresql://")
+userinfo, at, hostlist = u.netloc.rpartition("@")
+user, _, password = userinfo.partition(":")
+hosts = []
+for part in hostlist.split(","):
+    host, port = part, ""
+    if part.startswith("["):
+        host, _, rest = part[1:].partition("]")
+        port = rest[1:] if rest.startswith(":") else ""
+    elif ":" in part:
+        host, _, port = part.rpartition(":")
+    if port and not (port.isdigit() and 0 < int(port) < 65536):
+        fail("has a port that is not a number")
+    if host:
+        hosts.append(unquote(host))
+password = unquote(password)
+kept = []
+for key, value in query:
+    if key == "host":
+        hosts += [h for h in value.split(",") if h]
+    if key == "password":
+        password = password or value
+    elif key == "database":
+        kept.append(("dbname", value))
+    elif key in LIBPQ_KEYS:
+        kept.append((key, value))
+# A path host is a Unix socket: on its own it means this container.
+remote = any(h.lower() not in LOOPBACK and not h.startswith("/") for h in hosts)
+out = {"DB_REMOTE": "true" if remote else "false"}
+if remote:
+    netloc = (quote(unquote(user), safe="") + "@" if user else "") + hostlist
+    out["DB_CONNINFO"] = urlunsplit(("postgresql", netloc, u.path, urlencode(kept), ""))
+    out["DB_PASSWORD"] = password
+    out["DB_WHERE"] = ",".join(hosts)
+elif unquote(user) == "zizkadb" and password:
+    out["PG_PASSWORD"] = password
+for key, value in out.items():
+    print(f"{key}={shlex.quote(value)}")
 PY
-)"
-if [ "$DB_REMOTE" = true ]; then
-  export PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
-  [ -n "${PGSSLMODE:-}" ] && export PGSSLMODE
+)"; then
+    exit 1
+  fi
+  eval "$db_env"
+  unset db_env
 fi
+export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0.1:5432/zizkadb}"
+# psql and pg_isready against the external database; nothing else sees PG*.
+remote_pg() {
+  local cmd="$1"
+  shift
+  as_app env PGPASSWORD="$DB_PASSWORD" PGCONNECT_TIMEOUT=10 "$cmd" -d "$DB_CONNINFO" "$@"
+}
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
   export DEV_API_KEY="${DEV_API_KEY:-zizkadb_dev_local}"
@@ -176,35 +221,80 @@ export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$DASHBOARD_ADDRESS}"
 # re-runnable). One transaction under an advisory lock: two containers starting
 # together load it once, and a failed load leaves nothing half-made.
 if [ "$DB_REMOTE" = true ]; then
-  log "Using the external database at ${PGHOST}:${PGPORT}."
+  log "Using the external database at ${DB_WHERE}."
+  if [ -s "$PGDATA/PG_VERSION" ]; then
+    log "Note: /data/postgres holds a local database from an earlier start, which this"
+    log "  container no longer uses. To move its data, start once without DATABASE_URL"
+    log "  and copy it with pg_dump into the external database."
+  fi
   db_up=0
   db_deadline=$((SECONDS + 120))
   while [ "$SECONDS" -lt "$db_deadline" ]; do
-    if pg_isready -q -t 2 >/dev/null 2>&1; then db_up=1; break; fi
+    if remote_pg pg_isready -q -t 2 >/dev/null 2>&1; then db_up=1; break; fi
     sleep 1
   done
-  unset db_deadline
   if [ "$db_up" -ne 1 ]; then
-    log "The external database at ${PGHOST}:${PGPORT} is not reachable after 2 minutes."
+    log "The external database at ${DB_WHERE} is not reachable after 2 minutes."
+    log "  Check its address, that it listens on the private network, and its firewall."
     exit 1
   fi
-  unset db_up
-  if ! as_app psql -q -X -1 -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+  unset db_up db_deadline
+  # The tables schema.sql creates: some of them without events means an
+  # earlier, partial setup, which schema.sql cannot finish (plain CREATE TABLE).
+  schema_tables="$(sed -nE 's/^CREATE TABLE (IF NOT EXISTS )?([a-z_]+).*/\2/p' /opt/zizkadb/schema.sql | paste -sd, -)"
+  if ! db_state="$(remote_pg psql -X -q -t -A -v ON_ERROR_STOP=1 -v tables="$schema_tables" 2>&1 <<'SQL'
+SELECT CASE
+  WHEN to_regclass('public.events') IS NOT NULL THEN 'ready'
+  WHEN EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public'
+               AND tablename = ANY (string_to_array(:'tables', ','))) THEN 'partial'
+  WHEN NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
+       AND (SELECT count(*) FROM pg_extension WHERE extname IN ('vector', 'uuid-ossp')) < 2
+    THEN 'extensions'
+  ELSE 'empty'
+END;
+SQL
+)"; then
+    log "Could not sign in to the external database. Check the user name, password and"
+    log "  database name in DATABASE_URL, and that the database allows this machine:"
+    printf '%s\n' "$db_state" | sed 's/^/[zizkadb]   /'
+    exit 1
+  fi
+  case "$db_state" in
+    ready) ;;
+    partial)
+      log "The external database has some ZizkaDB tables but no events table: an earlier"
+      log "  setup did not finish. Point DATABASE_URL at an empty database, or restore it."
+      exit 1 ;;
+    extensions)
+      log "The external database needs the vector and uuid-ossp extensions, and this role"
+      log "  cannot create them. Run as a superuser in that database:"
+      log "  CREATE EXTENSION vector; CREATE EXTENSION \"uuid-ossp\";  (infra/redu-db/setup.sh does this)"
+      exit 1 ;;
+    empty)
+      # One transaction under an advisory lock: containers starting together
+      # load the schema once (the second sees events and skips), and a failed
+      # load leaves nothing half-made. The lock ID sits next to init_db's
+      # MIGRATION_LOCK_ID in core/db/connection.py, so the two never collide.
+      log "Loading the schema into the external database..."
+      if ! remote_pg psql -X -q -1 -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 SET client_min_messages = warning;
 SELECT pg_advisory_xact_lock(7301884223);
 SELECT to_regclass('public.events') IS NULL AS need_schema \gset
 \if :need_schema
-\warn '[zizkadb] Loading the schema into the external database...'
 \i /opt/zizkadb/schema.sql
 \endif
 SQL
-  then
-    log "Could not prepare the external database. Check the DATABASE_URL password."
-    log "  The role must own the database, and the vector and uuid-ossp extensions"
-    log "  must already exist unless the role is a superuser (see infra/redu-db/setup.sh)."
-    exit 1
-  fi
+      then
+        log "Loading the schema failed (see the error above). Nothing was created."
+        exit 1
+      fi ;;
+    *)
+      log "Unexpected answer from the external database: ${db_state}"
+      exit 1 ;;
+  esac
+  unset db_state schema_tables
 fi
+unset DB_PASSWORD DB_CONNINFO
 
 # ── Postgres: create the cluster and schema on first start ───────────────────
 if [ "$DB_REMOTE" != true ]; then

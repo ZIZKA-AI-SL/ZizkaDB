@@ -292,6 +292,9 @@ async def _ensure_fts_index() -> None:
 
 # Any constant works; it only has to be the same in every worker.
 MIGRATION_LOCK_ID = 7_301_884_221
+# Taken by infra/allinone/entrypoint.sh while it loads schema.sql into an
+# external database. Reserved here so no other lock reuses it.
+ENTRYPOINT_SCHEMA_LOCK_ID = 7_301_884_223
 
 
 async def _run_migrations():
