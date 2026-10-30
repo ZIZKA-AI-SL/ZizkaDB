@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### GitHub Actions
+
+- New guide `docs/integrate/github-actions.md` for the two GitHub Actions that run ZizkaDB in CI: **ZizkaDB Why** (causal chains of agent test failures in the PR) and **ZizkaDB Audit** (hash-chain check, exported history, attested report). Linked from the README and the integration guides.
+
 ### Removed
 
 - **`POST /v1/a2a/messages`** is gone from the open-source edition. Agent-to-agent messaging needs several agents, and self-hosted ZizkaDB is one agent per install, so the route only ever returned 403 here. It remains a ZizkaDB Cloud feature. No SDK, MCP or dashboard code called it.
