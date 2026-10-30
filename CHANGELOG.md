@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`POST /v1/a2a/messages`** is gone from the open-source edition. Agent-to-agent messaging needs several agents, and self-hosted ZizkaDB is one agent per install, so the route only ever returned 403 here. It remains a ZizkaDB Cloud feature. No SDK, MCP or dashboard code called it.
+
 ### Security process (OpenSSF OSPS Baseline Level 3)
 
 - **Signed images with SBOM and provenance.** Release images are signed with Sigstore cosign (keyless, bound to the publish workflow) and carry an SPDX SBOM and SLSA provenance. How to verify: `docs/security/release-verification.md`. Applies from the next release; 0.5.0 and older images are unsigned.

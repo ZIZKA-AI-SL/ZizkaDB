@@ -536,8 +536,6 @@ One bearer-token entry point resolves **three** credential types, in order:
 
 Router prefixes are mounted in `core/main.py:66-79`.
 
-**SDK-only (not called from `lib/api.ts`):** `POST /v1/a2a/messages` (`core/api/a2a.py`) — agent-scoped API key required; sender is the key’s `agent_id`; recipient must exist in the same tenant. See `core/CLAUDE.md` (A2A).
-
 **Auth (`core/api/auth.py`, prefix `/v1/auth`):**
 | Dashboard fn (`lib/api.ts`) | Method · Path | Backend |
 |---|---|---|
