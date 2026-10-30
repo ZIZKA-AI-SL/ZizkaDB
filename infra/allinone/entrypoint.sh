@@ -172,7 +172,12 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://zizkadb:${PG_PASSWORD}@127.0.0
 remote_pg() {
   local cmd="$1"
   shift
-  as_app env PGPASSWORD="$DB_PASSWORD" PGCONNECT_TIMEOUT=10 "$cmd" -d "$DB_CONNINFO" "$@"
+  # Exported in a subshell, not passed through env(1): an env argument would
+  # put the password on a command line inside the container.
+  (
+    export PGPASSWORD="$DB_PASSWORD" PGCONNECT_TIMEOUT=10
+    as_app "$cmd" -d "$DB_CONNINFO" "$@"
+  )
 }
 if is_dev; then
   # Local one-click mode keeps the well-known key the README and SDK examples use.
@@ -242,13 +247,18 @@ if [ "$DB_REMOTE" = true ]; then
   # The tables schema.sql creates: some of them without events means an
   # earlier, partial setup, which schema.sql cannot finish (plain CREATE TABLE).
   schema_tables="$(sed -nE 's/^CREATE TABLE (IF NOT EXISTS )?([a-z_]+).*/\2/p' /opt/zizkadb/schema.sql | paste -sd, -)"
-  if ! db_state="$(remote_pg psql -X -q -t -A -v ON_ERROR_STOP=1 -v tables="$schema_tables" 2>&1 <<'SQL'
+  # stdout holds only the answer; a server WARNING on connect (for example a
+  # collation version note) goes to stderr and is shown only on failure.
+  db_err="$(mktemp)"
+  if ! db_state="$(remote_pg psql -X -q -t -A -v ON_ERROR_STOP=1 -v tables="$schema_tables" 2>"$db_err" <<'SQL'
 SELECT CASE
   WHEN to_regclass('public.events') IS NOT NULL THEN 'ready'
   WHEN EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public'
                AND tablename = ANY (string_to_array(:'tables', ','))) THEN 'partial'
   WHEN NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
-       AND (SELECT count(*) FROM pg_extension WHERE extname IN ('vector', 'uuid-ossp')) < 2
+       -- uuid-ossp is a trusted extension (the database owner can create
+       -- it); vector is not, so only vector must already exist.
+       AND NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
     THEN 'extensions'
   ELSE 'empty'
 END;
@@ -256,9 +266,12 @@ SQL
 )"; then
     log "Could not sign in to the external database. Check the user name, password and"
     log "  database name in DATABASE_URL, and that the database allows this machine:"
-    printf '%s\n' "$db_state" | sed 's/^/[zizkadb]   /'
+    sed 's/^/[zizkadb]   /' "$db_err"
+    rm -f "$db_err"
     exit 1
   fi
+  rm -f "$db_err"
+  unset db_err
   case "$db_state" in
     ready) ;;
     partial)
@@ -266,9 +279,9 @@ SQL
       log "  setup did not finish. Point DATABASE_URL at an empty database, or restore it."
       exit 1 ;;
     extensions)
-      log "The external database needs the vector and uuid-ossp extensions, and this role"
-      log "  cannot create them. Run as a superuser in that database:"
-      log "  CREATE EXTENSION vector; CREATE EXTENSION \"uuid-ossp\";  (infra/redu-db/setup.sh does this)"
+      log "The external database needs the vector extension, and this role cannot"
+      log "  create it. Run as a superuser in that database:"
+      log "  CREATE EXTENSION vector;  (infra/redu-db/setup.sh does this)"
       exit 1 ;;
     empty)
       # One transaction under an advisory lock: containers starting together
