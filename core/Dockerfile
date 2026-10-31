@@ -1,5 +1,5 @@
 # Build stage: compilers stay here so the runtime image ships without them.
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
@@ -11,7 +11,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
