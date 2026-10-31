@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### MCP Registry
+
+- `zizkadb-mcp` 0.1.11 is set up for the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.zizka-ai-sl/zizkadb-mcp`: `mcp/server.json` describes the PyPI package and its environment variables, and the README carries the `mcp-name` line the registry checks. The new manual workflow `publish-mcp-registry.yml` publishes it through GitHub OIDC once 0.1.11 is on PyPI. No code change.
+
 ### GitHub Actions
 
 - New guide `docs/integrate/github-actions.md` for the two GitHub Actions that run ZizkaDB in CI: **ZizkaDB Why** (causal chains of agent test failures in the PR) and **ZizkaDB Audit** (hash-chain check, exported history, attested report). Linked from the README and the integration guides.
