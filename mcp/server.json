@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.zizka-ai-sl/zizkadb-mcp",
+  "name": "io.github.ZIZKA-AI-SL/zizkadb-mcp",
   "title": "ZizkaDB",
   "description": "Causal memory and tamper-evident audit log for AI agents: log, why, search, time travel.",
   "repository": {
@@ -9,12 +9,12 @@
     "subfolder": "mcp"
   },
   "websiteUrl": "https://db.zizka.ai",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "zizkadb-mcp",
-      "version": "0.1.11",
+      "version": "0.1.12",
       "transport": {
         "type": "stdio"
       },
