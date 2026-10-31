@@ -25,7 +25,7 @@ ENV NEXT_PUBLIC_API_URL="" \
     NEXT_TELEMETRY_DISABLED=1
 RUN mkdir -p ./public && npm run build
 
-FROM python:3.12-slim-bookworm AS api-deps
+FROM python:3.15-slim-bookworm AS api-deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -33,7 +33,7 @@ RUN python -m venv /opt/venv
 COPY core/requirements.txt .
 RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 # postgresql-common is installed first so the package does not create a
 # default cluster at build time; the entrypoint creates it in the /data volume.
