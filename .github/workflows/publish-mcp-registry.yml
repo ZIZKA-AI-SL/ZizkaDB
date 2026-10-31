@@ -2,7 +2,7 @@ name: Publish MCP server to the MCP Registry
 
 # Run after zizkadb-mcp is on PyPI at the version in mcp/server.json: the
 # registry checks that the PyPI README carries the mcp-name marker. Publishes
-# io.github.zizka-ai-sl/zizkadb-mcp through GitHub OIDC (no stored secret).
+# io.github.ZIZKA-AI-SL/zizkadb-mcp through GitHub OIDC (no stored secret).
 on:
   workflow_dispatch:
 
