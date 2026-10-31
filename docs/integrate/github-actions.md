@@ -2,10 +2,10 @@
 
 Two GitHub Actions run ZizkaDB inside your CI job, next to your agent's tests. Each starts the open-source single container in the runner: no account, no API key, and the recorded data never leaves the runner.
 
-| Action | What it does |
-|--------|--------------|
-| [**ZizkaDB Why**](https://github.com/ZIZKA-AI-SL/zizkadb-why-action) | Explains why your agent failed: the causal chain from the failed step back to its root cause, in the job summary and a PR comment |
-| [**ZizkaDB Audit**](https://github.com/ZIZKA-AI-SL/zizkadb-audit-action) | Proves the recorded history is intact: hash-chain check per agent, exported history, and an attested audit report |
+| Action | What it does | Marketplace |
+|--------|--------------|-------------|
+| [**ZizkaDB Why**](https://github.com/ZIZKA-AI-SL/zizkadb-why-action) | Explains why your agent failed: the causal chain from the failed step back to its root cause, in the job summary and a PR comment | [Listing](https://github.com/marketplace/actions/zizkadb-why-explain-ai-agent-failures) |
+| [**ZizkaDB Audit**](https://github.com/ZIZKA-AI-SL/zizkadb-audit-action) | Proves the recorded history is intact: hash-chain check per agent, exported history, and an attested audit report | [Listing](https://github.com/marketplace/actions/zizkadb-audit-verify-ai-agent-history) |
 
 ```yaml
 - uses: ZIZKA-AI-SL/zizkadb-why-action@v1
