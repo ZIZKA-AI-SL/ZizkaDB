@@ -31,6 +31,7 @@ from services import token_optimization_config
 from services.ai import config as ai_config
 from services.ai.provider import AIProviderError
 from services.suggestions import engine as suggestions_engine
+from services.audit_chain import delete_and_tombstone, lock_events
 from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.api_keys import (
     assert_and_reserve_api_key_slot,
@@ -39,6 +40,7 @@ from services.api_keys import (
     revoke_api_key_record,
 )
 from services.event_write import write_event
+from services.entitlements import embeddings_enabled
 from services.runtime_env import is_dev_mode
 
 router = APIRouter()
@@ -263,6 +265,34 @@ async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> None:
         )
 
 
+async def _delete_agent_vectors(conn, tenant_id: str, agent_id: str) -> bool:
+    """Delete Qdrant vectors for all events of an agent. Returns False if Qdrant is unavailable."""
+    try:
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+        qdrant = get_qdrant()
+        await qdrant.delete(
+            collection_name=QDRANT_COLLECTION,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                        FieldCondition(key="agent_id", match=MatchValue(value=agent_id)),
+                    ]
+                )
+            ),
+        )
+        return True
+    except Exception as e:
+        log.warning(
+            "Qdrant cleanup for agent %s (tenant %s) failed: %s",
+            agent_id,
+            tenant_id,
+            e,
+        )
+        return False
+
+
 class RetentionBody(BaseModel):
     # Days to keep events; null = use EVENT_RETENTION_DAYS (or keep forever).
     days: int | None = Field(default=None, ge=1, le=36500)
@@ -318,7 +348,12 @@ async def delete_agent(
     agent_id: str,
     tenant: dict = Depends(require_dashboard_session),
 ):
-    """Delete an agent and all of its events. Cannot be undone."""
+    """Delete an agent and all of its events. Cannot be undone.
+
+    Events are tombstoned (not hard-deleted) so the audit chain stays
+    verifiable, then the agent row and its tombstones are dropped: a new
+    agent under the same name starts a fresh chain.
+    """
     agent_id = _validate_agent_id(agent_id)
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
@@ -334,13 +369,40 @@ async def delete_agent(
             )
             if not exists:
                 raise not_found("Agent not found")
-            # The rows actually deleted: event_count is not lowered by forget.
-            status = await conn.execute(
-                "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
-                tenant_id, agent_id,
-            )
-            # The whole agent goes, so its chain does too: a new agent under
-            # the same name starts a fresh chain.
+
+            # All event IDs for this agent, oldest first (doesn't matter for delete).
+            event_ids = [
+                str(r["event_id"])
+                for r in await conn.fetch(
+                    "SELECT event_id FROM events WHERE tenant_id = $1 AND agent_id = $2",
+                    tenant_id, agent_id,
+                )
+            ]
+
+            # Serialize against the embedding worker (#234): take the
+            # per-event advisory lock before deleting vectors and rows.
+            if event_ids:
+                await lock_events(conn, event_ids)
+
+            # Vectors first: if the search index can't be cleaned, keep
+            # the Postgres rows so a retry can still find (and delete)
+            # the vectors. Deleting missing Qdrant points is a no-op,
+            # so retries are idempotent. Raising here rolls the
+            # transaction back, so nothing is deleted.
+            if embeddings_enabled() and event_ids:
+                vector_cleanup = await _delete_agent_vectors(conn, tenant_id, agent_id)
+                if not vector_cleanup:
+                    raise service_unavailable(
+                        "Search index unavailable; nothing was deleted. Retry agent deletion shortly."
+                    )
+
+            # Tombstone all events (keeping their checksums so the chain
+            # still verifies for any agent that references them as parent).
+            if event_ids:
+                await delete_and_tombstone(conn, tenant_id, event_ids, "agent_delete")
+
+            # The whole agent goes, so its chain does too: drop tombstones
+            # and the agent row. A new agent under the same name starts fresh.
             await conn.execute(
                 "DELETE FROM event_tombstones WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
@@ -355,7 +417,7 @@ async def delete_agent(
     return {
         "deleted": True,
         "agent": agent_id,
-        "events_deleted": int(status.split()[-1]),
+        "events_deleted": len(event_ids),
     }
 
 
