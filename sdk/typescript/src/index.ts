@@ -33,6 +33,7 @@ import type {
   CausalChain,
   ChainHead,
   ChainVerification,
+  LogForkOptions,
   LogOptions,
   LogToolOptions,
   LogToolResultOptions,
@@ -42,7 +43,7 @@ import type {
   SearchOptions,
 } from './types'
 import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
-import { LineageContext, resolveLogLineage, recordLogResult } from './context'
+import { LineageContext, resolveLogLineage, recordLogResult, getLineageState } from './context'
 import { readEnv } from './env'
 import packageJson from '../package.json'
 
@@ -489,6 +490,46 @@ export class ZizkaDB {
           : { status: r.status as number, error: r.error }),
       })),
     }
+  }
+
+  /**
+   * Log parallel branches from the same parent (e.g. parallel tool calls).
+   * Every event in `events` shares the same `parentId` — the last event id
+   * from the current lineage context, or null if there is none.
+   *
+   * After logging, the lineage context's `lastEventId` is advanced to the
+   * last result's event id, so subsequent `log()` calls chain from it.
+   *
+   * Example:
+   *   await db.logFork({
+   *     agent: 'bot',
+   *     events: [
+   *       { event: 'tool_call', data: { tool: 'search', args: { q: 'a' } } },
+   *       { event: 'tool_call', data: { tool: 'search', args: { q: 'b' } } },
+   *     ],
+   *   })
+   */
+  async logFork(options: LogForkOptions): Promise<LogResult[]> {
+    const state = getLineageState()
+    const agent = state?.agent ?? ''
+    const forkParent = state && state.agent === agent ? state.lastEventId ?? undefined : undefined
+    const sessionId = options.sessionId ?? state?.sessionId ?? undefined
+
+    const results: LogResult[] = []
+    for (const { event, data } of options.events) {
+      const res = await this.log({
+        agent,
+        event,
+        data,
+        parentId: forkParent,
+        sessionId: sessionId,
+      })
+      results.push(res)
+    }
+    if (state && state.agent === agent && results.length > 0) {
+      state.lastEventId = results[results.length - 1].eventId
+    }
+    return results
   }
 
   // ─────────────────────────────────────────

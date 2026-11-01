@@ -53,7 +53,6 @@ describe('ZizkaDB constructor', () => {
   })
 
   it('throws when neither apiKey nor host is provided', () => {
-    // @ts-expect-error — intentional bad config
     expect(() => new ZizkaDB({})).toThrow(ZizkaDBError)
   })
 
