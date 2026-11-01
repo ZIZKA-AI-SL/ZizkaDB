@@ -199,12 +199,14 @@ class TestGetContext:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_error_response_returned_as_string(self):
+    async def test_error_response_returned_as_error_dict(self):
         with _patch_api({"error": "Embedding failed", "status": 400}, status=400):
             from zizkadb_mcp.server import get_context
             result = await get_context(agent="bot", task="task")
-        # Should not raise, just return a string
-        assert isinstance(result, str)
+        # Errors are surfaced as a dict, not silently swallowed as an empty string
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert result["status"] == 400
 
 
 # ── why ────────────────────────────────────────────────────────────────────

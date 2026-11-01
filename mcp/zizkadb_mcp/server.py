@@ -43,7 +43,7 @@ try:
 
     __version__ = _pkg_version("zizkadb-mcp")
 except Exception:
-    __version__ = "0.1.8"
+    __version__ = "0.1.12"
 
 DEFAULT_DEV_API_KEY = "zizkadb_dev_local"
 _HOST = (
@@ -153,7 +153,10 @@ async def _api(method: str, path: str, body: dict | None = None) -> dict:
 
     if not r.is_success:
         return {"error": r.text, "status": r.status_code}
-    return r.json()
+    try:
+        return r.json()
+    except Exception:
+        return {"error": r.text, "status": r.status_code}
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────
@@ -285,6 +288,8 @@ async def get_context(
         body["session_id"] = session_id
     result = await _api("POST", "/memory/context", body)
     if isinstance(result, dict):
+        if result.get("error"):
+            return {"error": result["error"], "status": result.get("status", 0)}
         return result.get("context", "")
     return str(result)
 
