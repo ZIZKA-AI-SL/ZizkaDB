@@ -30,6 +30,7 @@ import sys
 import httpx
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, AsyncIterator
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from .session_scope import SessionScope
@@ -558,7 +559,7 @@ class ZizkaDB:
             chain.print()
         """
         response = await self._get(
-            f"/v1/events/{event_id}/why",
+            f"/v1/events/{quote(event_id, safe='')}/why",
             {"depth": depth},
         )
         return CausalChain(
@@ -743,7 +744,7 @@ class ZizkaDB:
             if diff["has_errors"]:
                 print("Errors detected:", diff["new_event_types"])
         """
-        return await self._get(f"/v1/memory/diff/{session_id}", {})
+        return await self._get(f"/v1/memory/diff/{quote(session_id, safe='')}", {})
 
     # ─────────────────────────────────────────
     # FORGET — GDPR compliance
