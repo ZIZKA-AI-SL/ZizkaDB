@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -265,32 +266,40 @@ async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> None:
         )
 
 
-async def _delete_agent_vectors(conn, tenant_id: str, agent_id: str) -> bool:
-    """Delete Qdrant vectors for all events of an agent. Returns False if Qdrant is unavailable."""
-    try:
-        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+_VECTOR_DELETE_ATTEMPTS = 3
 
-        qdrant = get_qdrant()
-        await qdrant.delete(
-            collection_name=QDRANT_COLLECTION,
-            points_selector=FilterSelector(
-                filter=Filter(
-                    must=[
-                        FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-                        FieldCondition(key="agent_id", match=MatchValue(value=agent_id)),
-                    ]
-                )
-            ),
-        )
-        return True
-    except Exception as e:
-        log.warning(
-            "Qdrant cleanup for agent %s (tenant %s) failed: %s",
-            agent_id,
-            tenant_id,
-            e,
-        )
-        return False
+
+async def _delete_agent_vectors(conn, tenant_id: str, agent_id: str) -> bool:
+    """Delete Qdrant vectors for all events of an agent. Returns True on success."""
+    from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+    for attempt in range(1, _VECTOR_DELETE_ATTEMPTS + 1):
+        try:
+            qdrant = get_qdrant()
+            await qdrant.delete(
+                collection_name=QDRANT_COLLECTION,
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                            FieldCondition(key="agent_id", match=MatchValue(value=agent_id)),
+                        ]
+                    )
+                ),
+            )
+            return True
+        except Exception as e:
+            log.warning(
+                "Qdrant delete attempt %d/%d for agent %s (tenant %s) failed: %s",
+                attempt,
+                _VECTOR_DELETE_ATTEMPTS,
+                agent_id,
+                tenant_id,
+                e,
+            )
+            if attempt < _VECTOR_DELETE_ATTEMPTS:
+                await asyncio.sleep(0.5 * attempt)
+    return False
 
 
 class RetentionBody(BaseModel):
