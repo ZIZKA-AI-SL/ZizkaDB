@@ -1,6 +1,6 @@
 """Tests for agent deletion and Qdrant vector cleanup."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -41,7 +41,10 @@ async def test_delete_agent_tombstones_events(monkeypatch):
     monkeypatch.setattr("api.agents.get_qdrant", lambda: qdrant)
     monkeypatch.setattr("api.agents.embeddings_enabled", lambda: True)
 
-    result = await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
+    # Mock the audit-chain helpers that delete_agent now calls.
+    with patch("api.agents.lock_events", new=AsyncMock()) as mock_lock_events, \
+         patch("api.agents.delete_and_tombstone", new=AsyncMock(return_value=2)) as mock_tombstone:
+        result = await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
 
     # The agent row is locked before anything is deleted.
     assert "FOR UPDATE" in conn.fetchval.await_args.args[0]
@@ -51,8 +54,10 @@ async def test_delete_agent_tombstones_events(monkeypatch):
     qdrant.delete.assert_awaited_once()
     _, kwargs = qdrant.delete.call_args
     assert kwargs["collection_name"] == "agent_events"
-    # delete_and_tombstone was called
-    assert conn.execute.await_count >= 3  # tombstones + agent row
+    mock_lock_events.assert_awaited_once()
+    mock_tombstone.assert_awaited_once()
+    # conn.execute called for FOR UPDATE + tombstones cleanup + agent row deletion
+    assert conn.execute.await_count >= 3
 
 
 @pytest.mark.asyncio
@@ -105,10 +110,12 @@ async def test_delete_agent_qdrant_unavailable_raises(monkeypatch):
     monkeypatch.setattr("api.agents.get_qdrant", lambda: qdrant)
     monkeypatch.setattr("api.agents.embeddings_enabled", lambda: True)
 
-    from fastapi import HTTPException
+    # Mock delete_and_tombstone so it's never reached when Qdrant fails.
+    with patch("api.agents.delete_and_tombstone", new=AsyncMock()) as mock_tombstone:
+        from fastapi import HTTPException
 
-    with pytest.raises(HTTPException) as exc:
-        await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
-    assert exc.value.status_code == 503
-    # Nothing should have been deleted (transaction rolled back)
-    conn.execute.assert_not_awaited()
+        with pytest.raises(HTTPException) as exc:
+            await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
+        assert exc.value.status_code == 503
+        # delete_and_tombstone must NOT be called when Qdrant is unavailable
+        mock_tombstone.assert_not_awaited()
