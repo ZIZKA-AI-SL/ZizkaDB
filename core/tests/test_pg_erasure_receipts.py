@@ -318,12 +318,20 @@ async def test_a_removed_receipt_is_caught_even_with_the_chain_recomputed(pg_db)
     for user in ("gone", "gone", "kept"):
         await _write(tenant_id, user)
     await _forget(tenant_id, "gone")
+    [receipt] = await _receipts(pg_db, tenant_id)
+    sealed = await _sealed_links(pg_db, tenant_id, receipt["event_id"])
     await pg_db.execute("DELETE FROM event_tombstones WHERE reason = $1", RECEIPT_REASON)
     await _rechain(pg_db, tenant_id)
 
     result = await verify_chain(pg_db, tenant_id, AGENT)
     assert result["intact"] is False
-    assert _problems(result) == ["receipt_missing", "receipt_missing"]
+    # One problem for the missing receipt, not one per tombstone that names it.
+    assert _problems(result) == ["receipt_missing"]
+    assert result["summary"]["breaks"] == 1
+    [problem] = result["problems"]
+    assert problem["receipt_id"] == str(receipt["event_id"])
+    assert problem["tombstones"] == 2
+    assert (problem["sequence_no"], problem["last_sequence_no"]) == (sealed[0][0], sealed[-1][0])
 
 
 async def test_an_older_image_erasing_after_the_upgrade_is_counted_not_a_break(pg_db):
@@ -411,6 +419,64 @@ async def test_an_agent_deleted_before_its_receipt_is_checked_is_not_reported(pg
     pool = _PoolThatActsBefore(pg_db, delete_agent, lambda query, n: "receipt_id = ANY" in query)
     result = await verify_chain(pool, tenant_id, AGENT)
     assert not {"receipt_digest_mismatch", "receipt_missing"} & set(_problems(result))
+
+
+async def _erasure_split_over_two_pages(tenant_id: str, monkeypatch) -> None:
+    """Two pages of two rows: the erased tombstones on the first, the receipt on
+    the second, like a retention batch larger than CHAIN_PAGE_SIZE."""
+    monkeypatch.setattr(audit_chain, "CHAIN_PAGE_SIZE", 2)
+    for user in ("gone", "gone", "kept"):
+        await _write(tenant_id, user)
+    await _forget(tenant_id, "gone")
+
+
+async def _delete_agent(pool, tenant_id: str) -> None:
+    """What DELETE /v1/agents/{id} does to the tables (without Qdrant)."""
+    for table in ("event_tombstones", "events", "agents"):
+        await pool.execute(f"DELETE FROM {table} WHERE tenant_id = $1", tenant_id)
+
+
+async def test_an_agent_deleted_between_the_pages_of_an_erasure_is_not_reported(pg_db, monkeypatch):
+    """The tombstones were walked, then the agent went with their receipt
+    before the next page: not a missing receipt."""
+    tenant_id = await _tenant(pg_db)
+    await _erasure_split_over_two_pages(tenant_id, monkeypatch)
+
+    async def delete_agent():
+        await _delete_agent(pg_db, tenant_id)
+
+    pool = _PoolThatActsBefore(pg_db, delete_agent, lambda query, n: n == 2)   # after the first page
+    result = await verify_chain(pool, tenant_id, AGENT)
+    assert result["summary"]["tombstones"] == 2
+    assert result["intact"] is True, result["problems"]
+
+
+async def test_an_agent_re_created_between_the_pages_of_an_erasure_is_not_reported(pg_db, monkeypatch):
+    """Deleted and created again under the same name (a new first_seen): the
+    old receipt is gone with the old agent, not removed."""
+    tenant_id = await _tenant(pg_db)
+    await _erasure_split_over_two_pages(tenant_id, monkeypatch)
+
+    async def delete_and_write_again():
+        await _delete_agent(pg_db, tenant_id)
+        await _write(tenant_id, "new")
+
+    pool = _PoolThatActsBefore(pg_db, delete_and_write_again, lambda query, n: n == 2)
+    result = await verify_chain(pool, tenant_id, AGENT)
+    assert "receipt_missing" not in _problems(result)
+
+
+async def test_a_receipt_removed_after_a_split_erasure_is_still_caught(pg_db, monkeypatch):
+    """The same split erasure, nothing deleted during the check: the guard
+    only skips the report when the agent row changed."""
+    tenant_id = await _tenant(pg_db)
+    await _erasure_split_over_two_pages(tenant_id, monkeypatch)
+    await pg_db.execute("DELETE FROM event_tombstones WHERE reason = $1", RECEIPT_REASON)
+    await _rechain(pg_db, tenant_id)
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert _problems(result) == ["receipt_missing"]
+    assert result["problems"][0]["tombstones"] == 2
 
 
 async def test_upgrade_records_the_receipt_cutoff_once_and_builds_the_index(pg_db):
