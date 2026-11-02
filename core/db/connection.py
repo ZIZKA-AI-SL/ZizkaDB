@@ -253,6 +253,31 @@ async def _ensure_tombstone_checksums() -> None:
     )
 
 
+async def _ensure_receipt_checks() -> None:
+    """The chain verifier checks erasure receipts (ADR-009 H3).
+
+    Erasures have written a receipt per agent since the image that added the
+    receipt columns; from the cutoff recorded here on, a tombstone that no
+    receipt covers is reported. Recorded once, on the first start of an image
+    that checks receipts, so tombstones from older images and from before the
+    receipts existed stay accepted. The index lets the verifier read the
+    tombstones a receipt seals; it is built concurrently, so writes and
+    erasures continue meanwhile.
+    """
+    await _pg_pool.execute("""
+        CREATE TABLE IF NOT EXISTS tombstone_receipt_cutoff (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            since     TIMESTAMPTZ NOT NULL
+        );
+        INSERT INTO tombstone_receipt_cutoff (since) VALUES (now())
+        ON CONFLICT (singleton) DO NOTHING;
+    """)
+    await _ensure_index_concurrently(
+        "idx_event_tombstones_receipt",
+        "ON event_tombstones (tenant_id, receipt_id) WHERE receipt_id IS NOT NULL",
+    )
+
+
 async def _ensure_supersedes_index() -> None:
     """Lookup of explicit supersedes links (services/memory_rank.py)."""
     await _ensure_index_concurrently(
@@ -619,6 +644,7 @@ async def _run_migrations():
 
     await _ensure_tombstone_checksums()
     await _ensure_chain_heads()
+    await _ensure_receipt_checks()
 
     await _ensure_fts_index()
     await _ensure_supersedes_index()
