@@ -81,6 +81,29 @@ function emitLogHint(baseUrl: string, eventId: string): void {
   }
 }
 
+interface EventWriteResponse {
+  event_id: string
+  timestamp: string
+  sequence_no: number
+  checksum: string
+  index_status?: string
+  indexed?: boolean
+  chain_hash?: string | null
+  duplicate?: boolean
+}
+
+function parseLogResult(response: EventWriteResponse): LogResult {
+  return {
+    eventId: response.event_id,
+    timestamp: new Date(response.timestamp),
+    sequenceNo: response.sequence_no,
+    checksum: response.checksum,
+    indexStatus: response.index_status ?? (response.indexed ? 'indexed' : 'failed'),
+    ...(response.chain_hash ? { chainHash: response.chain_hash } : {}),
+    ...(response.duplicate ? { duplicate: true } : {}),
+  }
+}
+
 let _telemetrySent = false
 
 function _isLocalSelfHost(): boolean {
@@ -295,25 +318,8 @@ export class ZizkaDB {
       ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
       ...(options.supersedes != null ? { supersedes: options.supersedes } : {}),
       ...(options.importance != null ? { importance: options.importance } : {}),
-    }) as {
-      event_id: string
-      timestamp: string
-      sequence_no: number
-      checksum: string
-      index_status?: string
-      indexed?: boolean
-      chain_hash?: string | null
-      duplicate?: boolean
-    }
-    const result: LogResult = {
-      eventId: res.event_id,
-      timestamp: new Date(res.timestamp),
-      sequenceNo: res.sequence_no,
-      checksum: res.checksum,
-      indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
-      ...(res.chain_hash ? { chainHash: res.chain_hash } : {}),
-      ...(res.duplicate ? { duplicate: true } : {}),
-    }
+    }) as EventWriteResponse
+    const result = parseLogResult(res)
     recordLogResult(options.agent, result.eventId)
     emitLogHint(this.baseUrl, result.eventId)
     return result
@@ -519,7 +525,7 @@ export class ZizkaDB {
     const { agent } = options
     // Resolve the fork parent once: the context's lastEventId, or null.
     const forkParent = state && state.agent === agent ? state.lastEventId : null
-    const sessionId = options.sessionId ?? state?.sessionId ?? null
+    const sessionId = options.sessionId ?? (state?.agent === agent ? state.sessionId : null)
 
     const results: LogResult[] = []
     for (const { event, data, metadata, importance } of options.events) {
@@ -533,26 +539,10 @@ export class ZizkaDB {
         session_id: sessionId,
         ...(metadata ? { metadata } : {}),
         ...(importance !== undefined ? { importance } : {}),
-      }) as {
-        event_id: string
-        timestamp: string
-        sequence_no: number
-        checksum: string
-        index_status?: string
-        indexed?: boolean
-        chain_hash?: string | null
-        duplicate?: boolean
-      }
-      const result: LogResult = {
-        eventId: res.event_id,
-        timestamp: new Date(res.timestamp),
-        sequenceNo: res.sequence_no,
-        checksum: res.checksum,
-        indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
-        ...(res.chain_hash ? { chainHash: res.chain_hash } : {}),
-        ...(res.duplicate ? { duplicate: true } : {}),
-      }
+      }) as EventWriteResponse
+      const result = parseLogResult(res)
       results.push(result)
+      emitLogHint(this.baseUrl, result.eventId)
     }
 
     // Advance lastEventId only when not inside ctx.fork() (forkParentId set).

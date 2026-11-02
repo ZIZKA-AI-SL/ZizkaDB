@@ -723,6 +723,23 @@ describe('logFork()', () => {
     expect(bodies[0].session_id).toBe('custom-session')
   })
 
+  it('does not inherit a session from another agent context', async () => {
+    mockFetchSequence([{ status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ctx = db.track('agent-a', 'session-a')
+    await ctx.run(async () => {
+      await db.logFork({
+        agent: 'agent-b',
+        events: [{ event: 'branch', data: {} }],
+      })
+    })
+
+    const bodies = fetchBodies()
+    expect(bodies[0].agent).toBe('agent-b')
+    expect(bodies[0].session_id).toBeNull()
+  })
+
   it('empty events array returns empty results', async () => {
     mockFetchSequence([{ status: 201, body: { event_id: 'unused', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
 

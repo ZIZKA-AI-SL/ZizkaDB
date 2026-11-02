@@ -1,6 +1,6 @@
 # zizkadb-sdk
 
-**npm:** [zizkadb-sdk 0.5.0](https://www.npmjs.com/package/zizkadb-sdk)
+**npm:** [zizkadb-sdk 0.6.0](https://www.npmjs.com/package/zizkadb-sdk)
 
 TypeScript SDK for [ZizkaDB](https://db.zizka.ai) — causal lineage, time travel, and semantic search for AI agents.
 
@@ -58,7 +58,7 @@ If your app logs to **different agent ids** per user (e.g. `conv-alice`, `conv-b
 | `iterEvents(agent)` | Every event, cursor-paged (`for await`) |
 | `exportEvents(agent)` / `importEvents(lines)` | Portable NDJSON copy and import |
 
-Needs a server from release 0.5.0. Full guide: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md#beyond-log-and-why).
+Needs a server from release 0.6.0. Full guide: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md#beyond-log-and-why).
 
 ## Errors
 

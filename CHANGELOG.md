@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### TypeScript SDK
+
+- Added `logFork()`, which records sequentially submitted parallel lineage branches from one shared parent. It accepts an explicit agent, preserves branch metadata and importance, respects same-agent tracking sessions, and emits the standard causal-trace hint for every logged branch.
+
 ### MCP Registry
 
 - `zizkadb-mcp` 0.1.12 is set up for the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.ZIZKA-AI-SL/zizkadb-mcp`: `mcp/server.json` describes the PyPI package and its environment variables, and the README carries the `mcp-name` line the registry checks. The new manual workflow `publish-mcp-registry.yml` publishes it through GitHub OIDC once 0.1.12 is on PyPI. No code change. 0.1.12 fixes the name's case: the registry matches the namespace case-sensitively against the GitHub org (`ZIZKA-AI-SL`), so the lowercase name was refused with a 403.
