@@ -199,8 +199,14 @@ export interface BatchResult {
 }
 
 export interface LogForkOptions {
+  agent: string
   /** Each branch to log in order. All share the same fork parent. */
-  events: { event: string; data: Record<string, unknown> }[]
+  events: {
+    event: string
+    data: Record<string, unknown>
+    metadata?: Record<string, unknown>
+    importance?: number
+  }[]
   /** Session ID to use for all events (defaults to the lineage context's session). */
   sessionId?: string
 }

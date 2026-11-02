@@ -494,11 +494,16 @@ export class ZizkaDB {
 
   /**
    * Log parallel branches from the same parent (e.g. parallel tool calls).
-   * Every event in `events` shares the same `parentId` — the last event id
-   * from the current lineage context, or null if there is none.
+   * Every event in `events` shares the same `parentId` — the lineage context's
+   * `lastEventId`, or null if there is none. Branches do NOT chain off each
+   * other: the parent is resolved once and passed explicitly to every branch.
+   *
+   * Requests are sent sequentially (not concurrently), matching the Python SDK.
    *
    * After logging, the lineage context's `lastEventId` is advanced to the
-   * last result's event id, so subsequent `log()` calls chain from it.
+   * last result's event id — unless an active `ctx.fork()` has set
+   * `forkParentId`, in which case `lastEventId` is left untouched to preserve
+   * the fork/endFork contract. Python's `log_fork()` behaves the same way.
    *
    * Example:
    *   await db.logFork({
@@ -511,22 +516,49 @@ export class ZizkaDB {
    */
   async logFork(options: LogForkOptions): Promise<LogResult[]> {
     const state = getLineageState()
-    const agent = state?.agent ?? ''
-    const forkParent = state && state.agent === agent ? state.lastEventId ?? undefined : undefined
-    const sessionId = options.sessionId ?? state?.sessionId ?? undefined
+    const { agent } = options
+    // Resolve the fork parent once: the context's lastEventId, or null.
+    const forkParent = state && state.agent === agent ? state.lastEventId : null
+    const sessionId = options.sessionId ?? state?.sessionId ?? null
 
     const results: LogResult[] = []
-    for (const { event, data } of options.events) {
-      const res = await this.log({
+    for (const { event, data, metadata, importance } of options.events) {
+      // Bypass resolveLogLineage so branches never inherit each other as
+      // parents: parent_id is passed explicitly (may be null) and stored as-is.
+      const res = await this.post('/v1/events', {
         agent,
         event,
         data,
-        parentId: forkParent,
-        sessionId: sessionId,
-      })
-      results.push(res)
+        parent_id: forkParent,
+        session_id: sessionId,
+        ...(metadata ? { metadata } : {}),
+        ...(importance !== undefined ? { importance } : {}),
+      }) as {
+        event_id: string
+        timestamp: string
+        sequence_no: number
+        checksum: string
+        index_status?: string
+        indexed?: boolean
+        chain_hash?: string | null
+        duplicate?: boolean
+      }
+      const result: LogResult = {
+        eventId: res.event_id,
+        timestamp: new Date(res.timestamp),
+        sequenceNo: res.sequence_no,
+        checksum: res.checksum,
+        indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
+        ...(res.chain_hash ? { chainHash: res.chain_hash } : {}),
+        ...(res.duplicate ? { duplicate: true } : {}),
+      }
+      results.push(result)
     }
-    if (state && state.agent === agent && results.length > 0) {
+
+    // Advance lastEventId only when not inside ctx.fork() (forkParentId set).
+    // Python's log_fork() does the same: recordLogResult() skips updating while
+    // forkParentId is set, and we honor that here too.
+    if (state && state.agent === agent && results.length > 0 && state.forkParentId === null) {
       state.lastEventId = results[results.length - 1].eventId
     }
     return results
