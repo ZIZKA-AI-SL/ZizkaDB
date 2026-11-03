@@ -24,7 +24,6 @@ bash wiki/push-wiki.sh
 | `TypeScript-SDK.md` | TypeScript / Node |
 | `MCP-and-Cursor.md` | Cursor MCP setup |
 | `REST-API.md` | HTTP API reference |
-| `Multi-Agent-Apps.md` | SaaS / zizka.ai pattern |
 | `Self-Hosting.md` | Docker local + VPS |
 | `Production-Deployment.md` | db.zizka.ai EC2 |
 | `Troubleshooting.md` | Common errors |

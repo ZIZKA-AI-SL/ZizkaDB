@@ -1,6 +1,6 @@
 # ZizkaDB Wiki
 
-**Don't observe — audit your AI agent.** Causal lineage, time travel, semantic search, and dashboards for AI agents.
+**Don't observe — audit your AI agent.** ZizkaDB is a causal database for AI agents: causal lineage, time-travel debugging, session replay, a tamper-evident audit trail, agent memory, semantic search and dashboards.
 
 | Resource | Link |
 |----------|------|

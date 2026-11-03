@@ -4,7 +4,7 @@
 
 # ZizkaDB
 
-### The operational database for AI agents: audit, memory and compliance
+### The causal database for AI agents: audit trail, agent memory and AI compliance
 
 Every agent decision linked to its cause. **Causal agent memory**, a **tamper-evident audit log** and **time-travel debugging**,<br/>
 in one open-source database on Postgres. Built for **EU AI Act Article 12** record-keeping.
@@ -27,10 +27,10 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 
 </div>
 
-Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed: **causal observability for AI agents**, from debugging to compliance.
+Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed: **AI observability** built on **causal lineage**, from **agent debugging** to **AI compliance**.
 
-- **Causal, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
-- **Time-travel.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment.
+- **Causal lineage, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
+- **Time-travel debugging and session replay.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment, and you can replay any session step by step.
 - **Provable history.** Every event has a checksum and is hash-chained to the one before it, so `db.verify_chain(agent)` proves nothing was edited, removed or reordered. GDPR deletions leave a content-free tombstone. A verifiable record for EU AI Act Article 12.
 - **Causal agent memory for the next run.** `db.context_for(agent, task)` returns the relevant past as a prompt block, ranked by relevance, importance and recency; a new fact can replace an old one (`supersedes`). Keyword search works with no OpenAI key, hybrid with embeddings, or embed locally.
 - **Built database.** Idempotent and batch writes, retention, export/import, read-only and expiring keys, Prometheus metrics, backup and restore scripts.
@@ -59,7 +59,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 - [Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP](#integrations-langchain-langgraph-crewai-livekit-mcp)
 - [Connect your agent](#connect-your-agent)
 - [What it does](#what-it-does)
-- [Audit trail and EU AI Act Article 12](#audit-trail-and-eu-ai-act-article-12)
+- [Audit trail, agent auditability and EU AI Act Article 12](#audit-trail-agent-auditability-and-eu-ai-act-article-12)
 - [How it works](#how-it-works)
 - [Use with your AI assistant (MCP)](#use-with-your-ai-assistant-mcp)
 - [ZizkaDB vs Langfuse, LangSmith and Mem0](#zizkadb-vs-langfuse-langsmith-and-mem0-causality-not-just-traces-or-recall)
@@ -276,6 +276,8 @@ From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.
 
 ## What it does
 
+Use ZizkaDB to **audit AI agents** in production, debug them from cause to effect, and give them persistent **LLM memory** across runs.
+
 | | Function | What you get |
 | --- | --- | --- |
 | **Debug** | `db.why(event_id)` | The causal chain behind any event |
@@ -291,7 +293,7 @@ From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.
 | | `db.iter_events(agent)` | Every event, cursor-paged |
 | | Server settings | Retention, redaction, read-only and expiring keys, `/metrics`, backup and restore |
 
-### Audit trail and EU AI Act Article 12
+### Audit trail, agent auditability and EU AI Act Article 12
 
 Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record:
 
@@ -348,7 +350,7 @@ For ZizkaDB Cloud, use `ZIZKADB_API_KEY` instead. Setup for each client: [mcp/RE
 
 ## ZizkaDB vs Langfuse, LangSmith and Mem0: causality, not just traces or recall
 
-Tracing tools such as Langfuse and LangSmith **observe** span trees. Memory layers such as Mem0 **recall** facts. ZizkaDB **records why** each decision happened, keeps it as **auditable memory**, and lets you **prove** the record is intact. Use it alongside a tracer if you already have one.
+LLMOps tracing tools such as Langfuse and LangSmith **observe** span trees. Memory layers such as Mem0 **recall** facts. ZizkaDB **records why** each decision happened, keeps it as **auditable memory**, and lets you **prove** the record is intact. Use it alongside a tracer if you already have one.
 
 | | ZizkaDB | LLM tracing tools | Agent memory layers |
 | --- | :---: | :---: | :---: |
