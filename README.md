@@ -27,7 +27,7 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 
 </div>
 
-Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed: **AI observability** built on **causal lineage**, from **agent debugging** to **AI compliance**.
+Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed. Observability platforms show you what happened; ZizkaDB is an **AI agent auditability platform** that proves why, through **causal lineage**, from **agent debugging** to **AI compliance**.
 
 - **Causal lineage, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
 - **Time-travel debugging and session replay.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment, and you can replay any session step by step.
@@ -350,7 +350,7 @@ For ZizkaDB Cloud, use `ZIZKADB_API_KEY` instead. Setup for each client: [mcp/RE
 
 ## ZizkaDB vs Langfuse, LangSmith and Mem0: causality, not just traces or recall
 
-LLMOps tracing tools such as Langfuse and LangSmith **observe** span trees. Memory layers such as Mem0 **recall** facts. ZizkaDB **records why** each decision happened, keeps it as **auditable memory**, and lets you **prove** the record is intact. Use it alongside a tracer if you already have one.
+LLMOps and AI observability platforms such as Langfuse and LangSmith **observe** span trees. Memory layers such as Mem0 **recall** facts. ZizkaDB **records why** each decision happened, keeps it as **auditable memory**, and lets you **prove** the record is intact. Use it alongside a tracer if you already have one.
 
 | | ZizkaDB | LLM tracing tools | Agent memory layers |
 | --- | :---: | :---: | :---: |
@@ -410,7 +410,7 @@ No. Logging, `why()`, time travel, keyword search and `context_for()` work witho
 A memory layer stores facts to recall. ZizkaDB stores what the agent did and *why*, linked step by step, and serves the relevant part back as memory (`context_for()`). The same record is a tamper-evident audit log, so memory, debugging and compliance come from one source.
 
 **Is ZizkaDB an observability tool?**  
-It's causal observability for AI agents: instead of a span tree to read through, every event points to the event that caused it, and `db.why()` returns the chain. It works next to tracing tools such as Langfuse or LangSmith.
+No. Observability and LLMOps tools such as Langfuse or LangSmith show you span trees of what happened. ZizkaDB is an auditability platform: every event points to the event that caused it, `db.why()` returns the chain, and `db.verify_chain()` proves the record was never changed. It works next to an observability tool if you already have one.
 
 **Can I use ZizkaDB as an audit log for the EU AI Act (Article 12)?**  
 Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations; it doesn't make a system compliant on its own.
