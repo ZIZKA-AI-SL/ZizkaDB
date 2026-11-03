@@ -13,7 +13,6 @@
 - [LiveKit (voice)](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/docs/integrations/livekit.md)
 - [MCP and Cursor](MCP-and-Cursor)
 - [REST API](REST-API)
-- [Multi-Agent Apps](Multi-Agent-Apps)
 
 ### Operations
 - [Self-Hosting](Self-Hosting)
