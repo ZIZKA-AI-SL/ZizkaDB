@@ -102,7 +102,7 @@ export type DeleteAgentResult = {
   deleted: boolean
   agent: string
   events_deleted: number
-  /** False when the search index could not be cleaned after 3 attempts; the rows are deleted either way. */
+  /** False when the vector purge did not succeed: Qdrant failed 3 attempts, or is not configured. The rows are deleted either way. */
   vector_cleanup: boolean
 }
 
