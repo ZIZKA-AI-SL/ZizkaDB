@@ -92,3 +92,23 @@ def test_work_is_bounded_for_huge_messages():
 
 def test_an_exception_without_a_message_is_its_type():
     assert safe_error_text(TimeoutError()) == "TimeoutError"
+
+
+@pytest.mark.parametrize(
+    "message,secret",
+    [
+        ("postgres://u:p@ss@host/db", "p@ss"),
+        ("redis://:ab/cd@host:6379", "ab/cd"),
+        ("Bearer abcdefgh-12345678XYZ", "abcdefgh-12345678XYZ"),
+        ("token: abcd1234efgh", "abcd1234efgh"),
+        ("secret=abc123456789", "abc123456789"),
+        ("secret_access_key=abcd/efgh", "abcd/efgh"),
+        ("private_key=abcdef", "abcdef"),
+        ("Cookie: session=abcdef1234567890; theme=dark", "abcdef1234567890"),
+        ('{"api_key": "sk live with space"}', "live with space"),
+        ("x_zizkadb_live_abcdefghijk", "abcdefghijk"),
+        ("https://TOKEN123@github.com/org/repo", "TOKEN123"),
+    ],
+)
+def test_more_credential_shapes_are_masked(message, secret):
+    assert secret not in safe_error_text(RuntimeError(message))

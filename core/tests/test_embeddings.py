@@ -188,3 +188,25 @@ async def test_raise_errors_still_returns_an_embedding(monkeypatch, no_cache):
         "services.embeddings._openai_embedding", AsyncMock(return_value=[0.1] * 1536)
     )
     assert await generate_embedding_with_config("hello", _config(), raise_errors=True) == [0.1] * 1536
+
+
+async def test_raise_errors_without_a_message_has_no_trailing_colon(monkeypatch, no_cache):
+    from services.embeddings import EmbeddingUnavailable
+
+    async def timeout(text, cfg):
+        raise TimeoutError()
+
+    monkeypatch.setattr("services.embeddings._openai_embedding", timeout)
+    with pytest.raises(EmbeddingUnavailable, match="^TimeoutError$"):
+        await generate_embedding_with_config("hello", _config(), raise_errors=True)
+
+
+async def test_the_provider_error_is_logged_masked(monkeypatch, no_cache, caplog):
+    async def leaky(text, cfg):
+        raise RuntimeError("upstream api-key: abc123secret")
+
+    monkeypatch.setattr("services.embeddings._openai_embedding", leaky)
+    with caplog.at_level("WARNING", logger="services.embeddings"):
+        await generate_embedding_with_config("hello", _config())
+    assert "abc123secret" not in caplog.text
+    assert "api-key: [redacted]" in caplog.text

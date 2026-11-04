@@ -5,6 +5,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from db.connection import get_redis
+from services.error_text import safe_error_text
 from services.embedding_config import (
     EMBEDDING_MODELS,
     TenantEmbeddingConfig,
@@ -102,7 +103,11 @@ async def generate_embedding_with_config(
         embedding = await provider(text, config)
 
         if not embedding:
-            return unavailable(f"embedding provider {config.provider} returned no embedding")
+            hint = (
+                " (not configured, or the model has too many dimensions; the log says which)"
+                if config.provider == "local" else ""
+            )
+            return unavailable(f"embedding provider {config.provider} returned no embedding{hint}")
 
         if len(embedding) != VECTOR_SIZE:
             logger.warning(
@@ -133,9 +138,9 @@ async def generate_embedding_with_config(
         logger.warning(
             "Embedding generation failed for tenant %s: %s",
             config.tenant_id,
-            e,
+            safe_error_text(e),  # provider errors can carry credentials
         )
-        return unavailable(f"{type(e).__name__}: {e}", e)
+        return unavailable(f"{type(e).__name__}: {e}" if str(e) else type(e).__name__, e)
 
 
 async def _openai_embedding(

@@ -23,39 +23,52 @@ SCAN_CHARS = 256 * 1024
 
 _REDACTED = "[redacted]"
 
-# Applied in order. Each keeps the label and masks the value.
-_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+# Characters a token or key is made of.
+_TOKEN_CHAR = r"[A-Za-z0-9._~+/=-]"
+
+# Field names whose value is a credential, in headers, JSON or key=value text
+# and query strings. A prefix joined by - or _ is allowed (x-api-key,
+# aws_secret_access_key, refresh_token, Set-Cookie).
+_SECRET_FIELD = (
+    r"(?:[A-Za-z0-9]+[-_])*"
+    r"(?:api[-_]?key|apikey|key|access[-_]?key(?:[-_]?id)?|private[-_]?key|secret(?:[-_]?key)?"
+    r"|token|password|passwd|pwd|credentials?|session(?:[-_]?(?:id|token))?|cookie|signature|sig)"
+)
+
+
+def _mask_field_value(match: re.Match[str]) -> str:
+    value = match.group(2)
+    if value[:1] in ("'", '"'):  # quoted: mask all of it, keep the quotes
+        return match.group(1) + value[0] + _REDACTED + value[0]
+    return match.group(1) + _REDACTED
+
+
+# Applied in order.
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], object], ...] = (
     # Authorization header, with its scheme: "Authorization: Bearer <token>".
     (
-        re.compile(r"""(?i)(\bauthorization["']?\s*[:=]\s*["']?)(?:(?:bearer|basic|token)\s+)?[^\s"',;]+"""),
+        re.compile(r"""(?i)(\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?)(?:(?:bearer|basic|token)\s+)?[^\s"',;]+"""),
         r"\1" + _REDACTED,
     ),
     # A bearer or basic credential elsewhere. A word of only lowercase letters
-    # is prose ("missing bearer token", "basic validation"), not a credential.
+    # is prose ("missing bearer token", "basic validation"), not a credential;
+    # "abcdefgh-123..." is a credential.
     (
-        re.compile(r"\b((?i:bearer|basic))\s+(?![a-z]+\b)[A-Za-z0-9._~+/=-]{8,}"),
+        re.compile(r"\b((?i:bearer|basic))\s+(?![a-z]+(?!" + _TOKEN_CHAR + r"))" + _TOKEN_CHAR + r"{8,}"),
         r"\1 " + _REDACTED,
     ),
-    # Credential fields in headers, JSON or key=value text.
+    # Credential fields; a quoted value is masked whole, spaces included.
     (
-        re.compile(
-            r"""(?i)(["']?\b(?:x-api-key|api[-_]?key|apikey|(?:access|refresh|auth|id)[-_]?token"""
-            r"""|client[-_]?secret|secret[-_]?key|password|passwd|pwd)["']?\s*[:=]\s*["']?)"""
-            r"""[^\s"',;&}]+"""
-        ),
-        r"\1" + _REDACTED,
+        re.compile(r"""(?i)(\b""" + _SECRET_FIELD + r"""["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"',;&}]+)"""),
+        _mask_field_value,
     ),
-    # Credential query parameters: ?key=..., &token=...
-    (
-        re.compile(r"""(?i)([?&](?:key|token|secret|sig|signature|password)=)[^&\s"'#]+"""),
-        r"\1" + _REDACTED,
-    ),
-    # Provider keys (sk-..., sk-proj-...) and ZizkaDB API keys (zizkadb_live_...,
-    # legacy agdb_...).
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"), _REDACTED),
-    (re.compile(r"\b(?:zizkadb|agdb)_[A-Za-z0-9_-]{8,}"), _REDACTED),
-    # Passwords in URLs, also with an empty user (redis://:password@host).
-    (re.compile(r"://[^/\s:@]*:[^/\s@]+@"), "://" + _REDACTED + "@"),
+    # Provider keys (sk-..., sk-proj-...), also after "_" or "=", and ZizkaDB
+    # API keys (zizkadb_live_..., legacy agdb_...) wherever they appear.
+    (re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}"), _REDACTED),
+    (re.compile(r"(?:zizkadb|agdb)_[A-Za-z0-9_-]{8,}"), _REDACTED),
+    # Credentials in URLs: everything before the last "@" of the URL, so a
+    # password containing "@" or "/" is masked whole (redis://:pw@host too).
+    (re.compile(r"://\S*@"), "://" + _REDACTED + "@"),
 )
 
 

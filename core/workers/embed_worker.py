@@ -159,7 +159,7 @@ async def process_pending_batch(limit: int = 50) -> int:
             # raise_errors: a failure raises EmbeddingUnavailable with the
             # provider's error, so index_last_error says what went wrong.
             embedding = await generate_embedding(text, str(row["tenant_id"]), raise_errors=True)
-            if not embedding:
+            if not embedding:  # unreachable with raise_errors; kept for other providers and fakes
                 raise RuntimeError("no embedding returned")
             if not await _index_event(pool, row, embedding):
                 # Forgotten while the embedding was being generated;
