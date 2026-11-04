@@ -36,6 +36,7 @@ Do this **before** merging the first CI PR if merges are blocked.
 | Merge button | **Squash merge only** |
 | Auto-delete head branches | **On** |
 | Actions → Workflow permissions | **Read repository contents** |
+| Actions → Workflow permissions → Allow GitHub Actions to create and approve pull requests | **Off**. A workflow's approval would count as the required review. The contributors workflow does not need it |
 
 Path: https://github.com/ZIZKA-AI-SL/ZizkaDB/settings
 
@@ -60,7 +61,7 @@ Create a new ruleset (or let `github-setup.sh` create **main-protection**):
 
 These settings meet OpenSSF OSPS Baseline controls AC-03.01/02 (no direct commits or deletion of `main`), QA-03.01 (checks must pass), QA-07.01 (non-author approval), VM-05.03 (dependency gate) and VM-06.02 (SAST gate). See [docs/security/README.md](../security/README.md).
 
-Also, at the **organization** level: Settings → Authentication security → **Require two-factor authentication**; Member privileges → Base permissions **Read**; Actions → General → Workflow permissions **Read repository contents** and **Allow GitHub Actions to create pull requests** (the contributors workflow opens a PR).
+Also, at the **organization** level: Settings → Authentication security → **Require two-factor authentication**; Member privileges → Base permissions **Read**; Actions → General → Workflow permissions **Read repository contents**, with **Allow GitHub Actions to create and approve pull requests** left off.
 
 **Not enabled:** required signed commits (the DCO check covers contributor sign-off), linear history.
 
@@ -107,3 +108,5 @@ No signed commits, no Code Scanning merge gate.
 | `gpg: signing failed` | Remove required signed commits from ruleset |
 | PR blocked but CI green | Status check names in ruleset don't match Checks tab |
 | Skipped CI jobs block merge | Don't use path filters on required jobs until optional checks exist |
+| Contributors run shows `Contributors grid changed` with a link | Open the PR from the link and check that it only changes `README.md`. A maintainer opens it, so checks run and a second maintainer approves |
+| Contributors PR waits for required checks after an update | The workflow pushed with `GITHUB_TOKEN`, which does not start checks. Close and reopen the PR |
