@@ -21,6 +21,14 @@ MAX_ATTEMPTS = max(1, int(os.getenv("EMBED_MAX_ATTEMPTS", "10")))
 RETRY_BASE_SEC = max(1.0, float(os.getenv("EMBED_RETRY_BASE_SEC", "30")))
 RETRY_MAX_SEC = max(RETRY_BASE_SEC, float(os.getenv("EMBED_RETRY_MAX_SEC", "3600")))
 
+# Why the latest attempt failed is kept in events.index_last_error, so an
+# operator can see why an event is 'failed' or 'dead' without the worker logs:
+#   SELECT event_id, index_status, index_attempts, index_last_error
+#   FROM events WHERE index_status IN ('failed', 'dead');
+# It is cleared once the event is indexed. The text comes from
+# services.error_text.safe_error_text (masked, one line, capped), and the
+# embedding service is asked for the provider's error rather than None.
+
 
 async def _index_event(pool, row, embedding) -> bool:
     """Mark ``row`` indexed and upsert its vector, unless it was forgotten.
@@ -51,7 +59,8 @@ async def _index_event(pool, row, embedding) -> bool:
                 return False
             await conn.execute(
                 "UPDATE events SET embedding = $1::vector, index_status = 'indexed', "
-                "index_attempts = 0, index_retry_at = NULL WHERE event_id = $2",
+                "index_attempts = 0, index_retry_at = NULL, index_last_error = NULL "
+                "WHERE event_id = $2",
                 _pgvector_literal(embedding),
                 row["event_id"],
             )
@@ -74,7 +83,8 @@ async def _index_event(pool, row, embedding) -> bool:
 
 
 # Re-queue failed and dead events with a fresh retry budget ('skipped' events
-# were written with embeddings off and are left alone). Run in the container:
+# were written with embeddings off and are left alone). index_last_error is
+# kept until the event is indexed or fails again. Run in the container:
 #   docker exec zizkadb_embed_worker python workers/embed_worker.py --requeue
 REQUEUE_SQL = """
     UPDATE events
@@ -87,8 +97,9 @@ REQUEUE_SQL = """
 LOOP_BACKOFF_MAX_SEC = 60.0
 
 
-async def _record_failure(pool, event_id) -> None:
-    """Count the attempt and schedule the retry, or give up after MAX_ATTEMPTS."""
+async def _record_failure(pool, event_id, reason: str) -> None:
+    """Count the attempt, keep its ``reason`` (from ``safe_error_text``) and
+    schedule the retry, or give up after MAX_ATTEMPTS."""
     status = await pool.fetchval(
         """
         UPDATE events
@@ -101,7 +112,8 @@ async def _record_failure(pool, event_id) -> None:
                 ELSE NOW() + make_interval(
                     secs => LEAST($4::float8, $3::float8 * power(2, LEAST(index_attempts, 30)))
                 )
-            END
+            END,
+            index_last_error = $5
         WHERE event_id = $1
         RETURNING index_status
         """,
@@ -109,6 +121,7 @@ async def _record_failure(pool, event_id) -> None:
         MAX_ATTEMPTS,
         RETRY_BASE_SEC,
         RETRY_MAX_SEC,
+        reason,
     )
     if status == "dead":
         logger.error(
@@ -121,6 +134,7 @@ async def _record_failure(pool, event_id) -> None:
 async def process_pending_batch(limit: int = 50) -> int:
     from db.connection import get_pool
     from services.embeddings import generate_embedding, event_to_text
+    from services.error_text import safe_error_text
 
     pool = get_pool()
     rows = await pool.fetch(
@@ -142,7 +156,9 @@ async def process_pending_batch(limit: int = 50) -> int:
             if isinstance(data, str):
                 data = json.loads(data)
             text = event_to_text(row["event_type"], dict(data))
-            embedding = await generate_embedding(text, str(row["tenant_id"]))
+            # raise_errors: a failure raises EmbeddingUnavailable with the
+            # provider's error, so index_last_error says what went wrong.
+            embedding = await generate_embedding(text, str(row["tenant_id"]), raise_errors=True)
             if not embedding:
                 raise RuntimeError("no embedding returned")
             if not await _index_event(pool, row, embedding):
@@ -152,8 +168,9 @@ async def process_pending_batch(limit: int = 50) -> int:
                 continue
             processed += 1
         except Exception as exc:
-            logger.warning("index failed for %s: %s", event_id, exc)
-            await _record_failure(pool, row["event_id"])
+            reason = safe_error_text(exc)
+            logger.warning("index failed for %s: %s", event_id, reason)
+            await _record_failure(pool, row["event_id"], reason)
     return processed
 
 

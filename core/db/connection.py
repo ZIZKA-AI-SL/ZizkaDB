@@ -427,6 +427,10 @@ async def _run_migrations():
         ADD COLUMN IF NOT EXISTS index_attempts INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE events
         ADD COLUMN IF NOT EXISTS index_retry_at TIMESTAMPTZ;
+        -- Why the latest attempt failed, cleared once the event is indexed.
+        -- Nullable with no default, so adding it does not rewrite the table.
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_last_error TEXT;
     """)
 
     # Event checksum v2 (services/checksum.py). The first start on v2 code
