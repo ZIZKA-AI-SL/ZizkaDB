@@ -88,7 +88,12 @@ def validate_production_startup(
             "dev/default DEV_API_KEY. Unset DEV_API_KEY or set a unique secret in "
             "infra/.env. For local development set ENV=development."
         )
-    if jwt_secret in _DEFAULT_JWT_SECRETS or jwt_refresh_secret in _DEFAULT_JWT_SECRETS:
+    # Compare without surrounding whitespace, so a padded sample or one with a CR
+    # from a CRLF-edited .env is still refused.
+    if (
+        jwt_secret.strip() in _DEFAULT_JWT_SECRETS
+        or jwt_refresh_secret.strip() in _DEFAULT_JWT_SECRETS
+    ):
         raise RuntimeError(
             "Refusing to start in production mode (ENV is not 'development') with a "
             "published or default JWT secret. Set strong JWT_SECRET and "
