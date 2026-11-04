@@ -115,6 +115,9 @@ export interface ApiKey {
   agent_id: string | null
   created_at: string
   last_used: string | null
+  /** read_only keys can query, search and verify but never write. */
+  scope?: 'read_write' | 'read_only'
+  expires_at?: string | null
 }
 
 export interface CreateKeyResponse {
@@ -122,16 +125,32 @@ export interface CreateKeyResponse {
   key_id?: string
   prefix: string
   name: string | null
+  scope?: 'read_write' | 'read_only'
+  expires_at?: string | null
+}
+
+export interface CreateKeyOptions {
+  scope?: 'read_write' | 'read_only'
+  expiresInDays?: number
 }
 
 export async function getAgentApiKeys(token: string, agentId: string): Promise<ApiKey[]> {
   return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}/api-keys`, token)
 }
 
-export async function createAgentApiKey(token: string, agentId: string, name?: string): Promise<CreateKeyResponse> {
+export async function createAgentApiKey(
+  token: string,
+  agentId: string,
+  name?: string,
+  options: CreateKeyOptions = {},
+): Promise<CreateKeyResponse> {
   return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}/api-keys`, token, {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({
+      name,
+      ...(options.scope ? { scope: options.scope } : {}),
+      ...(options.expiresInDays ? { expires_in_days: options.expiresInDays } : {}),
+    }),
   })
 }
 
@@ -166,7 +185,7 @@ export interface AgentEvent {
   parent_id: string | null
   session_id: string | null
   sequence_no: number
-  index_status?: 'pending' | 'indexed' | 'failed' | 'skipped'
+  index_status?: 'pending' | 'indexed' | 'failed' | 'dead' | 'skipped'
 }
 
 /** One tool or API an agent called, with its call count and error rate. */
@@ -253,7 +272,7 @@ export async function getEvents(
 }
 
 export async function getWhyChain(token: string, eventId: string): Promise<WhyChain> {
-  return apiFetch(`/v1/events/${eventId}/why`, token)
+  return apiFetch(`/v1/events/${encodeURIComponent(eventId)}/why`, token)
 }
 
 // Downstream mirror of getWhyChain: everything an event caused.
@@ -263,7 +282,7 @@ export async function getImpactTree(
   depth?: number,
 ): Promise<ImpactTree> {
   const qs = depth !== undefined ? `?depth=${depth}` : ''
-  return apiFetch(`/v1/events/${eventId}/impact${qs}`, token)
+  return apiFetch(`/v1/events/${encodeURIComponent(eventId)}/impact${qs}`, token)
 }
 
 export async function getTenantSessions(
@@ -380,10 +399,13 @@ export interface BaselineChange {
 
 export interface AgentBaseline {
   agent: string
-  status: 'ok' | 'warming_up' | 'insufficient_data'
+  /** `no_current_data`: sessions exist, but none in the selected time window. */
+  status: 'ok' | 'warming_up' | 'insufficient_data' | 'no_current_data'
   message?: string
   sessions: number
   recent_window: number
+  /** Set when the split is by time (24h / 7d / 30d) instead of session count. */
+  window?: '24h' | '7d' | '30d' | null
   baseline?: BaselineWindow
   recent?: BaselineWindow
   drift?: {

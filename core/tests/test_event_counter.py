@@ -35,8 +35,9 @@ async def counter_pool(monkeypatch):
 
     if not await pool.fetchval("SELECT to_regclass('public.tenants') IS NOT NULL"):
         await pool.execute(SCHEMA_PATH.read_text())
-    # schema.sql predates the index_status column; init_db() adds it on
-    # every boot — mirror that here so write_event's INSERT resolves.
+    # A database created from an older schema.sql lacks index_status;
+    # init_db() adds it on every boot — mirror that here so write_event's
+    # INSERT resolves.
     await pool.execute(
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS index_status "
         "VARCHAR(16) NOT NULL DEFAULT 'skipped'"

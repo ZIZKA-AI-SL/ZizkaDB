@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from services.exceptions import not_found, bad_request
 from typing import Any
@@ -6,9 +7,10 @@ from uuid import UUID
 from datetime import datetime
 import json
 
-from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
 from db.connection import get_pool
 from services.checksum import CHECKSUM_COLUMNS, fetch_legacy_cutoff, verify_stored_checksum
+from services.audit_chain import verify_chain
 from services.event_write import write_event
 from services.why_analysis import analyze_why_chain
 
@@ -26,6 +28,12 @@ class LogEventRequest(BaseModel):
     parent_id: str | None = None
     session_id: str | None = None
     metadata: dict[str, Any] | None = None
+    # Same key again (per agent) returns the first event instead of a duplicate.
+    idempotency_key: str | None = Field(default=None, max_length=255)
+    # This event replaces an earlier fact: the old one leaves memory/search.
+    supersedes: str | None = None
+    # 0..1, weights the event in context_for() ranking (unset = 0.5).
+    importance: float | None = Field(default=None, ge=0, le=1)
 
 
 # ─────────────────────────────────────────
@@ -35,7 +43,8 @@ class LogEventRequest(BaseModel):
 @router.post("", status_code=201)
 async def log_event(
     body: LogEventRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
+    idempotency_key: str | None = Header(default=None, max_length=255),
 ):
     await assert_agent_allowed(tenant, body.agent)
     return await write_event(
@@ -46,12 +55,232 @@ async def log_event(
         parent_id=body.parent_id,
         session_id=body.session_id,
         metadata=body.metadata,
+        idempotency_key=body.idempotency_key or idempotency_key,
+        supersedes=body.supersedes,
+        importance=body.importance,
     )
+
+
+# ─────────────────────────────────────────
+# BATCH — POST /v1/events/batch
+# ─────────────────────────────────────────
+
+BATCH_MAX_EVENTS = 500
+
+
+class BatchEventItem(LogEventRequest):
+    # Parent written earlier in the same batch, by its position (0-based).
+    parent_index: int | None = Field(default=None, ge=0)
+
+
+class LogBatchRequest(BaseModel):
+    events: list[BatchEventItem] = Field(..., min_length=1, max_length=BATCH_MAX_EVENTS)
+
+
+@router.post("/batch")
+async def log_events_batch(
+    body: LogBatchRequest,
+    tenant: dict = Depends(get_writer_tenant),
+):
+    """Write up to 500 events in one request, in order.
+
+    Each event is written like POST /v1/events (own checks, chain link and
+    idempotency key), so one bad event does not reject the others: every
+    result is ``{"index", "ok": true, ...event}`` or ``{"index", "ok": false,
+    "status", "error"}``. ``parent_index`` links to an earlier event of the batch.
+    """
+    for agent in dict.fromkeys(e.agent for e in body.events):
+        await assert_agent_allowed(tenant, agent)
+
+    results: list[dict] = []
+    written: dict[int, str] = {}
+    for index, item in enumerate(body.events):
+        parent_id = item.parent_id
+        if item.parent_index is not None:
+            if item.parent_index >= index or item.parent_index not in written:
+                results.append({
+                    "index": index, "ok": False, "status": 400,
+                    "error": "parent_index must point to an earlier event of this batch that was written",
+                })
+                continue
+            parent_id = written[item.parent_index]
+        try:
+            result = await write_event(
+                tenant_id=tenant["tenant_id"],
+                agent=item.agent,
+                event=item.event,
+                data=item.data,
+                parent_id=parent_id,
+                session_id=item.session_id,
+                metadata=item.metadata,
+                idempotency_key=item.idempotency_key,
+                supersedes=item.supersedes,
+                importance=item.importance,
+            )
+        except HTTPException as exc:
+            results.append({"index": index, "ok": False, "status": exc.status_code, "error": exc.detail})
+            continue
+        written[index] = result["event_id"]
+        results.append({"index": index, "ok": True, **result})
+
+    return {
+        "written": sum(r["ok"] for r in results),
+        "failed": sum(not r["ok"] for r in results),
+        "results": results,
+    }
+
+
+# ─────────────────────────────────────────
+# EXPORT / IMPORT — portable NDJSON
+# ─────────────────────────────────────────
+
+EXPORT_PAGE = 1000
+IMPORT_MAX_EVENTS = 1000
+
+
+def _export_line(r) -> str:
+    def _json(v):
+        return json.loads(v) if isinstance(v, str) else v
+
+    return json.dumps({
+        "event_id": str(r["event_id"]),
+        "agent": r["agent_id"],
+        "event": r["event_type"],
+        "data": _json(r["data"]),
+        "metadata": _json(r["metadata"]),
+        "parent_id": str(r["parent_event_id"]) if r["parent_event_id"] else None,
+        "session_id": r["session_id"],
+        "timestamp": r["timestamp"].isoformat(),
+        "sequence_no": r["sequence_no"],
+        "checksum": r["checksum"],
+        "chain_hash": r["chain_hash"],
+    }) + "\n"
+
+
+@router.get("/export")
+async def export_events(
+    agent: str,
+    after_seq: int = Query(default=0, ge=0),
+    tenant: dict = Depends(get_tenant),
+):
+    """Every event of an agent as NDJSON (one JSON object per line), oldest
+    first, streamed. Feed the lines to POST /v1/events/import to move an
+    agent between installs (self-hosted ↔ Cloud) or keep an offline copy."""
+    await assert_agent_allowed(tenant, agent)
+    pool = get_pool()
+    tenant_id = tenant["tenant_id"]
+
+    async def lines():
+        cursor = after_seq
+        while True:
+            rows = await pool.fetch(
+                """
+                SELECT event_id, agent_id, event_type, data, metadata, parent_event_id,
+                       session_id, timestamp, sequence_no, checksum, chain_hash
+                FROM events
+                WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no > $3
+                ORDER BY sequence_no
+                LIMIT $4
+                """,
+                tenant_id, agent, cursor, EXPORT_PAGE,
+            )
+            for r in rows:
+                yield _export_line(r)
+            if len(rows) < EXPORT_PAGE:
+                return
+            cursor = rows[-1]["sequence_no"]
+
+    return StreamingResponse(
+        lines(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{agent}.ndjson"'},
+    )
+
+
+class ImportEvent(BaseModel):
+    event_id: str
+    agent: str = Field(..., min_length=1, max_length=255)
+    event: str = Field(..., min_length=1, max_length=255)
+    data: dict[str, Any]
+    metadata: dict[str, Any] | None = None
+    parent_id: str | None = None
+    session_id: str | None = None
+    timestamp: datetime | None = None
+
+
+class ImportRequest(BaseModel):
+    events: list[ImportEvent] = Field(..., min_length=1, max_length=IMPORT_MAX_EVENTS)
+    # Store everything under this agent instead of each line's own.
+    agent: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+@router.post("/import")
+async def import_events(
+    body: ImportRequest,
+    tenant: dict = Depends(get_writer_tenant),
+):
+    """Import lines from GET /v1/events/export (send them oldest first, up to
+    1000 per request). Original timestamps are kept; events get new ids,
+    checksums and chain links here. Parent links are remapped to the new ids.
+    Re-running an import is safe: each line is keyed on its original event_id,
+    so lines already imported come back as duplicates."""
+    tenant_id = tenant["tenant_id"]
+    agents = dict.fromkeys(body.agent or e.agent for e in body.events)
+    for agent in agents:
+        await assert_agent_allowed(tenant, agent)
+
+    pool = get_pool()
+    new_ids: dict[str, str] = {}
+    summary = {"imported": 0, "duplicates": 0, "failed": 0, "parents_dropped": 0}
+    errors: list[dict] = []
+
+    for index, item in enumerate(body.events):
+        agent = body.agent or item.agent
+        parent_id = None
+        if item.parent_id:
+            parent_id = new_ids.get(item.parent_id) or await pool.fetchval(
+                """
+                SELECT event_id::text FROM events
+                WHERE tenant_id = $1 AND agent_id = $2 AND idempotency_key = $3
+                """,
+                tenant_id, agent, f"import:{item.parent_id}",
+            )
+            if parent_id is None:
+                summary["parents_dropped"] += 1
+        try:
+            result = await write_event(
+                tenant_id=tenant_id,
+                agent=agent,
+                event=item.event,
+                data=item.data,
+                parent_id=parent_id,
+                session_id=item.session_id,
+                metadata=item.metadata,
+                idempotency_key=f"import:{item.event_id}",
+                occurred_at=item.timestamp,
+            )
+        except HTTPException as exc:
+            summary["failed"] += 1
+            errors.append({"index": index, "event_id": item.event_id,
+                           "status": exc.status_code, "error": exc.detail})
+            continue
+        new_ids[item.event_id] = result["event_id"]
+        summary["duplicates" if result["duplicate"] else "imported"] += 1
+
+    return {**summary, "errors": errors[:100]}
 
 
 # ─────────────────────────────────────────
 # QUERY EVENTS — GET /v1/events
 # ─────────────────────────────────────────
+
+
+def _parse_cursor(cursor: str) -> tuple[datetime, int]:
+    try:
+        ts, seq = cursor.rsplit("|", 1)
+        return datetime.fromisoformat(ts), int(seq)
+    except (ValueError, TypeError):
+        raise bad_request("cursor must be '<timestamp>|<sequence_no>' from X-Next-Cursor")
 
 @router.get("")
 async def query_events(
@@ -62,8 +291,12 @@ async def query_events(
     after: datetime | None = None,
     event_type: str | None = None,
     session_id: str | None = None,
+    cursor: str | None = None,
+    response: Response = None,
     tenant: dict = Depends(get_tenant),
 ):
+    """Newest first. For deep paging use ``cursor`` (from the ``X-Next-Cursor``
+    response header) instead of ``offset``: it stays fast on any page."""
     await assert_agent_allowed(tenant, agent)
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
@@ -71,6 +304,12 @@ async def query_events(
     conditions = ["tenant_id = $1", "agent_id = $2"]
     params: list[Any] = [tenant_id, agent]
     i = 3
+
+    if cursor:
+        cursor_ts, cursor_seq = _parse_cursor(cursor)
+        conditions.append(f"(timestamp, sequence_no) < (${i}, ${i + 1})")
+        params.extend([cursor_ts, cursor_seq])
+        i += 2
 
     if before:
         conditions.append(f"timestamp < ${i}")
@@ -98,12 +337,15 @@ async def query_events(
                data, parent_event_id, session_id, sequence_no, metadata, index_status
         FROM events
         WHERE {where}
-        ORDER BY timestamp DESC
+        ORDER BY timestamp DESC, sequence_no DESC
         LIMIT ${i} OFFSET ${i + 1}
         """,
         *params,
     )
 
+    if response is not None and len(rows) == limit:
+        last = rows[-1]
+        response.headers["X-Next-Cursor"] = f"{last['timestamp'].isoformat()}|{last['sequence_no']}"
     return [_format_event(r) for r in rows]
 
 
@@ -418,6 +660,35 @@ async def time_travel(
 # VERIFY CHECKSUMS — GET /v1/events/verify
 # Recompute checksums for an agent's events (audit helper)
 # ─────────────────────────────────────────
+
+@router.get("/chain")
+async def verify_event_chain(
+    agent: str,
+    after_seq: int | None = Query(default=None, ge=0),
+    anchor: str | None = Query(default=None, min_length=64, max_length=64),
+    tenant: dict = Depends(get_tenant),
+):
+    """Check the agent's hash chain: no event removed, inserted, reordered or changed.
+
+    Walks every event (and tombstone of a legitimately deleted one) in order,
+    recomputing checksums and links. Returns ``intact``, a summary, up to 100
+    problems and ``chain_head``. Store ``chain_head`` outside ZizkaDB; later pass
+    its ``sequence_no`` as ``after_seq`` and its ``chain_hash`` as ``anchor`` to
+    check only newer events and prove nothing before the head was rewritten.
+    """
+    await assert_agent_allowed(tenant, agent)
+    if (after_seq is None) != (anchor is None):
+        raise bad_request("Pass after_seq and anchor together (from a stored chain_head)")
+    pool = get_pool()
+    return await verify_chain(
+        pool,
+        tenant["tenant_id"],
+        agent,
+        after_seq=after_seq,
+        anchor=anchor,
+        legacy_until_seq=await fetch_legacy_cutoff(pool),
+    )
+
 
 @router.get("/verify")
 async def verify_events(

@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from api.auth import selfhost_login_limiter
+from api.auth import selfhost_global_login_limiter, selfhost_login_limiter
 from services.rate_limiter import InMemoryStorage
 
 client = TestClient(app)
@@ -15,8 +15,9 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def _fresh_limiter():
-    selfhost_login_limiter.storage = InMemoryStorage()
-    asyncio.run(selfhost_login_limiter.storage.clear())
+    for limiter in (selfhost_login_limiter, selfhost_global_login_limiter):
+        limiter.storage = InMemoryStorage()
+        asyncio.run(limiter.storage.clear())
 
 
 @pytest.fixture
@@ -113,3 +114,19 @@ class TestSelfHostLogin:
         ]
         assert codes[:10] == [401] * 10
         assert codes[10] == 429
+
+    def test_rotating_ips_hit_the_global_limit(self, monkeypatch, mock_pool):
+        """Per-IP limits alone are bypassable by rotating IPs; the global budget
+        is checked before the token is compared, so a correct guess is refused too."""
+        _env(monkeypatch, mode="self_hosted", env="production", token="s3cret")
+        monkeypatch.setattr(selfhost_global_login_limiter, "limit", 3)
+        with patch("api.auth.client_ip", side_effect=[f"203.0.113.{i}" for i in range(10)]):
+            for _ in range(3):
+                assert client.post("/v1/auth/selfhost-login", json={"token": "nope"}).status_code == 401
+            r = client.post("/v1/auth/selfhost-login", json={"token": "s3cret"})
+        assert r.status_code == 429
+
+    def test_one_click_ignores_global_limit(self, monkeypatch, mock_pool):
+        _env(monkeypatch, mode="self_hosted", env="development")
+        monkeypatch.setattr(selfhost_global_login_limiter, "limit", 0)
+        assert client.post("/v1/auth/selfhost-login").status_code == 200

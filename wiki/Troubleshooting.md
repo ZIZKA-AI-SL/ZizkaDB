@@ -73,12 +73,14 @@ SDK raises `AgentScopeError` (Python/TypeScript).
 ## Self-hosted key sent to the wrong host
 
 A key created via `http://localhost:8000` (self-hosted dashboard/signup) only exists in
-that instance's Postgres — it authenticates against `localhost:8000`, never against
+that instance's Postgres — it authenticates against your server, never against
 `https://db.zizka.ai`. If your app only sets `ZIZKADB_API_KEY` and not `ZIZKADB_HOST`,
-most SDK clients default to the cloud host and every request 401s.
+the SDK uses the cloud host and every request 401s.
 
-**Fix:** set both env vars for a self-hosted target — `ZIZKADB_HOST=http://localhost:8000`
-*and* `ZIZKADB_API_KEY=zizkadb_live_...`. Verify quickly:
+**Fix:** set both env vars for a self-hosted target — `ZIZKADB_HOST=<your server URL>`
+*and* `ZIZKADB_API_KEY=zizkadb_live_...`. The SDK uses `ZIZKADB_HOST` whenever no `host`
+argument is passed (zizkadb-sdk 0.4.1 and later; with 0.3.0 pass `host=` explicitly).
+The reverse also applies: with a Cloud key, unset `ZIZKADB_HOST`. Verify quickly:
 
 ```bash
 curl -s http://localhost:8000/v1/agents -H "Authorization: Bearer <key>"
@@ -145,6 +147,6 @@ Need more sessions with `session_id` on events. Keep logging.
 
 ## Get help
 
-- [GitHub Issues](https://github.com/Zizka-ai/ZizkaDB/issues)
+- [GitHub Issues](https://github.com/ZIZKA-AI-SL/ZizkaDB/issues)
 - [db.zizka.ai/docs](https://db.zizka.ai/docs)
 - Community: db.zizka.ai/community

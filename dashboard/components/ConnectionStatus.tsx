@@ -95,7 +95,7 @@ asyncio.run(main())"`
           <>
             Connect guide:{' '}
             <a
-              href="https://github.com/Zizka-ai/ZizkaDB/blob/main/CONNECT.md"
+              href="https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md"
               target="_blank"
               rel="noreferrer"
               style={{ color: '#e8edf5' }}
@@ -104,7 +104,7 @@ asyncio.run(main())"`
             </a>
             {' '}· worked example:{' '}
             <a
-              href="https://github.com/Zizka-ai/ZizkaDB/tree/main/worked/01-support-order-delay"
+              href="https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/worked/01-support-order-delay"
               target="_blank"
               rel="noreferrer"
               style={{ color: '#e8edf5' }}
@@ -115,7 +115,7 @@ asyncio.run(main())"`
         ) : (
           <>
             Dashboard empty but SDK works? Your SDK and login must share the same tenant — see{' '}
-            <a href="https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting" style={{ color: '#e8edf5' }}>Self-host docs</a>.
+            <a href="https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Self-Hosting" style={{ color: '#e8edf5' }}>Self-host docs</a>.
           </>
         )}
       </p>

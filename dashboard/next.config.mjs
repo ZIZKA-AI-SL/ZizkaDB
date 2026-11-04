@@ -8,6 +8,22 @@ const nextConfig = {
   // Standalone mode needs `sharp` for next/image server-side optimization;
   // skip it rather than add a native-binary dependency for a static logo.
   images: { unoptimized: true },
+  async headers() {
+    // Clickjacking / sniffing protection. No script CSP: it would need a
+    // nonce pipeline and could break pages; frame-ancestors is enough here.
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    ]
+  },
   async redirects() {
     return [
       { source: '/api-explorer', destination: '/swagger', permanent: false },

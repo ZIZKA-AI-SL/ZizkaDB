@@ -52,7 +52,6 @@ ZIZKADB_RUN_INTEGRATION=1 pytest core/tests/test_integration_selfhost.py -v
 | `test_marketing_subscriptions.py` | Marketing subscription create + honeypot |
 | `test_settings_auth.py` | Settings embeddings requires dashboard session |
 | `test_pg_pool_warn.py` | Postgres pool × workers warning (no live DB) |
-| `test_a2a.py` | `POST /v1/a2a/messages`: sender from scoped key, same-tenant recipient, 404 unknown, 403 tenant-wide/JWT |
 | `test_reports.py` | Per-agent report payload |
 | `test_suggestions.py` | Suggestions extractor / grounding |
 | `test_token_usage.py` | Token/cost aggregation |

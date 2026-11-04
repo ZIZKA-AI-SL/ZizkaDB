@@ -13,12 +13,13 @@ from services.exceptions import (
     forbidden,
     service_unavailable,
 )
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from services.auth import request_otp, verify_otp, _issue_tokens, email_exists
 from services.api_keys import (
     assert_and_reserve_api_key_slot,
     count_active_api_keys,
     create_api_key_record,
+    key_row,
     revoke_api_key_record,
 )
 from api.deps import get_tenant, require_dashboard_session
@@ -105,6 +106,9 @@ class VerifyOTPBody(BaseModel):
 
 class CreateAPIKeyBody(BaseModel):
     name: str | None = None
+    # Unassigned keys are always read-write (a read-only key must belong to an
+    # agent: POST /v1/agents/{id}/api-keys); they may still expire.
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.post("/request-otp")
@@ -215,6 +219,7 @@ async def create_api_key(
                 tenant_id=tenant_id,
                 name=body.name,
                 agent_id=None,
+                expires_in_days=body.expires_in_days,
             )
 
 
@@ -307,6 +312,19 @@ selfhost_login_limiter = RateLimiter(
     detail="Too many sign-in attempts. Wait a minute and try again.",
 )
 
+# Admin-token attempts across all clients, checked before the token is
+# compared, so rotating IPs does not multiply the per-IP budget. High enough
+# that the owner is never the one who trips it.
+SELFHOST_GLOBAL_LOGIN_MAX = 60
+
+selfhost_global_login_limiter = RateLimiter(
+    limit=SELFHOST_GLOBAL_LOGIN_MAX,
+    window_sec=60,
+    storage=_otp_storage(),
+    strategy=SlidingWindowStrategy(),
+    detail="Too many sign-in attempts. Wait a minute and try again.",
+)
+
 
 def _selfhost_login_allowed() -> bool:
     """
@@ -350,6 +368,13 @@ async def selfhost_login_route(request: Request, body: SelfHostLoginBody | None 
     if mode == "admin_token":
         expected = (os.getenv("SELFHOST_ADMIN_TOKEN") or "").strip()
         supplied = ((body.token if body else None) or "").strip()
+        try:
+            await selfhost_global_login_limiter.check("selfhost:all")
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception("selfhost-login rate limit backend unavailable")
+            raise service_unavailable("Login temporarily unavailable. Please try again shortly.")
         if not hmac.compare_digest(supplied.encode(), expected.encode()):
             raise unauthorized("Invalid admin token")
 
@@ -380,7 +405,7 @@ async def _ensure_dev_tenant(pool) -> None:
 
 
 @router.post("/test-event")
-async def test_event(tenant: dict = Depends(get_tenant)):
+async def test_event(tenant: dict = Depends(require_dashboard_session)):
     """
     Log a test event using the dashboard session (JWT).
     Verifies the tenant pipeline without an API key.
@@ -402,21 +427,11 @@ async def list_api_keys(tenant: dict = Depends(require_dashboard_session)):
     pool = get_pool()
     rows = await pool.fetch(
         """
-        SELECT key_id, key_prefix, name, agent_id, created_at, last_used
+        SELECT key_id, key_prefix, name, agent_id, created_at, last_used, scope, expires_at
         FROM api_keys
         WHERE tenant_id = $1 AND revoked = FALSE
         ORDER BY created_at DESC
         """,
         tenant["tenant_id"],
     )
-    return [
-        {
-            "key_id": str(r["key_id"]),
-            "prefix": r["key_prefix"],
-            "name": r["name"],
-            "agent_id": r["agent_id"],
-            "created_at": r["created_at"].isoformat(),
-            "last_used": r["last_used"].isoformat() if r["last_used"] else None,
-        }
-        for r in rows
-    ]
+    return [key_row(r) for r in rows]

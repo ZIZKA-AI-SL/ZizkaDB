@@ -32,6 +32,8 @@ Response **201:**
 }
 ```
 
+A new `agent` name must be 1–255 characters of letters, numbers, dots, dashes and underscores, starting with a letter or number (the same rule as `/v1/agents/{agent_id}`). Other names get a 400 that states the rule (an empty or over-long name is a 422 from request validation). Agents stored before this rule keep accepting events. The same 400 comes from any route that takes an `agent` when an unassigned API key is first used with a name that does not exist yet, because that first use binds the key to the agent.
+
 `checksum` is a SHA-256 over tenant, agent, event type, data, parent, session, timestamp, sequence number and metadata. Check it with `GET /v1/events/{event_id}/verify` or `GET /v1/events/verify?agent=my-bot` (page with `before_seq`).
 
 ## Query events

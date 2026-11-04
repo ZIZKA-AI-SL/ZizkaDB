@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import os
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
 import redis.asyncio as redis
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, VectorParams
+
+from services.runtime_env import is_dev_mode
 
 logger = logging.getLogger(__name__)
 
@@ -69,50 +72,254 @@ def warn_if_pool_near_pg_limit(
 # Initialize all databases
 # --------------------------------------------------------------------
 
-async def init_db():
-    global _pg_pool, _redis, _qdrant
+def redis_url() -> str:
+    """REDIS_URL, with REDIS_PASSWORD added when set and the URL carries none."""
+    url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    password = (os.getenv("REDIS_PASSWORD") or "").strip()
+    if not password:
+        return url
+    parts = urlsplit(url)
+    if parts.password or "@" in parts.netloc:
+        return url
+    return urlunsplit(parts._replace(netloc=f":{quote(password, safe='')}@{parts.netloc}"))
 
-    # ---------------- PostgreSQL ----------------
 
-    _pg_pool = await asyncpg.create_pool(
-        dsn=os.getenv("DATABASE_URL"),
-        min_size=2,
-        max_size=PG_POOL_MAX_SIZE,
-    )
+def qdrant_api_key() -> str | None:
+    return (os.getenv("QDRANT_API_KEY") or "").strip() or None
 
-    logger.info("Postgres connected")
-    workers, assumed = uvicorn_worker_count()
-    pool_warn = warn_if_pool_near_pg_limit(
-        PG_POOL_MAX_SIZE, workers, assumed=assumed
-    )
-    if pool_warn:
-        logger.warning(pool_warn)
 
+# Passwords published in .env.example and the docs.
+_WELL_KNOWN_DB_PASSWORDS = {"zizkadb", "postgres", "password"}
+
+
+def uses_default_db_password() -> bool:
+    """True when production connects to Postgres with a well-known password."""
+    if is_dev_mode():
+        return False
     try:
-        user_count = await _pg_pool.fetchval(
+        password = urlsplit(os.getenv("DATABASE_URL") or "").password
+    except ValueError:
+        return False
+    return password in _WELL_KNOWN_DB_PASSWORDS
+
+
+# A new column on a hot table: how long each try may wait for its lock (every
+# event write queues behind a pending ALTER meanwhile), and how many tries.
+ADD_COLUMN_LOCK_TIMEOUT = "2s"
+ADD_COLUMN_ATTEMPTS = 6
+ADD_COLUMN_RETRY_DELAY = 1.0  # seconds between tries
+
+
+async def _add_columns_once(table: str, columns: list[tuple[str, str]]) -> None:
+    """Add nullable columns to a table every event write touches, without stalling writes.
+
+    For these columns, a normal start only reads information_schema and takes
+    no lock. The first start after an upgrade adds whatever is missing in one
+    ALTER (one lock, never half done). Each try waits at most
+    ``ADD_COLUMN_LOCK_TIMEOUT`` for the lock, so event writes never queue long
+    behind it, and the tries together (about 17s per table at most) ride out a
+    long-running query. Names and types are constants from this module, never
+    input.
+    """
+    present = {
+        r["column_name"]
+        for r in await _pg_pool.fetch(
             """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema='public'
-            AND table_name='users'
-            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = $1
+            """,
+            table,
         )
+    }
+    missing = [(name, sql_type) for name, sql_type in columns if name not in present]
+    if not missing:
+        return
+    adds = ", ".join(f"ADD COLUMN IF NOT EXISTS {name} {sql_type}" for name, sql_type in missing)
+    names = ", ".join(name for name, _ in missing)
+    await _ddl_with_lock_timeout(table, f"ALTER TABLE {table} {adds}", what=f"add {names} to {table}")
 
-        if user_count:
-            n = await _pg_pool.fetchval("SELECT COUNT(*) FROM users")
-            logger.info("Postgres users table: %s rows", n)
-        else:
-            logger.warning(
-                "Users table missing."
-            )
 
-    except Exception as e:
-        logger.warning("Could not inspect users table: %s", e)
+async def _ddl_with_lock_timeout(table: str, ddl: str, *, what: str | None = None) -> None:
+    """Run DDL that locks a hot table, each try waiting at most ADD_COLUMN_LOCK_TIMEOUT."""
+    for attempt in range(1, ADD_COLUMN_ATTEMPTS + 1):
+        try:
+            async with _pg_pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(f"SET LOCAL lock_timeout = '{ADD_COLUMN_LOCK_TIMEOUT}'")
+                    await conn.execute(ddl)
+            return
+        except asyncpg.exceptions.LockNotAvailableError:
+            if attempt == ADD_COLUMN_ATTEMPTS:
+                raise RuntimeError(
+                    f"Could not {what or 'migrate ' + table}: another session kept {table} "
+                    "locked. Restart once the long-running query finishes."
+                ) from None
+            logger.warning("%s is locked; retrying the migration (%s/%s)", table, attempt, ADD_COLUMN_ATTEMPTS)
+            await asyncio.sleep(ADD_COLUMN_RETRY_DELAY)
 
-    # -----------------------------------------------------------------
-    # Existing migrations (keep yours exactly as-is)
-    # -----------------------------------------------------------------
 
+async def _ensure_chain_heads() -> None:
+    """Each agent's newest chain link, for the verifier only (ADR-009 H5).
+
+    The write path updates it on the agents row it already holds. It is never
+    used to compute a link: an older image does not maintain it, so after a
+    downgrade it can lag behind, which the verifier reports as a stale head.
+    """
+    # retention_days (services/retention.py) shares the guarded ALTER, so a
+    # normal start takes no lock on agents, which every event write updates.
+    await _add_columns_once(
+        "agents",
+        [("retention_days", "INTEGER"), ("chain_head_seq", "BIGINT"), ("chain_head_hash", "VARCHAR(64)")],
+    )
+    # Evidence a write keeps when it finds the recorded head gone. Removed with
+    # its agent (agent delete, account delete through agents). Its foreign key
+    # locks agents while it is created, so that only happens when it is missing,
+    # with the same bounded wait as a new column.
+    if not await _pg_pool.fetchval("SELECT to_regclass('chain_head_breaks') IS NOT NULL"):
+        await _ddl_with_lock_timeout("agents", CHAIN_HEAD_BREAKS_DDL)
+
+
+CHAIN_HEAD_BREAKS_DDL = """
+        CREATE TABLE IF NOT EXISTS chain_head_breaks (
+            id            BIGSERIAL PRIMARY KEY,
+            tenant_id     UUID NOT NULL,
+            agent_id      VARCHAR(255) NOT NULL,
+            expected_seq  BIGINT NOT NULL,
+            expected_hash VARCHAR(64),
+            found_seq     BIGINT,
+            found_hash    VARCHAR(64),
+            detected_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            FOREIGN KEY (agent_id, tenant_id) REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_chain_head_breaks_agent ON chain_head_breaks (tenant_id, agent_id);
+"""
+
+
+async def _ensure_tombstone_checksums() -> None:
+    """Tombstones keep the deleted row's checksum so their link can be checked (ADR-009 H1).
+
+    The column is nullable and a trigger fills it from the row being deleted,
+    so an older image running on this schema (rolling deploy, downgrade) still
+    writes checkable tombstones: it inserts the tombstone before it deletes the
+    row. Each object is created only when missing, so a normal start takes no
+    lock on ``event_tombstones``, which every event write reads; and a later
+    image that needs a different trigger body must use a new function name
+    instead of replacing this one, or older and newer images would keep
+    overwriting each other on restart.
+    """
+    # erased_count and receipt_id: erasure receipts (ADR-009 H3), in the same
+    # ALTER, so an upgrade locks the table once.
+    await _add_columns_once(
+        "event_tombstones",
+        [("checksum", "VARCHAR(64)"), ("erased_count", "INTEGER"), ("receipt_id", "UUID")],
+    )
+    await _pg_pool.execute("""
+        CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            since     TIMESTAMPTZ NOT NULL
+        );
+        DO $do$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_proc
+                WHERE proname = 'zizkadb_tombstone_checksum'
+                  AND pronamespace = current_schema()::regnamespace
+            ) THEN
+                CREATE FUNCTION zizkadb_tombstone_checksum() RETURNS trigger AS $fn$
+                BEGIN
+                    IF NEW.checksum IS NULL THEN
+                        SELECT checksum INTO NEW.checksum FROM events
+                        WHERE tenant_id = NEW.tenant_id AND event_id = NEW.event_id;
+                    END IF;
+                    RETURN NEW;
+                END
+                $fn$ LANGUAGE plpgsql;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_tombstone_checksum'
+                  AND tgrelid = 'event_tombstones'::regclass
+            ) THEN
+                CREATE TRIGGER trg_tombstone_checksum BEFORE INSERT ON event_tombstones
+                    FOR EACH ROW EXECUTE FUNCTION zizkadb_tombstone_checksum();
+            END IF;
+        END $do$;
+    """)
+    # A separate statement, so it runs after the trigger is committed: every
+    # tombstone written from then on has a checksum, whichever image wrote it.
+    # Tombstones without one are accepted only if deleted before this.
+    await _pg_pool.execute(
+        "INSERT INTO tombstone_checksum_cutoff (since) VALUES (now()) "
+        "ON CONFLICT (singleton) DO NOTHING"
+    )
+
+
+async def _ensure_receipt_checks() -> None:
+    """The chain verifier checks erasure receipts (ADR-009 H3).
+
+    Erasures have written a receipt per agent since the image that added the
+    receipt columns; from the cutoff recorded here on, a tombstone that no
+    receipt covers is reported. Recorded once, on the first start of an image
+    that checks receipts, so tombstones from older images and from before the
+    receipts existed stay accepted. The index lets the verifier read the
+    tombstones a receipt seals; it is built concurrently, so writes and
+    erasures continue meanwhile.
+    """
+    await _pg_pool.execute("""
+        CREATE TABLE IF NOT EXISTS tombstone_receipt_cutoff (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            since     TIMESTAMPTZ NOT NULL
+        );
+        INSERT INTO tombstone_receipt_cutoff (since) VALUES (now())
+        ON CONFLICT (singleton) DO NOTHING;
+    """)
+    await _ensure_index_concurrently(
+        "idx_event_tombstones_receipt",
+        "ON event_tombstones (tenant_id, receipt_id) WHERE receipt_id IS NOT NULL",
+    )
+
+
+async def _ensure_supersedes_index() -> None:
+    """Lookup of explicit supersedes links (services/memory_rank.py)."""
+    await _ensure_index_concurrently(
+        "idx_events_supersedes",
+        "ON events (tenant_id, (metadata->>'supersedes')) WHERE metadata ? 'supersedes'",
+    )
+
+
+async def _ensure_index_concurrently(name: str, definition: str) -> None:
+    valid = await _pg_pool.fetchval(
+        """
+        SELECT i.indisvalid FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = $1
+        """,
+        name,
+    )
+    if valid:
+        return
+    if valid is False:
+        await _pg_pool.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+    logger.info("Building index %s", name)
+    await _pg_pool.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} {definition}")
+
+
+async def _ensure_fts_index() -> None:
+    """Full-text index for keyword search (services/keyword_search.py).
+
+    Built CONCURRENTLY so a large events table keeps accepting writes while it
+    builds. A build that was interrupted leaves an INVALID index, which
+    IF NOT EXISTS would skip forever, so drop and rebuild that one.
+    """
+    from services.keyword_search import FTS_DOCUMENT
+
+    await _ensure_index_concurrently("idx_events_fts", f"ON events USING gin ({FTS_DOCUMENT})")
+
+
+# Any constant works; it only has to be the same in every worker.
+MIGRATION_LOCK_ID = 7_301_884_221
+
+
+async def _run_migrations():
     await _pg_pool.execute("""
         ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(50);
         ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(50);
@@ -123,6 +330,8 @@ async def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS gdpr_consent_at TIMESTAMPTZ;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent_at TIMESTAMPTZ;
+
+        ALTER TABLE auth_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
     """)
 
     await _pg_pool.execute("""
@@ -211,6 +420,13 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_events_index_status
         ON events (index_status)
         WHERE index_status IN ('pending', 'failed');
+        -- Embed worker retry state (workers/embed_worker.py): failed events back
+        -- off, and become 'dead' after EMBED_MAX_ATTEMPTS. Constant default, so
+        -- no table rewrite.
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS index_retry_at TIMESTAMPTZ;
     """)
 
     # Retry / DLQ columns for the embedding worker (poison-pill fix).
@@ -366,14 +582,7 @@ async def init_db():
     """)
 
 
-    # ---------------- Redis ----------------
 
-    _redis = redis.from_url(
-        os.getenv(
-            "REDIS_URL",
-            "redis://localhost:6379",
-        )
-    )
 
     await _pg_pool.execute("""
         CREATE TABLE IF NOT EXISTS demo_requests (
@@ -425,7 +634,115 @@ async def init_db():
             ON email_suppressions (LOWER(email));
     """)
 
-    _redis = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+    # Client-supplied idempotency key: a retried write returns the first event.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_events_idempotency
+            ON events (tenant_id, agent_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+    """)
+
+    # Per-agent hash chain (services/audit_chain.py) and the links of deleted rows.
+    await _pg_pool.execute("""
+        ALTER TABLE events ADD COLUMN IF NOT EXISTS chain_hash VARCHAR(64);
+        CREATE TABLE IF NOT EXISTS event_tombstones (
+            tenant_id   UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            agent_id    VARCHAR(255) NOT NULL,
+            event_id    UUID NOT NULL,
+            sequence_no BIGINT NOT NULL,
+            chain_hash  VARCHAR(64) NOT NULL,
+            reason      VARCHAR(50) NOT NULL,
+            deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (tenant_id, event_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_tombstones_agent_seq
+            ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
+    """)
+
+    await _ensure_tombstone_checksums()
+    await _ensure_chain_heads()
+    await _ensure_receipt_checks()
+
+    await _ensure_fts_index()
+    await _ensure_supersedes_index()
+
+    # parent_event_id is a soft reference: the write path checks the parent
+    # exists in the same tenant, and retention / forget may later delete an
+    # old parent. A foreign key would block that, and nulling the child's
+    # link would change its checksum.
+    await _pg_pool.execute("""
+        ALTER TABLE events DROP CONSTRAINT IF EXISTS events_parent_event_id_fkey;
+    """)
+
+    # API key scope (read_write / read_only) and optional expiry.
+    await _pg_pool.execute("""
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'read_write';
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    """)
+
+
+
+async def init_db():
+    global _pg_pool, _redis, _qdrant
+
+    # ---------------- PostgreSQL ----------------
+
+    _pg_pool = await asyncpg.create_pool(
+        dsn=os.getenv("DATABASE_URL"),
+        min_size=2,
+        max_size=PG_POOL_MAX_SIZE,
+    )
+
+    logger.info("Postgres connected")
+    if uses_default_db_password():
+        # A literal message: nothing derived from DATABASE_URL is logged.
+        logger.warning(
+            "Postgres uses a well-known password. Keep its port private, and set a "
+            "random POSTGRES_PASSWORD (ALTER USER ... PASSWORD, then update infra/.env); "
+            "see wiki/Self-Hosting.md."
+        )
+    workers, assumed = uvicorn_worker_count()
+    pool_warn = warn_if_pool_near_pg_limit(
+        PG_POOL_MAX_SIZE, workers, assumed=assumed
+    )
+    if pool_warn:
+        logger.warning(pool_warn)
+
+    try:
+        user_count = await _pg_pool.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema='public'
+            AND table_name='users'
+            """
+        )
+
+        if user_count:
+            n = await _pg_pool.fetchval("SELECT COUNT(*) FROM users")
+            logger.info("Postgres users table: %s rows", n)
+        else:
+            logger.warning(
+                "Users table missing."
+            )
+
+    except Exception as e:
+        logger.warning("Could not inspect users table: %s", e)
+
+    # -----------------------------------------------------------------
+    # Schema migrations: idempotent DDL, run on every start.
+    # -----------------------------------------------------------------
+    # Every uvicorn worker runs init_db at the same moment. The advisory lock
+    # lets one worker migrate while the others wait, instead of racing on the
+    # same DDL (which crashed a worker during start-up).
+    async with _pg_pool.acquire() as lock_conn:
+        await lock_conn.execute("SELECT pg_advisory_lock($1)", MIGRATION_LOCK_ID)
+        try:
+            await _run_migrations()
+        finally:
+            await lock_conn.execute("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID)
+
+    _redis = redis.from_url(redis_url())
     logger.info("Redis connected")
 
     # ---------------- Qdrant ----------------
@@ -448,6 +765,7 @@ async def init_db():
 
     _qdrant = AsyncQdrantClient(
         url=qdrant_url,
+        api_key=qdrant_api_key(),
         timeout=30,
         check_compatibility=False,
     )
@@ -560,7 +878,8 @@ async def _log_qdrant_version() -> None:
 
         url = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")
         async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"{url}/")
+            key = qdrant_api_key()
+            response = await client.get(f"{url}/", headers={"api-key": key} if key else None)
             if response.status_code == 200:
                 version = response.json().get("version", "unknown")
                 logger.info("Qdrant server version: %s", version)

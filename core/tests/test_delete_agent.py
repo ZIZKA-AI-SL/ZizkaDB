@@ -18,8 +18,8 @@ async def test_delete_agent_purges_qdrant_vectors(monkeypatch):
     conn.transaction = MagicMock(return_value=AsyncMock())
     conn.transaction.return_value.__aenter__ = AsyncMock(return_value=None)
     conn.transaction.return_value.__aexit__ = AsyncMock(return_value=None)
-    conn.execute = AsyncMock()
-    pool.fetchrow = AsyncMock(return_value={"event_count": 5})
+    conn.execute = AsyncMock(return_value="DELETE 5")
+    conn.fetchval = AsyncMock(return_value=1)
     pool.acquire = MagicMock(return_value=AsyncMock())
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -32,7 +32,10 @@ async def test_delete_agent_purges_qdrant_vectors(monkeypatch):
 
     result = await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
 
+    # The agent row is locked before anything is deleted.
+    assert "FOR UPDATE" in conn.fetchval.await_args.args[0]
     assert result["deleted"] is True
+    assert result["events_deleted"] == 5  # from the DELETE's row count
     assert result["agent"] == "my-agent"
     qdrant.delete.assert_awaited_once()
     _, kwargs = qdrant.delete.call_args
@@ -42,7 +45,11 @@ async def test_delete_agent_purges_qdrant_vectors(monkeypatch):
 @pytest.mark.asyncio
 async def test_delete_agent_not_found(monkeypatch):
     pool = AsyncMock()
-    pool.fetchrow = AsyncMock(return_value=None)
+    conn = AsyncMock()
+    conn.transaction = MagicMock(return_value=AsyncMock())
+    conn.fetchval = AsyncMock(return_value=None)
+    pool.acquire = MagicMock(return_value=AsyncMock())
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     monkeypatch.setattr("api.agents.get_pool", lambda: pool)
 
     from fastapi import HTTPException
@@ -50,6 +57,7 @@ async def test_delete_agent_not_found(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await agents_api.delete_agent("missing", tenant=DASHBOARD_TENANT)
     assert exc.value.status_code == 404
+    conn.execute.assert_not_awaited()
 
 
 def test_delete_agent_requires_dashboard_session():

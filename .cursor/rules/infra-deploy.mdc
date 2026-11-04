@@ -84,6 +84,8 @@ There is no AWS pipeline, no CodeDeploy, no ECS task definition.
 
 **Never set `ENV=development` on a deployed instance** — it makes hardcoded dev API keys (`zizkadb_dev_local`, `agdb_dev_local`) valid auth tokens. Development mode is opt-in: an unset `ENV` is treated as production (`core/services/runtime_env.py`), and `infra/docker-compose.yml` requires `ENV` to be set in `infra/.env` (it has no default). The local quickstart compose is the exception: it runs `ENV=development` and binds every port to `127.0.0.1`.
 
+**Single-container image (`infra/allinone/`)** — production by default; never pass `ENV=development` on a public URL. Expose port 3001 (front proxy: dashboard + `/v1`); keep `/data`. Behind a platform proxy, add its range to `TRUSTED_PROXIES` or every visitor shares one rate-limit bucket. Read the admin token with `sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`; never print it. Redu Cloud recipe: `redu.md`.
+
 ## iCloud Drive warning
 
 **Never keep the repo inside `~/Desktop` or `~/Documents`** — iCloud syncs `.git/` and creates `filename 2` duplicate files in ref dirs (e.g., `refs/heads/main 2`), which are illegal git ref names and corrupt the repository. Move the repo to `~/code/` or add a `.nosync` suffix to opt out of iCloud sync.

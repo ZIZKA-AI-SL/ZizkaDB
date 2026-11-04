@@ -16,8 +16,9 @@ pip install -r requirements.txt
 python agent.py
 ```
 
-The example is **OSS-first**: it defaults to `ZIZKADB_HOST=http://localhost:8000`
-and only uses `ZIZKADB_API_KEY` if you set one (for a remote/cloud instance).
+The example is **OSS-first**: with neither variable set it uses the local stack at
+`http://localhost:8000`. For a self-hosted server set both `ZIZKADB_HOST` and
+`ZIZKADB_API_KEY`; for ZizkaDB Cloud set only `ZIZKADB_API_KEY`.
 
 ## What you'll see
 

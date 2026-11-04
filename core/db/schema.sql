@@ -22,6 +22,12 @@ CREATE TABLE agents (
     last_seen   TIMESTAMPTZ DEFAULT NOW(),
     event_count BIGINT DEFAULT 0,
     metadata    JSONB,
+    retention_days INTEGER,  -- NULL = EVENT_RETENTION_DAYS, else kept forever (services/retention.py)
+    -- Newest chain link, for the chain verifier only (services/audit_chain.py).
+    -- NULL until the agent's first write after the upgrade that added it;
+    -- never used to compute a link.
+    chain_head_seq  BIGINT,
+    chain_head_hash VARCHAR(64),
     PRIMARY KEY (agent_id, tenant_id)
 );
 
@@ -40,6 +46,8 @@ CREATE TABLE api_keys (
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     last_used   TIMESTAMPTZ,
     revoked     BOOLEAN DEFAULT FALSE,
+    scope       VARCHAR(16) NOT NULL DEFAULT 'read_write',  -- read_only keys never write
+    expires_at  TIMESTAMPTZ,                                 -- NULL = never expires
     CONSTRAINT fk_api_keys_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
 );
@@ -80,6 +88,7 @@ CREATE TABLE auth_otps (
     otp_hash    VARCHAR(255) NOT NULL,
     expires_at  TIMESTAMPTZ NOT NULL,
     used        BOOLEAN DEFAULT FALSE,
+    attempts    INT NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -96,11 +105,17 @@ CREATE TABLE events (
     event_type      VARCHAR(100) NOT NULL,
     data            JSONB NOT NULL,
     embedding       vector(1536),
-    parent_event_id UUID REFERENCES events(event_id),  -- causal link
+    parent_event_id UUID,                               -- causal link (soft: the parent may be deleted by retention)
     session_id      VARCHAR(255),                       -- group related events
     sequence_no     BIGSERIAL,                          -- monotonic, never gaps
     checksum        VARCHAR(64),                        -- SHA-256; v2 covers the audit fields (services/checksum.py)
     metadata        JSONB,
+    -- Embedding pipeline state (also added by init_db() on existing installs).
+    index_status    VARCHAR(16) NOT NULL DEFAULT 'skipped',
+    index_attempts  INTEGER NOT NULL DEFAULT 0,
+    index_retry_at  TIMESTAMPTZ,
+    idempotency_key VARCHAR(255),                       -- retried writes return the first event
+    chain_hash      VARCHAR(64),                        -- per-agent hash chain (services/audit_chain.py)
 
     CONSTRAINT fk_agent FOREIGN KEY (agent_id, tenant_id)
         REFERENCES agents (agent_id, tenant_id)
@@ -128,6 +143,97 @@ CREATE INDEX IF NOT EXISTS idx_events_state_writes
 
 CREATE INDEX idx_events_data
     ON events USING gin (data);
+
+CREATE UNIQUE INDEX uq_events_idempotency
+    ON events (tenant_id, agent_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+-- Keyword search (services/keyword_search.py FTS_DOCUMENT; keep identical).
+CREATE INDEX idx_events_fts
+    ON events USING gin ((to_tsvector('simple', event_type) || jsonb_to_tsvector('simple', data, '["string", "numeric"]')));
+
+-- Explicit supersedes links (services/memory_rank.py).
+CREATE INDEX idx_events_supersedes
+    ON events (tenant_id, (metadata->>'supersedes'))
+    WHERE metadata ? 'supersedes';
+
+-- Chain links of deleted events (GDPR forget, retention): the hash, never the content.
+CREATE TABLE event_tombstones (
+    tenant_id   UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    agent_id    VARCHAR(255) NOT NULL,
+    event_id    UUID NOT NULL,
+    sequence_no BIGINT NOT NULL,
+    chain_hash  VARCHAR(64) NOT NULL,
+    reason      VARCHAR(50) NOT NULL,
+    deleted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- The deleted row's checksum, so the verifier can recompute this link.
+    -- NULL only on tombstones written before the upgrade that added it
+    -- (see tombstone_checksum_cutoff).
+    checksum    VARCHAR(64),
+    -- Erasure receipts (reason 'erasure_receipt', ADR-009 H3) are rows here too,
+    -- so older images link past them: checksum holds the digest of the
+    -- tombstones they cover, erased_count how many tombstones; each covered tombstone
+    -- names its receipt in receipt_id.
+    erased_count INTEGER,
+    receipt_id   UUID,
+    PRIMARY KEY (tenant_id, event_id)
+);
+
+CREATE INDEX idx_event_tombstones_agent_seq
+    ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
+
+-- The chain verifier reads the tombstones a receipt seals (services/audit_chain.py).
+CREATE INDEX idx_event_tombstones_receipt
+    ON event_tombstones (tenant_id, receipt_id) WHERE receipt_id IS NOT NULL;
+
+-- Kept when a write finds the agent's recorded newest link missing or changed:
+-- the newest events were removed or edited outside an erasure, and the new
+-- event would otherwise link past the gap (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS chain_head_breaks (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     UUID NOT NULL,
+    agent_id      VARCHAR(255) NOT NULL,
+    expected_seq  BIGINT NOT NULL,
+    expected_hash VARCHAR(64),
+    found_seq     BIGINT,
+    found_hash    VARCHAR(64),
+    detected_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (agent_id, tenant_id) REFERENCES agents (agent_id, tenant_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_chain_head_breaks_agent ON chain_head_breaks (tenant_id, agent_id);
+
+-- When tombstones started carrying a checksum; init_db() records it once,
+-- after the trigger below exists. A tombstone without a checksum deleted after
+-- it is reported by the chain verifier (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    since     TIMESTAMPTZ NOT NULL
+);
+
+-- When the chain verifier started requiring erasure receipts (ADR-009 H3);
+-- init_db() records it once. A tombstone that no receipt covers, deleted after
+-- it, is reported by the chain verifier (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS tombstone_receipt_cutoff (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    since     TIMESTAMPTZ NOT NULL
+);
+
+-- Fills a tombstone's checksum from the row being deleted when the writer did
+-- not: an older image (rolling deploy, downgrade) inserts the tombstone before
+-- deleting the row, so its tombstones stay checkable. Created only if missing
+-- by init_db(); a different body needs a new function name.
+CREATE OR REPLACE FUNCTION zizkadb_tombstone_checksum() RETURNS trigger AS $fn$
+BEGIN
+    IF NEW.checksum IS NULL THEN
+        SELECT checksum INTO NEW.checksum FROM events
+        WHERE tenant_id = NEW.tenant_id AND event_id = NEW.event_id;
+    END IF;
+    RETURN NEW;
+END
+$fn$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_tombstone_checksum BEFORE INSERT ON event_tombstones
+    FOR EACH ROW EXECUTE FUNCTION zizkadb_tombstone_checksum();
 
 -- Checksum verification pages an agent's events by sequence_no.
 CREATE INDEX idx_events_agent_seq

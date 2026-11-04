@@ -4,14 +4,14 @@
 # opens the dashboard on a demo agent's causal chain.
 # If that image is unavailable, falls back to the multi-container compose stack.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 #
 # Options (env): ZIZKADB_IMAGE_TAG, ZIZKADB_DASHBOARD_PORT, ZIZKADB_NO_OPEN=1,
 #                ZIZKADB_QUICKSTART=compose (force the compose stack)
 set -euo pipefail
 
 REF="${ZIZKADB_REF:-main}"
-REPO="${ZIZKADB_REPO:-Zizka-ai/ZizkaDB}"
+REPO="${ZIZKADB_REPO:-ZIZKA-AI-SL/ZizkaDB}"
 BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 INSTALL_DIR="${ZIZKADB_HOME:-${HOME}/.zizkadb}"
 INFRA="${INSTALL_DIR}/infra"
@@ -89,8 +89,10 @@ run_single_container() {
   check_port "${DASHBOARD_PORT}" "dashboard" "Or pick another: ZIZKADB_DASHBOARD_PORT=3005"
 
   echo "→ [2/3] Starting..."
-  # 127.0.0.1 only: local mode has a one-click dashboard and a well-known API key.
+  # Local mode (the image defaults to production): one-click dashboard and a
+  # well-known API key, so the ports stay on 127.0.0.1 only.
   docker run -d --name "${CONTAINER}" --restart unless-stopped \
+    -e ENV=development \
     -p "127.0.0.1:${API_PORT}:8000" \
     -p "127.0.0.1:${DASHBOARD_PORT}:3001" \
     -v "${VOLUME}:/data" \

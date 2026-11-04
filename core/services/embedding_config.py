@@ -41,6 +41,22 @@ DEFAULT_PROVIDER = "openai"
 DEFAULT_MODEL = "text-embedding-3-small"
 VECTOR_SIZE = 1536
 
+# EMBEDDINGS_PROVIDER=local: any OpenAI-compatible /embeddings endpoint the
+# operator runs (Ollama, LM Studio, vLLM, LocalAI), for every tenant, with no
+# data leaving the machine. Vectors up to 1536 dims are zero-padded, which keeps
+# cosine similarity unchanged.
+LOCAL_PROVIDER = "local"
+
+
+def local_embeddings_settings() -> dict | None:
+    if os.getenv("EMBEDDINGS_PROVIDER", "").strip().lower() != LOCAL_PROVIDER:
+        return None
+    return {
+        "url": os.getenv("LOCAL_EMBEDDINGS_URL", "http://localhost:11434/v1").rstrip("/"),
+        "model": os.getenv("LOCAL_EMBEDDINGS_MODEL", "nomic-embed-text").strip(),
+        "api_key": os.getenv("LOCAL_EMBEDDINGS_API_KEY") or None,
+    }
+
 
 @dataclass
 class TenantEmbeddingConfig:
@@ -131,6 +147,15 @@ def _resolve_api_key(use_platform: bool, encrypted: str | None) -> str | None:
 
 
 async def get_tenant_embedding_config(tenant_id: str) -> TenantEmbeddingConfig:
+    local = local_embeddings_settings()
+    if local:
+        return TenantEmbeddingConfig(
+            tenant_id=tenant_id,
+            provider=LOCAL_PROVIDER,
+            model=local["model"],
+            use_platform_key=True,
+            api_key=local["api_key"],
+        )
     pool = get_pool()
     row = await pool.fetchrow(
         """
@@ -212,5 +237,5 @@ def embedding_config_for_response(config: TenantEmbeddingConfig) -> dict:
         "use_platform_key": config.use_platform_key,
         "has_custom_api_key": not config.use_platform_key,
         "platform_key_available": bool(os.getenv("OPENAI_API_KEY")),
-        "ready": bool(config.api_key),
+        "ready": bool(config.api_key) or config.provider == LOCAL_PROVIDER,
     }

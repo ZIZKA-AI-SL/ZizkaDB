@@ -288,8 +288,26 @@ async def test_unstorable_input_is_rejected_before_any_db_write(mock_pool, kwarg
     mock_pool.conn.fetchrow.assert_not_awaited()
 
 
+def _as_new_agent(mock_pool):
+    """The agents UPDATE matches no row, so the write creates the agent."""
+    row = mock_pool.conn.fetchrow.return_value
+
+    async def fetchrow(sql, *args):
+        return None if sql.lstrip().startswith("UPDATE agents") else row
+
+    mock_pool.conn.fetchrow.side_effect = fetchrow
+
+
+def _agent_sql(mock_pool) -> list[str]:
+    return [
+        c.args[0] for c in mock_pool.conn.fetchrow.await_args_list
+        if "agents" in c.args[0] and "events" not in c.args[0]
+    ]
+
+
 @pytest.mark.asyncio
 async def test_agent_upsert_and_event_insert_share_one_transaction(mock_pool):
+    _as_new_agent(mock_pool)
     await write_event(
         tenant_id="tenant1",
         agent="agent1",
@@ -299,15 +317,25 @@ async def test_agent_upsert_and_event_insert_share_one_transaction(mock_pool):
 
     conn = mock_pool.conn
     conn.transaction.assert_called_once()
-    upsert_sql = conn.execute.await_args_list[0].args[0]
-    assert "INSERT INTO agents" in upsert_sql
+    sql = [c.args[0] for c in conn.fetchrow.await_args_list]
+    update = next(i for i, q in enumerate(sql) if q.lstrip().startswith("UPDATE agents"))
+    upsert = next(i for i, q in enumerate(sql) if "INSERT INTO agents" in q)
+    canonical = next(i for i, q in enumerate(sql) if "nextval" in q)
+    insert = next(i for i, q in enumerate(sql) if "INSERT INTO events" in q)
     # the first event of a new agent must count itself (event_count = 1, not 0)
-    assert "VALUES ($1, $2, 1)" in upsert_sql
-    assert "nextval" in conn.fetchrow.await_args_list[0].args[0]
-    assert "INSERT INTO events" in conn.fetchrow.await_args_list[1].args[0]
+    assert "VALUES ($1, $2, 1)" in sql[upsert]
+    assert update < upsert < canonical < insert
     # nothing touches the agents table outside the transaction
     for call in mock_pool.execute.await_args_list:
         assert "INSERT INTO agents" not in call.args[0]
+
+
+@pytest.mark.asyncio
+async def test_existing_agent_is_updated_without_an_upsert(mock_pool):
+    await write_event(tenant_id="tenant1", agent="agent1", event="message", data={})
+
+    agent_sql = _agent_sql(mock_pool)
+    assert len(agent_sql) == 1 and agent_sql[0].lstrip().startswith("UPDATE agents")
 
 
 @pytest.mark.asyncio
@@ -315,10 +343,14 @@ async def test_failed_event_insert_propagates_so_the_transaction_rolls_back(mock
     """The agent upsert and the event INSERT sit in one transaction, so an
     INSERT failure must propagate out of ``conn.transaction()`` (which then
     rolls the counter bump back) instead of being swallowed."""
-    mock_pool.conn.fetchrow.side_effect = [
-        mock_pool.conn.fetchrow.return_value,
-        RuntimeError("insert failed"),
-    ]
+    row = mock_pool.conn.fetchrow.return_value
+
+    async def fail_the_event_insert(sql, *args):
+        if "INSERT INTO events" in sql:
+            raise RuntimeError("insert failed")
+        return row
+
+    mock_pool.conn.fetchrow.side_effect = fail_the_event_insert
 
     with pytest.raises(RuntimeError, match="insert failed"):
         await write_event(
@@ -411,11 +443,13 @@ async def test_write_event_inserts_v2_checksum_of_canonical_values(
     )
     assert result["checksum"] == expected
 
-    select_call, insert_call = mock_pool.conn.fetchrow.await_args_list
-    assert "nextval" in select_call.args[0]
+    calls = mock_pool.conn.fetchrow.await_args_list
+    assert sum("nextval" in c.args[0] for c in calls) == 1
+    insert_call, = [c for c in calls if "INSERT INTO events" in c.args[0]]
     insert_sql, *insert_args = insert_call.args
     assert "INSERT INTO events" in insert_sql
-    assert insert_args[8:] == [7, canonical["timestamp"], expected]
+    assert insert_args[8:12] == [7, canonical["timestamp"], expected, None]
+    assert len(insert_args[12]) == 64  # chain_hash
     assert not any(
         "UPDATE events SET checksum" in c.args[0] for c in mock_pool.execute.await_args_list
     )
@@ -442,3 +476,45 @@ async def test_session_id_longer_than_the_column_is_rejected_with_400(mock_pool,
 
     assert exc.value.status_code == 400
     mock_pool.acquire.assert_not_called()
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent",
+    ["my bot", "team/bot", " bot", "bot ", "bot\n", "bot\t", "-bot", ".bot", "bot?x", "bot#1", "b%2Fot", "a" * 256],
+)
+async def test_new_agent_no_agent_route_can_reach_is_rejected_before_any_insert(mock_pool, agent):
+    """A new agent must be reachable through /v1/agents/{id}."""
+    _as_new_agent(mock_pool)
+
+    with pytest.raises(HTTPException) as exc:
+        await write_event(tenant_id="tenant1", agent=agent, event="message", data={})
+
+    assert exc.value.status_code == 400
+    assert "letters, numbers, dots, dashes, underscores" in exc.value.detail
+    mock_pool.conn.execute.assert_not_awaited()
+    # Only the UPDATE that found no agent ran; nothing was inserted.
+    assert [q.lstrip().split()[0] for q in _agent_sql(mock_pool)] == ["UPDATE"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent", ["bot", "support-bot", "a.b_c-1", "Agent007", "9lives", "a" * 255],
+)
+async def test_new_agent_names_the_agent_routes_accept_are_written(mock_pool, agent):
+    from api.agents import _validate_agent_id
+
+    _as_new_agent(mock_pool)
+
+    assert _validate_agent_id(agent) == agent
+    await write_event(tenant_id="tenant1", agent=agent, event="message", data={})
+    assert any("INSERT INTO agents" in q for q in _agent_sql(mock_pool))
+
+
+@pytest.mark.asyncio
+async def test_agent_stored_before_the_rule_still_accepts_events(mock_pool):
+    # The default mock row: the agents UPDATE finds the stored agent.
+    await write_event(tenant_id="tenant1", agent="legacy bot", event="message", data={})
+
+    assert any("INSERT INTO events" in c.args[0] for c in mock_pool.conn.fetchrow.await_args_list)

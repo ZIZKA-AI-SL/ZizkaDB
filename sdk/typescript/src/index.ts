@@ -24,11 +24,16 @@
 
 import type {
   ZizkaDBConfig,
+  BatchEvent,
+  BatchResult,
   AgentEvent,
   AgentInfo,
   AgentState,
   AtOptions,
   CausalChain,
+  ChainHead,
+  ChainVerification,
+  LogForkOptions,
   LogOptions,
   LogToolOptions,
   LogToolResultOptions,
@@ -38,7 +43,8 @@ import type {
   SearchOptions,
 } from './types'
 import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
-import { LineageContext, resolveLogLineage, recordLogResult } from './context'
+import { LineageContext, resolveLogLineage, recordLogResult, getLineageState } from './context'
+import { readEnv } from './env'
 import packageJson from '../package.json'
 
 export * from './types'
@@ -54,15 +60,16 @@ function isLocalHost(host: string): boolean {
   return h.includes('localhost') || h.includes('127.0.0.1') || h.includes('0.0.0.0')
 }
 
+
 /** ZIZKADB_API_KEY preferred; AGENTDB_API_KEY for legacy managed-cloud users. */
 function apiKeyFromEnv(): string | undefined {
-  return process.env.ZIZKADB_API_KEY ?? process.env.AGENTDB_API_KEY
+  return readEnv('ZIZKADB_API_KEY') ?? readEnv('AGENTDB_API_KEY')
 }
 
 function logHintsEnabled(baseUrl: string): boolean {
-  const quiet = (process.env.ZIZKADB_QUIET ?? '').toLowerCase()
+  const quiet = (readEnv('ZIZKADB_QUIET') ?? '').toLowerCase()
   if (['1', 'true', 'yes', 'on'].includes(quiet)) return false
-  if (['1', 'true', 'yes', 'on'].includes((process.env.ZIZKADB_LOG_HINTS ?? '').toLowerCase())) {
+  if (['1', 'true', 'yes', 'on'].includes((readEnv('ZIZKADB_LOG_HINTS') ?? '').toLowerCase())) {
     return true
   }
   return isLocalHost(baseUrl)
@@ -74,10 +81,33 @@ function emitLogHint(baseUrl: string, eventId: string): void {
   }
 }
 
+interface EventWriteResponse {
+  event_id: string
+  timestamp: string
+  sequence_no: number
+  checksum: string
+  index_status?: string
+  indexed?: boolean
+  chain_hash?: string | null
+  duplicate?: boolean
+}
+
+function parseLogResult(response: EventWriteResponse): LogResult {
+  return {
+    eventId: response.event_id,
+    timestamp: new Date(response.timestamp),
+    sequenceNo: response.sequence_no,
+    checksum: response.checksum,
+    indexStatus: response.index_status ?? (response.indexed ? 'indexed' : 'failed'),
+    ...(response.chain_hash ? { chainHash: response.chain_hash } : {}),
+    ...(response.duplicate ? { duplicate: true } : {}),
+  }
+}
+
 let _telemetrySent = false
 
 function _isLocalSelfHost(): boolean {
-  const host = process.env.ZIZKADB_HOST ?? ''
+  const host = readEnv('ZIZKADB_HOST') ?? ''
   return (
     host.startsWith('http://localhost') ||
     host.startsWith('http://127.0.0.1') ||
@@ -88,8 +118,7 @@ function _isLocalSelfHost(): boolean {
 function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
   if (_telemetrySent) return
   if (
-    typeof process !== 'undefined' &&
-    /^(false|0|no|off)$/i.test(process.env.ZIZKADB_TELEMETRY ?? '')
+    /^(false|0|no|off)$/i.test(readEnv('ZIZKADB_TELEMETRY') ?? '')
   ) return
 
   _telemetrySent = true
@@ -98,7 +127,7 @@ function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
     install_id:  _getInstallId(),
     sdk:         'typescript',
     sdk_version: SDK_VERSION,
-    node:        typeof process !== 'undefined' ? process.version : 'unknown',
+    node:        (typeof process !== 'undefined' && process.version) || 'unknown',
     os:          typeof process !== 'undefined' ? process.platform : 'unknown',
     mode,
   }
@@ -216,7 +245,16 @@ export class ZizkaDB {
   private readonly telemetryMode: 'cloud' | 'self-hosted'
 
   constructor(config: ZizkaDBConfig) {
-    if (!config.apiKey && !config.host) {
+    // When host is omitted, ZIZKADB_HOST (or legacy AGENTDB_HOST) is used if
+    // set, so a self-hosted key is never sent to Cloud. An explicit host
+    // always wins. Runtimes without `process` (browsers, edge) skip the env.
+    // A blank value counts as unset, and each variable is tried in turn.
+    const host =
+      config.host?.trim() ||
+      readEnv('ZIZKADB_HOST')?.trim() ||
+      readEnv('AGENTDB_HOST')?.trim() ||
+      undefined
+    if (!config.apiKey && !host) {
       throw new ZizkaDBError(
         'Provide an apiKey (cloud) or host (self-hosted).\n' +
         '  Cloud:       new ZizkaDB({ apiKey: "zizkadb_live_..." })\n' +
@@ -224,21 +262,21 @@ export class ZizkaDB {
       )
     }
 
-    this.baseUrl = config.host?.replace(/\/$/, '') ?? CLOUD_HOST
+    this.baseUrl = host?.replace(/\/$/, '') ?? CLOUD_HOST
     this.timeout = config.timeout ?? 10_000
 
     let apiKey = config.apiKey
-    if (!apiKey && config.host) {
-      if (isLocalHost(config.host)) {
+    if (!apiKey && host) {
+      if (isLocalHost(host)) {
         apiKey =
           apiKeyFromEnv() ??
-          process.env.DEV_API_KEY ??
+          readEnv('DEV_API_KEY') ??
           DEFAULT_DEV_API_KEY
       } else {
         apiKey = apiKeyFromEnv()
         if (!apiKey) {
           throw new ZizkaDBError(
-            `Cloud host requires an apiKey or ZIZKADB_API_KEY env var. Host: ${config.host}`,
+            `Cloud host requires an apiKey or ZIZKADB_API_KEY env var. Host: ${host}`,
           )
         }
       }
@@ -249,7 +287,7 @@ export class ZizkaDB {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     }
 
-    this.telemetryMode = config.host ? 'self-hosted' : 'cloud'
+    this.telemetryMode = host ? 'self-hosted' : 'cloud'
     _sendTelemetry(this.telemetryMode)
   }
 
@@ -277,21 +315,11 @@ export class ZizkaDB {
       parent_id: parentId,
       session_id: sessionId,
       metadata: options.metadata ?? null,
-    }) as {
-      event_id: string
-      timestamp: string
-      sequence_no: number
-      checksum: string
-      index_status?: string
-      indexed?: boolean
-    }
-    const result = {
-      eventId: res.event_id,
-      timestamp: new Date(res.timestamp),
-      sequenceNo: res.sequence_no,
-      checksum: res.checksum,
-      indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
-    }
+      ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
+      ...(options.supersedes != null ? { supersedes: options.supersedes } : {}),
+      ...(options.importance != null ? { importance: options.importance } : {}),
+    }) as EventWriteResponse
+    const result = parseLogResult(res)
     recordLogResult(options.agent, result.eventId)
     emitLogHint(this.baseUrl, result.eventId)
     return result
@@ -359,6 +387,173 @@ export class ZizkaDB {
     return res.map(parseEvent)
   }
 
+  /**
+   * Every event of an agent, newest first, page by page with a cursor
+   * (fast at any depth, no duplicates or gaps).
+   *
+   *   for await (const event of db.iterEvents('my-bot')) { ... }
+   */
+  async *iterEvents(
+    agent: string,
+    options: { pageSize?: number, eventType?: string, sessionId?: string } = {},
+  ): AsyncGenerator<AgentEvent> {
+    const pageSize = options.pageSize ?? 500
+    let cursor: string | undefined
+    while (true) {
+      const params: Record<string, string> = { agent, limit: String(pageSize) }
+      if (options.eventType) params.event_type = options.eventType
+      if (options.sessionId) params.session_id = options.sessionId
+      if (cursor) params.cursor = cursor
+      const page = await this.get('/v1/events', params) as Record<string, unknown>[]
+      for (const item of page) yield parseEvent(item)
+      if (page.length < pageSize) return
+      // The raw timestamp keeps microseconds; a Date would round them off.
+      const last = page[page.length - 1]
+      cursor = `${last.timestamp as string}|${last.sequence_no as number}`
+    }
+  }
+
+  /**
+   * Stream every event of an agent, oldest first (the server's NDJSON export).
+   * Pass the objects to `importEvents()` on another instance, or save them.
+   */
+  async *exportEvents(agent: string): AsyncGenerator<Record<string, unknown>> {
+    const url = `${this.baseUrl}/v1/events/export?${new URLSearchParams({ agent })}`
+    const res = await fetch(url, { method: 'GET', headers: this.headers })
+    if (!res.ok || !res.body) {
+      await this.handle(res)
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      let newline = buffer.indexOf('\n')
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim()
+        buffer = buffer.slice(newline + 1)
+        if (line) yield JSON.parse(line) as Record<string, unknown>
+        newline = buffer.indexOf('\n')
+      }
+      if (done) break
+    }
+    if (buffer.trim()) yield JSON.parse(buffer) as Record<string, unknown>
+  }
+
+  /**
+   * Import events from `exportEvents()` (oldest first), 1000 per request.
+   * Original timestamps are kept, parents remapped; re-running is safe.
+   */
+  async importEvents(
+    events: Record<string, unknown>[],
+    options: { agent?: string, chunkSize?: number } = {},
+  ): Promise<{ imported: number, duplicates: number, failed: number, parentsDropped: number, errors: unknown[] }> {
+    const size = options.chunkSize ?? 1000
+    const totals = { imported: 0, duplicates: 0, failed: 0, parentsDropped: 0, errors: [] as unknown[] }
+    for (let start = 0; start < events.length; start += size) {
+      const res = await this.post('/v1/events/import', {
+        events: events.slice(start, start + size),
+        ...(options.agent ? { agent: options.agent } : {}),
+      }) as { imported: number, duplicates: number, failed: number, parents_dropped: number, errors: unknown[] }
+      totals.imported += res.imported
+      totals.duplicates += res.duplicates
+      totals.failed += res.failed
+      totals.parentsDropped += res.parents_dropped
+      totals.errors.push(...res.errors)
+    }
+    return totals
+  }
+
+  /**
+   * Write up to 500 events in one request, in order. One bad event does not
+   * reject the others: check `results[i].ok`.
+   */
+  async logBatch(events: BatchEvent[]): Promise<BatchResult> {
+    const res = await this.post('/v1/events/batch', {
+      events: events.map(e => ({
+        agent: e.agent,
+        event: e.event,
+        data: e.data,
+        parent_id: e.parentId ?? null,
+        session_id: e.sessionId ?? null,
+        metadata: e.metadata ?? null,
+        ...(e.idempotencyKey != null ? { idempotency_key: e.idempotencyKey } : {}),
+        ...(e.supersedes != null ? { supersedes: e.supersedes } : {}),
+        ...(e.importance != null ? { importance: e.importance } : {}),
+        ...(e.parentIndex != null ? { parent_index: e.parentIndex } : {}),
+      })),
+    }) as { written: number, failed: number, results: Record<string, unknown>[] }
+    return {
+      written: res.written,
+      failed: res.failed,
+      results: res.results.map(r => ({
+        index: r.index as number,
+        ok: r.ok as boolean,
+        ...(r.ok
+          ? { eventId: r.event_id as string, sequenceNo: r.sequence_no as number, duplicate: Boolean(r.duplicate) }
+          : { status: r.status as number, error: r.error }),
+      })),
+    }
+  }
+
+  /**
+   * Log parallel branches from the same parent (e.g. parallel tool calls).
+   * Every event in `events` shares the same `parentId` — the lineage context's
+   * `lastEventId`, or null if there is none. Branches do NOT chain off each
+   * other: the parent is resolved once and passed explicitly to every branch.
+   *
+   * Requests are sent sequentially (not concurrently), matching the Python SDK.
+   *
+   * After logging, the lineage context's `lastEventId` is advanced to the
+   * last result's event id — unless an active `ctx.fork()` has set
+   * `forkParentId`, in which case `lastEventId` is left untouched to preserve
+   * the fork/endFork contract. Python's `log_fork()` behaves the same way.
+   *
+   * Example:
+   *   await db.logFork({
+   *     agent: 'bot',
+   *     events: [
+   *       { event: 'tool_call', data: { tool: 'search', args: { q: 'a' } } },
+   *       { event: 'tool_call', data: { tool: 'search', args: { q: 'b' } } },
+   *     ],
+   *   })
+   */
+  async logFork(options: LogForkOptions): Promise<LogResult[]> {
+    const state = getLineageState()
+    const { agent } = options
+    // Resolve the fork parent once: the context's lastEventId, or null.
+    const forkParent = state && state.agent === agent ? state.lastEventId : null
+    const sessionId = options.sessionId ?? (state?.agent === agent ? state.sessionId : null)
+
+    const results: LogResult[] = []
+    for (const { event, data, metadata, importance } of options.events) {
+      // Bypass resolveLogLineage so branches never inherit each other as
+      // parents: parent_id is passed explicitly (may be null) and stored as-is.
+      const res = await this.post('/v1/events', {
+        agent,
+        event,
+        data,
+        parent_id: forkParent,
+        session_id: sessionId,
+        ...(metadata ? { metadata } : {}),
+        ...(importance !== undefined ? { importance } : {}),
+      }) as EventWriteResponse
+      const result = parseLogResult(res)
+      results.push(result)
+      emitLogHint(this.baseUrl, result.eventId)
+    }
+
+    // Advance lastEventId only when not inside ctx.fork() (forkParentId set).
+    // Python's log_fork() does the same: recordLogResult() skips updating while
+    // forkParentId is set, and we honor that here too.
+    if (state && state.agent === agent && results.length > 0 && state.forkParentId === null) {
+      state.lastEventId = results[results.length - 1].eventId
+    }
+    return results
+  }
+
   // ─────────────────────────────────────────
   // WHY
   // ─────────────────────────────────────────
@@ -424,6 +619,8 @@ export class ZizkaDB {
       query: options.query,
       agent: options.agent ?? null,
       limit: options.limit ?? 10,
+      ...(options.mode ? { mode: options.mode } : {}),
+      ...(options.includeSuperseded ? { include_superseded: true } : {}),
     }) as { results: Record<string, unknown>[] }
     return res.results.map(parseEvent)
   }
@@ -431,6 +628,35 @@ export class ZizkaDB {
   // ─────────────────────────────────────────
   // AT (time travel)
   // ─────────────────────────────────────────
+
+  /**
+   * Check the agent's audit hash chain: no event removed, inserted, reordered
+   * or changed (deletions through forget() are allowed). Store `chainHead`
+   * outside ZizkaDB and pass it back as `after` to check only newer events.
+   */
+  async verifyChain(agent: string, after?: ChainHead): Promise<ChainVerification> {
+    const params: Record<string, string> = { agent }
+    if (after) {
+      params.after_seq = String(after.sequenceNo)
+      params.anchor = after.chainHash
+    }
+    const res = await this.get('/v1/events/chain', params) as {
+      agent: string
+      intact: boolean
+      summary: Record<string, number>
+      problems: Record<string, unknown>[]
+      chain_head: { sequence_no: number, chain_hash: string } | null
+    }
+    return {
+      agent: res.agent,
+      intact: res.intact,
+      summary: res.summary,
+      problems: res.problems,
+      chainHead: res.chain_head
+        ? { sequenceNo: res.chain_head.sequence_no, chainHash: res.chain_head.chain_hash }
+        : null,
+    }
+  }
 
   async at(options: AtOptions): Promise<AgentState> {
     const res = await this.get('/v1/events/at', {

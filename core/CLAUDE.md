@@ -8,14 +8,13 @@ See root [`CLAUDE.md`](../CLAUDE.md) for full project context. This file covers 
 
 All routers are mounted in `main.py` at `/v1/<prefix>`:
 
-The thirteen routers mounted in `main.py` (`app.include_router`):
+The fifteen routers mounted in `main.py` (`app.include_router`):
 
 | File | Prefix | Auth type |
 |---|---|---|
 | `api/auth.py` | `/v1/auth` | mixed (public OTP + JWT-only key mgmt) |
-| `api/events.py` | `/v1/events` | `get_tenant` (+ `assert_agent_allowed` on `/why`, `/impact`, `/at`, `/verify`, `/{id}/verify`) |
+| `api/events.py` | `/v1/events` | `get_tenant` (+ `assert_agent_allowed` on `/why`, `/impact`, `/at`, `/verify`, `/chain`, `/{id}/verify`) |
 | `api/agents.py` | `/v1/agents` | mixed (see below) |
-| `api/a2a.py` | `/v1/a2a` | `get_tenant` |
 | `api/search.py` | `/v1/search` | `get_tenant` + `assert_agent_allowed` |
 | `api/memory.py` | `/v1/memory` | `get_tenant` + `assert_agent_allowed` (agent-scoped) |
 | `api/telemetry.py` | `/v1/telemetry` | `get_tenant` |
@@ -25,6 +24,7 @@ The thirteen routers mounted in `main.py` (`app.include_router`):
 | `api/demo_requests.py` | `/v1/demo-requests` | public (honeypot + rate limit) |
 | `api/community.py` | `/v1/community` | public (honeypot on writes) |
 | `api/marketing_subscriptions.py` | `/v1/marketing-subscriptions` | public (honeypot on writes) |
+| `api/metrics.py` | `/metrics` (no `/v1`) | `METRICS_TOKEN` bearer; 404 when unset |
 
 Under `/v1/agents`: per-agent analytics (`/stats`, `/sessions`, `/baseline`, `/behavior-change`,
 `/report`, `/token-usage`, `/token-optimization`, `/suggestions`, `/at`) use `get_tenant` +
@@ -33,22 +33,6 @@ Under `/v1/agents`: per-agent analytics (`/stats`, `/sessions`, `/baseline`, `/b
 
 Swagger UI: `http://localhost:8000/swagger` · OpenAPI schema: `/openapi.json`
 
-### A2A (`POST /v1/a2a/messages`)
-
-**Managed cloud only**: on `DEPLOYMENT_MODE=self_hosted` the route returns 403 (self-hosted is single-agent, see `services/agent_limits.py`).
-
-SDK-only. Auth is `get_tenant`, but a **tenant-wide key or JWT without `agent_id` is 403** — the sender is never a request field.
-
-| Rule | Result |
-|---|---|
-| Sender | `tenant["agent_id"]` from an agent-scoped API key |
-| Extra JSON (`sender_agent`, `from`, …) | Ignored; does not change sender |
-| Recipient | Must exist in the **same** `tenant_id` (`agents` lookup binds both) |
-| Unknown / other-tenant recipient | **404**, no `write_event` |
-| Self-send (`sender == recipient`) | **400** |
-
-Coverage: `core/tests/test_a2a.py`.
-
 ---
 
 ## Auth dependency decision tree
@@ -56,6 +40,7 @@ Coverage: `core/tests/test_a2a.py`.
 ```
 Is this route SDK-callable (agents logging events, querying data)?
   → Depends(get_tenant)            accepts API keys + JWTs
+    Does it write or delete? → Depends(get_writer_tenant)  (refuses read_only keys)
 
 Is this route dashboard-only (manages keys, billing, user settings, destructive ops)?
   → Depends(require_dashboard_session)   JWT only, rejects API keys
@@ -63,7 +48,7 @@ Is this route dashboard-only (manages keys, billing, user settings, destructive 
 Is this route per-agent analytics OR an SDK read scoped to one agent
 (stats, sessions, baseline, behavior-change, time-travel, report, token-usage,
 token-optimization, suggestions, memory/context, memory/diff, events/why, events/impact,
-events/verify, events/{id}/verify)?
+events/verify, events/chain, events/{id}/verify)?
   → Depends(get_tenant)  AND  assert_agent_allowed(tenant, agent_id)  at the top of the handler
     (for memory/diff, events/why, events/impact & events/{id}/verify the agent is resolved from the row, then asserted;
      memory/forget constrains its delete to the scoped agent when the key is scoped)
@@ -102,7 +87,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 ## Shared utilities
 
 `api/utils.py` — use these, never reimplement:
-- `client_ip(request)` — extracts real client IP from `X-Forwarded-For` or `request.client`
+- `client_ip(request)` — client IP for rate limiting: walks `X-Forwarded-For` right-to-left past `TRUSTED_PROXIES` hops; falls back to `request.client`
 - `check_rate(key, store, limit, window_seconds)` — in-process rate limiter; `store` is a module-level dict
 
 ---
@@ -118,6 +103,7 @@ Never use SQLAlchemy, never open a direct `asyncpg.connect()` — always use the
 | `services/embeddings.py` | OpenAI embedding generation + Redis cache (24 h TTL) |
 | `services/embedding_config.py` | Per-tenant embedding model config (`QDRANT_COLLECTION`, `VECTOR_SIZE`) |
 | `services/event_write.py` | Core event ingestion: Postgres insert + Qdrant upsert (non-fatal if Qdrant fails) |
+| `services/audit_chain.py` | Per-agent hash chain over checksums (`chain_hash`), tombstones for legitimate deletes, `verify_chain()` behind `GET /v1/events/chain` |
 | `services/checksum.py` | Event checksum v2 (all audit fields) + legacy v1, and `verify_stored_checksum()`; the write path hashes Postgres-canonicalised values so writer and verifier hash identical inputs; v1 only accepted up to `checksum_v2_cutoff` |
 | `services/account.py` | Trial activation, GDPR consent, account deletion |
 | `services/pricing.py` | Hardcoded per-model $/1K token pricing (`MODEL_PRICING`) + `cost_for()` — see ADR-006 |

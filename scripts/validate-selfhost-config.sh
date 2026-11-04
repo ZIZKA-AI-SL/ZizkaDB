@@ -127,6 +127,19 @@ if [ "$PRODUCTION_MODE" -eq 1 ]; then
     *)
       ok "DEV_API_KEY is a unique value (not accepted as auth in production)" ;;
   esac
+  # Data services: infra/docker-compose.yml keeps their ports on 127.0.0.1;
+  # passwords are a second layer, optional so existing installs keep working.
+  case "${POSTGRES_PASSWORD:-zizkadb}" in
+    zizkadb) warn "POSTGRES_PASSWORD is the default — fine while port 5432 stays on 127.0.0.1; run: bash scripts/init-secrets.sh (new installs) or see wiki/Self-Hosting.md" ;;
+    *) ok "POSTGRES_PASSWORD set" ;;
+  esac
+  for var in REDIS_PASSWORD QDRANT_API_KEY; do
+    if [ -z "${!var:-}" ]; then
+      warn "$var unset — run: bash scripts/init-secrets.sh"
+    else
+      ok "$var set"
+    fi
+  done
   if [ "${DEPLOYMENT_MODE:-managed}" != "self_hosted" ]; then
     warn "DEPLOYMENT_MODE is not 'self_hosted' — plan-based entitlement checks (e.g. API key limits) will not apply the Self-Hosted plan"
     # Not self-hosted: the dashboard signs in with email OTP.

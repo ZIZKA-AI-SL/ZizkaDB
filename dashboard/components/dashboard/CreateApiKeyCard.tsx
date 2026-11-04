@@ -19,7 +19,9 @@ export function CreateApiKeyCard({ onCreated }: { onCreated?: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [newKey, setNewKey] = useState<string | null>(null)
 
-  const host = API || 'http://localhost:8000'
+  // Builds with an empty API URL serve the API on the dashboard's own origin
+  // (single-container image), so the SDK should point at this page's origin.
+  const host = API || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000')
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()

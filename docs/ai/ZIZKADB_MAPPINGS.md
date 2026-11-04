@@ -149,6 +149,9 @@ Full matrix: `.cursor/skills/zizkadb-test/SKILL.md`
 | Auth / signup | KB §7, §8, §18 |
 | DB schema | `schema.sql` + `init_db()` + KB §21 |
 | AI / coding rules | `docs/ai/CODING_STANDARDS.md` or this file |
+| What any component sends by default | `docs/telemetry.md` + CHANGELOG |
+| Single-container image (`infra/allinone/`) | `redu.md` + README single-container section + `wiki/Self-Hosting.md` |
+| SDK host / API-key resolution | Both SDK READMEs + `wiki/Troubleshooting.md` + templates and examples |
 
 ---
 

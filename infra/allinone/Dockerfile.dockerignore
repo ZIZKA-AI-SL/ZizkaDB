@@ -4,6 +4,7 @@
 !dashboard
 !infra/allinone/entrypoint.sh
 !infra/allinone/seed_demo.py
+!infra/allinone/front-proxy.js
 
 core/tests
 core/.pytest_cache

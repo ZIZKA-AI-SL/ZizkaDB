@@ -40,6 +40,7 @@ fi
 if [ ! -f infra/.env ]; then
   cp .env.example infra/.env
   echo "✓ Created infra/.env from .env.example"
+  bash scripts/init-secrets.sh infra/.env
   echo "  Tip: add OPENAI_API_KEY for semantic search (logging works without it)"
 else
   echo "✓ Using existing infra/.env"

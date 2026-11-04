@@ -16,9 +16,13 @@ import hashlib
 import json
 import logging
 
-from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
+from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
 from db.connection import get_pool, get_qdrant
+from services.audit_chain import delete_and_tombstone, lock_events
+from api.search import vector_search
 from services.embeddings import generate_embedding
+from services.keyword_search import keyword_search
+from services.memory_rank import superseded_ids, weighted_score
 from services.entitlements import embeddings_enabled, is_self_hosted_deployment
 
 router = APIRouter()
@@ -73,7 +77,7 @@ async def get_context(
     # 1. Recent events — always include these for temporal grounding
     recent_rows = await pool.fetch(
         """
-        SELECT event_id, agent_id, timestamp, event_type, data, session_id
+        SELECT event_id, agent_id, timestamp, event_type, data, session_id, metadata
         FROM events
         WHERE tenant_id = $1 AND agent_id = $2
           AND ($3::text IS NULL OR session_id::text != $3)
@@ -83,78 +87,74 @@ async def get_context(
         tenant_id, body.agent, body.session_id, body.recent_limit,
     )
 
-    # 2. Semantically relevant events via Qdrant
+    # 2. Relevant events: vector search when embeddings are on, keyword search
+    # (Postgres full-text) when they are off or no embedding could be made.
     semantic_rows = []
-    if not embeddings_enabled():
-        if is_self_hosted_deployment():
-            raise bad_request(
-                detail=(
-                    "Semantic memory is disabled on this self-hosted install. "
-                    "Set EMBEDDINGS_ENABLED=true in infra/.env, restart the API, "
-                    "then add your embedding API key in Dashboard → Settings."
-                ),
+    relevant_source = "semantic"
+    vector_hits = None
+    if embeddings_enabled():
+        try:
+            vector_hits = await vector_search(
+                tenant_id, body.task, agent=body.agent, limit=body.semantic_limit
             )
-        raise bad_request(detail="Semantic memory is disabled for this deployment.")
-    embedding = await generate_embedding(body.task, tenant_id)
-    if not embedding:
-        raise bad_request(
-            detail=(
-                "Embedding generation failed. Configure embeddings in Dashboard → Settings "
-                "(platform key or your OpenAI API key)."
-            ),
+        except Exception as e:
+            log.warning("Semantic search failed for context: %s", e)
+    if vector_hits:
+        score_map = {eid: round(score, 3) for eid, score in vector_hits}
+        sem_rows = await pool.fetch(
+            """
+            SELECT event_id, agent_id, timestamp, event_type, data, session_id, metadata
+            FROM events
+            WHERE event_id = ANY($1::uuid[]) AND tenant_id = $2
+              AND ($3::text IS NULL OR session_id::text != $3)
+            """,
+            list(score_map), tenant_id, body.session_id,
         )
-    try:
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-        qdrant = get_qdrant()
-
-        must = [
-            FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-            FieldCondition(key="agent_id", match=MatchValue(value=body.agent)),
+        for row in sem_rows:
+            semantic_rows.append((row, score_map.get(str(row["event_id"]), 0.0)))
+    else:
+        relevant_source = "keyword"
+        semantic_rows = [
+            (row, round(score, 3))
+            for row, score in await keyword_search(
+                pool, tenant_id, body.task, agent=body.agent,
+                limit=body.semantic_limit, exclude_session=body.session_id,
+            )
         ]
-        results = await qdrant.search(
-            collection_name="agent_events",
-            query_vector=embedding,
-            query_filter=Filter(must=must),
-            limit=body.semantic_limit,
-            with_payload=True,
-        )
-
-        if results:
-            sem_ids = [r.id for r in results]
-            score_map = {str(r.id): round(r.score, 3) for r in results}
-
-            sem_rows = await pool.fetch(
-                """
-                SELECT event_id, agent_id, timestamp, event_type, data, session_id
-                FROM events
-                WHERE event_id = ANY($1::uuid[]) AND tenant_id = $2
-                  AND ($3::text IS NULL OR session_id::text != $3)
-                """,
-                sem_ids, tenant_id, body.session_id,
-            )
-
-            for row in sem_rows:
-                semantic_rows.append((row, score_map.get(str(row["event_id"]), 0.0)))
-    except Exception as e:
-        log.warning(f"Semantic search failed for context: {e}")
 
     # 3. Merge — deduplicate, recent first then semantic fills gaps
     # Recent events take priority: they provide temporal grounding. Semantic
     # results that overlap with recent are skipped to avoid duplication.
-    seen_ids = set()
+    # Superseded facts (an explicit `supersedes`, or a STATE_SET whose keys
+    # were all written again) stay in the log but not in memory.
+    hidden = await superseded_ids(
+        pool, tenant_id, body.agent,
+        [r["event_id"] for r in recent_rows] + [r["event_id"] for r, _ in semantic_rows],
+    )
+    # Relevant events rank by relevance × importance × recency.
+    semantic_rows = [
+        (row, round(weighted_score(score, row["timestamp"], row.get("metadata")), 4))
+        for row, score in semantic_rows
+    ]
+
+    seen_ids = set(hidden)
+    seen_content = set()
     merged = []
 
-    for row in recent_rows:
+    def add(row, source, score):
         eid = str(row["event_id"])
-        if eid not in seen_ids:
-            seen_ids.add(eid)
-            merged.append({"row": row, "source": "recent", "score": 0.0})
+        # Exact repeats (same type and data) would only spend the token budget.
+        content = (row["event_type"], json.dumps(row["data"], sort_keys=True, default=str))
+        if eid in seen_ids or content in seen_content:
+            return
+        seen_ids.add(eid)
+        seen_content.add(content)
+        merged.append({"row": row, "source": source, "score": score})
 
+    for row in recent_rows:
+        add(row, "recent", 0.0)
     for row, score in sorted(semantic_rows, key=lambda x: x[1], reverse=True):
-        eid = str(row["event_id"])
-        if eid not in seen_ids:
-            seen_ids.add(eid)
-            merged.append({"row": row, "source": "semantic", "score": score})
+        add(row, relevant_source, score)
 
     # 4. Format as a prompt-ready string within token budget
     # Rough estimate: 1 token ≈ 4 chars
@@ -176,7 +176,7 @@ async def get_context(
                 pass
 
         ts = row["timestamp"].strftime("%Y-%m-%d %H:%M")
-        source_label = "Relevant" if item["source"] == "semantic" else "Recent"
+        source_label = "Recent" if item["source"] == "recent" else "Relevant"
         data_str = _format_data(data)
         line = f"[{source_label} · {ts}] {row['event_type']}: {data_str}\n"
 
@@ -226,25 +226,33 @@ async def session_diff(
         print(diff["summary"])
         print(diff["new_patterns"])
     """
+    if is_unbound_api_key(tenant):
+        raise bad_request(
+            "diff requires an agent-scoped API key: log an event with this key "
+            "first, or use the dashboard for tenant-wide session diffs."
+        )
+
     tenant_id = tenant["tenant_id"]
     pool = get_pool()
 
-    # Events in this session
+    scoped_agent = tenant.get("agent_id")
+
+    # Events in this session; a scoped key only ever sees its own agent's rows.
     rows = await pool.fetch(
         """
         SELECT event_id, agent_id, event_type, data, timestamp, parent_event_id
         FROM events
         WHERE tenant_id = $1 AND session_id = $2
+          AND ($3::text IS NULL OR agent_id = $3)
         ORDER BY timestamp ASC
         """,
-        tenant_id, session_id,
+        tenant_id, session_id, scoped_agent,
     )
 
     if not rows:
         raise not_found("Session not found")
 
-    agent_id = rows[0]["agent_id"]
-    # A scoped agent key may only diff sessions belonging to its own agent.
+    agent_id = scoped_agent or rows[0]["agent_id"]
     await assert_agent_allowed(tenant, agent_id)
     events = []
     event_types: dict[str, int] = {}
@@ -328,7 +336,7 @@ async def session_diff(
 @router.delete("/forget")
 async def forget(
     body: ForgetRequest,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """
     Delete all events where data contains a specific key-value pair.
@@ -380,7 +388,6 @@ async def forget(
                 }
 
             event_ids = [r["event_id"] for r in rows]
-            deleted = len(event_ids)
 
             # Serialize against the embedding worker (#234): take the
             # per-event advisory lock (the codebase's pattern, cf.
@@ -389,10 +396,7 @@ async def forget(
             # recreate its vector once the deletion commits. Locks are
             # taken in sorted order so concurrent forgets cannot
             # deadlock, and released when the transaction ends.
-            for eid in sorted(event_ids, key=str):
-                await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))", str(eid)
-                )
+            await lock_events(conn, event_ids)
 
             # Vectors first: if the search index can't be cleaned, keep
             # the Postgres rows so a retry can still find (and delete)
@@ -405,18 +409,10 @@ async def forget(
                     "Search index unavailable; nothing was deleted. Retry forget shortly."
                 )
 
-            # PostgreSQL does not support aggregate functions in RETURNING
-            # clauses. We already know the count from the SELECT above, so
-            # use that directly.
-            await conn.execute(
-                """
-                DELETE FROM events
-                WHERE tenant_id = $1
-                  AND event_id = ANY($2::uuid[])
-                """,
-                tenant_id,
-                event_ids,
-            )
+            # Delete and keep tombstones in one statement, so the chain still
+            # verifies and the count is what this call deleted: an overlapping
+            # forget may already have removed some of the selected rows.
+            deleted = await delete_and_tombstone(conn, tenant_id, event_ids, "forget")
 
     # Never log the forgotten value itself (it is usually personal data).
     log.info(

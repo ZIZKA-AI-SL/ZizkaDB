@@ -70,6 +70,7 @@ Cursor/Claude Desktop config: `.cursor/mcp.json.example`.
 See [`examples/CLAUDE.md`](../../examples/CLAUDE.md). Six self-contained examples, each with `.env.example`, entrypoint, `requirements.txt`, `README.md`:
 - `minimal-python/` — bare-minimum Python
 - `openai-agent/` — OpenAI function calling
+- `anthropic-agent/` — Claude (Anthropic API) with causal `parent_id`
 - `langchain-agent/` — LangChain with `ZizkaDBCallbackHandler`
 - `crewai-agent/` — CrewAI with `ZizkaDBCrewLogger`
 - `livekit-agent/` — LiveKit voice with `ZizkaDBLiveKitObserver`

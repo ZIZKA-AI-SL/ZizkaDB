@@ -1,5 +1,7 @@
 # Architecture
 
+ZizkaDB is a causal database for AI agents. Every event records the event that caused it (causal lineage), which powers `db.why()`, time-travel debugging with `db.at()`, session replay, and a hash-chained, tamper-evident audit log.
+
 ## Stack
 
 | Layer | Technology |

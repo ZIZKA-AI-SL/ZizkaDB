@@ -6,7 +6,7 @@
 **Product URL:** https://db.zizka.ai
 **Docs:** https://db.zizka.ai/docs
 **API explorer:** https://db.zizka.ai/swagger
-**GitHub:** https://github.com/Zizka-ai/ZizkaDB
+**GitHub:** https://github.com/ZIZKA-AI-SL/ZizkaDB
 
 ---
 
@@ -191,7 +191,8 @@ Each depends on `zizkadb-sdk` — users install the framework package only.
 | MCP tool | What it does |
 |----------|----------------|
 | `log_event` | Log action with optional causal parent |
-| `search_memory` | Semantic search over history |
+| `search_memory` | Keyword or hybrid search over history |
+| `verify_chain` | Hash-chain integrity check |
 | `get_context` | Prompt-ready memory block |
 | `why` | Causal chain for an event |
 | `query_events` | List/filter recent events |
@@ -269,7 +270,7 @@ Python 3.10+, TypeScript works on Node/Deno/Bun/edge.
 **Self-host (Docker Compose):**
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cp .env.example infra/.env   # OPENAI_API_KEY required for embeddings
 docker compose -f infra/docker-compose.yml up -d
 ```
@@ -434,7 +435,7 @@ When unsure: **“Let me connect you to engineering”** or point to **docs + Gi
 | Sign up | https://db.zizka.ai/signup |
 | Docs | https://db.zizka.ai/docs |
 | API explorer | https://db.zizka.ai/swagger |
-| GitHub | https://github.com/Zizka-ai/ZizkaDB |
+| GitHub | https://github.com/ZIZKA-AI-SL/ZizkaDB |
 | Company | Zizka AI |
 
 ---

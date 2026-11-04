@@ -76,6 +76,29 @@ def test_log_posts_expected_event_payload(monkeypatch):
     assert result.sequence_no == 1
 
 
+def test_log_sends_idempotency_key_only_when_given(monkeypatch):
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={
+            "event_id": "00000000-0000-0000-0000-000000000001",
+            "timestamp": "2026-06-19T00:00:00Z",
+            "sequence_no": 1,
+            "checksum": "abc123",
+        })
+
+    db = _client(monkeypatch, handler)
+    try:
+        asyncio.run(db.log(agent="a", event="e", data={}, idempotency_key="req-1"))
+        asyncio.run(db.log(agent="a", event="e", data={}))
+    finally:
+        asyncio.run(_close(db))
+
+    assert bodies[0]["idempotency_key"] == "req-1"
+    assert "idempotency_key" not in bodies[1]
+
+
 def test_log_prints_why_hint_on_localhost(monkeypatch, capsys):
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -153,6 +176,69 @@ def test_localhost_auto_injects_dev_key(monkeypatch):
 
     assert db._api_key == "zizkadb_dev_local"
     assert db._headers()["Authorization"] == "Bearer zizkadb_dev_local"
+
+
+def test_api_key_with_zizkadb_host_env_uses_that_host(monkeypatch):
+    """A self-hosted key must not be sent to Cloud when ZIZKADB_HOST is set."""
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("ZIZKADB_HOST", " https://zizka.example.com/ ")
+
+    db = ZizkaDB(api_key="zizkadb_live_x")
+
+    assert db._base_url == "https://zizka.example.com"
+    assert db._api_key == "zizkadb_live_x"
+
+
+def test_explicit_host_wins_over_zizkadb_host_env(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("ZIZKADB_HOST", "https://env.example.com")
+
+    db = ZizkaDB(api_key="zizkadb_live_x", host="https://arg.example.com")
+
+    assert db._base_url == "https://arg.example.com"
+
+
+def test_api_key_alone_means_cloud(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.delenv("ZIZKADB_HOST", raising=False)
+
+    db = ZizkaDB(api_key="zizkadb_live_x")
+
+    assert db._base_url == "https://db.zizka.ai"
+
+
+def test_zizkadb_host_env_alone_is_enough_for_localhost(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    for var in ("ZIZKADB_API_KEY", "AGENTDB_API_KEY", "DEV_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ZIZKADB_HOST", "http://localhost:8000")
+
+    db = ZizkaDB()
+
+    assert db._base_url == "http://localhost:8000"
+    assert db._api_key == "zizkadb_dev_local"
+
+
+def test_legacy_agentdb_host_env_is_honoured(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("AGENTDB_HOST", "https://legacy.example.com")
+
+    assert ZizkaDB(api_key="zizkadb_live_x")._base_url == "https://legacy.example.com"
+
+
+def test_blank_zizkadb_host_falls_through_to_agentdb_host(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+    monkeypatch.setenv("ZIZKADB_HOST", "  ")
+    monkeypatch.setenv("AGENTDB_HOST", "https://legacy.example.com")
+
+    assert ZizkaDB(api_key="k")._base_url == "https://legacy.example.com"
+
+
+def test_explicit_host_is_trimmed_and_blank_means_unset(monkeypatch):
+    _prevent_telemetry(monkeypatch)
+
+    assert ZizkaDB(api_key="k", host=" https://x.example.com/ ")._base_url == "https://x.example.com"
+    assert ZizkaDB(api_key="k", host="  ")._base_url == "https://db.zizka.ai"
 
 
 def test_log_sends_null_for_omitted_parent_and_session(monkeypatch):
@@ -244,3 +330,105 @@ def test_log_api_names_the_call_and_drops_secrets_from_the_url(monkeypatch):
     }
     assert "secret" not in json.dumps(bodies[0]) and "pw@" not in json.dumps(bodies[0])
     assert bodies[1]["data"] == {"api": "orders.list", "method": "GET", "url": "/internal/orders"}
+
+
+def test_verify_chain_passes_anchor(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"agent": "a", "intact": True, "summary": {},
+                                         "problems": [], "chain_head": None})
+
+    db = _client(monkeypatch, handler)
+    try:
+        result = asyncio.run(db.verify_chain("a", after_seq=5, anchor="h5"))
+    finally:
+        asyncio.run(_close(db))
+    assert result["intact"] is True
+    assert "/v1/events/chain?agent=a&after_seq=5&anchor=h5" in seen["url"]
+
+
+def test_iter_events_follows_cursor(monkeypatch):
+    urls = []
+    pages = [
+        [{"event_id": "a", "agent": "b", "timestamp": "2026-06-01T00:00:00.123456+00:00",
+          "event": "e", "data": {}, "sequence_no": 9}],
+        [],
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        return httpx.Response(200, json=pages[len(urls) - 1])
+
+    db = _client(monkeypatch, handler)
+
+    async def collect():
+        return [e.event_id async for e in db.iter_events("b", page_size=1)]
+
+    try:
+        ids = asyncio.run(collect())
+    finally:
+        asyncio.run(_close(db))
+    assert ids == ["a"]
+    assert "cursor=2026-06-01T00%3A00%3A00.123456%2B00%3A00%7C9" in urls[1]
+
+
+def test_log_batch_posts_events(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.read().decode())
+        return httpx.Response(200, json={"written": 1, "failed": 0, "results": []})
+
+    db = _client(monkeypatch, handler)
+    try:
+        result = asyncio.run(db.log_batch([{"agent": "a", "event": "e", "data": {}}]))
+    finally:
+        asyncio.run(_close(db))
+    assert seen["url"].endswith("/v1/events/batch")
+    assert seen["body"]["events"][0]["agent"] == "a"
+    assert result["written"] == 1
+
+
+def test_export_streams_lines_and_import_chunks(monkeypatch):
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            body = '{"event_id": "a", "agent": "b"}\n{"event_id": "c", "agent": "b"}\n'
+            return httpx.Response(200, text=body)
+        posts.append(json.loads(request.read().decode()))
+        n = len(posts[-1]["events"])
+        return httpx.Response(200, json={"imported": n, "duplicates": 0, "failed": 0,
+                                         "parents_dropped": 0, "errors": []})
+
+    db = _client(monkeypatch, handler)
+
+    async def run():
+        lines = [line async for line in db.export_events("b")]
+        return lines, await db.import_events(lines, agent="new", chunk_size=1)
+
+    try:
+        lines, totals = asyncio.run(run())
+    finally:
+        asyncio.run(_close(db))
+    assert [line["event_id"] for line in lines] == ["a", "c"]
+    assert totals["imported"] == 2 and len(posts) == 2 and posts[0]["agent"] == "new"
+
+
+def test_log_sends_memory_fields(monkeypatch):
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"event_id": "e", "timestamp": "2026-06-19T00:00:00Z",
+                                         "sequence_no": 1, "checksum": "c"})
+
+    db = _client(monkeypatch, handler)
+    try:
+        asyncio.run(db.log(agent="a", event="fact", data={}, supersedes="old", importance=0.9))
+    finally:
+        asyncio.run(_close(db))
+    assert bodies[0]["supersedes"] == "old" and bodies[0]["importance"] == 0.9

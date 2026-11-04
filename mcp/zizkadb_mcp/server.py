@@ -43,7 +43,7 @@ try:
 
     __version__ = _pkg_version("zizkadb-mcp")
 except Exception:
-    __version__ = "0.1.8"
+    __version__ = "0.1.13"
 
 DEFAULT_DEV_API_KEY = "zizkadb_dev_local"
 _HOST = (
@@ -152,8 +152,15 @@ async def _api(method: str, path: str, body: dict | None = None) -> dict:
             raise ValueError(f"Unsupported method: {method}")
 
     if not r.is_success:
-        return {"error": r.text, "status": r.status_code}
-    return r.json()
+        error_text = r.text or f"HTTP {r.status_code}"
+        return {"error": error_text, "status": r.status_code}
+    try:
+        return r.json()
+    except ValueError:
+        # Non-JSON body (HTML, plain text) from a proxy or the server itself.
+        # Truncate so a full page is not dumped into the model context.
+        body = r.text[:200]
+        return {"error": f"Unexpected non-JSON response: {body}", "status": r.status_code}
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────
@@ -175,7 +182,8 @@ async def log_event(
     that powers why(), search_memory(), and get_context().
 
     Args:
-        agent:      Unique identifier for your agent (e.g. "support-bot")
+        agent:      Unique identifier for your agent (e.g. "support-bot"): letters, numbers,
+                    dots, dashes and underscores, starting with a letter or number
         event:      What happened (e.g. "tool_call", "user_message", "decision")
         data:       Any dict of relevant data (tool name, query, result, etc.)
         session_id: Groups related events into a session (optional)
@@ -207,18 +215,20 @@ async def search_memory(
     query: str,
     agent: str = "",
     limit: int = 10,
+    mode: str = "",
 ) -> dict:
     """
-    Semantically search over all logged agent events.
+    Search over all logged agent events.
 
-    Finds past decisions, tool calls, conversations, or any event by meaning --
-    not just keyword matching. Useful before a new task to see what happened
-    in similar past situations.
+    Finds past decisions, tool calls, conversations, or any event. Works on any
+    server: keyword search without embeddings, keyword + meaning (hybrid) with
+    them. Useful before a new task to see what happened in similar situations.
 
     Args:
         query: Natural language description of what you're looking for
         agent: Filter to a specific agent (optional -- leave blank to search all)
         limit: Number of results (default 10, max 50)
+        mode:  Leave blank for the server default, or "keyword", "semantic", "hybrid"
 
     Returns:
         List of matching events with relevance scores
@@ -226,7 +236,28 @@ async def search_memory(
     body: dict = {"query": query, "limit": limit}
     if agent:
         body["agent"] = agent
+    if mode:
+        body["mode"] = mode
     return await _api("POST", "/search", body)
+
+
+@mcp.tool()
+async def verify_chain(agent: str) -> dict:
+    """
+    Prove an agent's history is untouched.
+
+    Rechecks every event's checksum and its link in the agent's hash chain.
+    "intact": true means no event was edited, removed or reordered (GDPR
+    deletions show up as tombstones, not breaks). Keep "chain_head" as proof
+    of the history at this moment.
+
+    Args:
+        agent: The agent whose history to check
+
+    Returns:
+        intact, a summary, any problems found, and chain_head
+    """
+    return await _api("GET", f"/events/chain?{urlencode({'agent': agent})}")
 
 
 @mcp.tool()
@@ -235,7 +266,7 @@ async def get_context(
     task: str,
     max_tokens: int = 2000,
     session_id: str = "",
-) -> str:
+) -> str | dict:
     """
     Get a formatted memory context block ready to inject into a system prompt.
 
@@ -254,12 +285,18 @@ async def get_context(
         session_id: Current session ID to exclude from context (optional)
 
     Returns:
-        Formatted context string -- paste directly into your system prompt
+        Formatted context string -- paste directly into your system prompt.
+        On error: {"error": <message>, "status": <http status>}.
     """
     body: dict = {"agent": agent, "task": task, "max_tokens": max_tokens}
     if session_id:
         body["session_id"] = session_id
     result = await _api("POST", "/memory/context", body)
+    if isinstance(result, dict) and "error" in result:
+        return {
+            "error": result["error"] or f"HTTP {result.get('status', 0)}",
+            "status": result.get("status", 0),
+        }
     if isinstance(result, dict):
         return result.get("context", "")
     return str(result)

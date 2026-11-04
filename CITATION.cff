@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use ZizkaDB in research or a publication, please cite it as below."
+title: "ZizkaDB: an open-source database for AI agents"
+abstract: >-
+  ZizkaDB records every AI agent action as an event linked to the event that
+  caused it. It explains decisions (why), replays what an agent knew at any
+  past time (at), serves ranked memory for the next run, and keeps a
+  per-agent hash chain so the history can be verified as unchanged.
+type: software
+authors:
+  - name: "Zizka AI"
+    website: "https://zizka.ai"
+repository-code: "https://github.com/ZIZKA-AI-SL/ZizkaDB"
+url: "https://db.zizka.ai"
+license: AGPL-3.0-or-later
+version: "0.5.0"
+keywords:
+  - ai-agents
+  - agent-memory
+  - audit-log
+  - causal-tracing
+  - observability
+  - database
+  - postgres
+  - mcp
+  - llm
+  - eu-ai-act

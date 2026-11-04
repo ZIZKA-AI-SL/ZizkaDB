@@ -1,6 +1,6 @@
 {
   "name": "zizkadb-sdk",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "description": "Audit trail database for AI agents: tamper-evident, checksum-backed decision logs, session replay and time-travel debugging to support EU AI Act Article 12 record-keeping.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -48,13 +48,13 @@
   "homepage": "https://db.zizka.ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Zizka-ai/ZizkaDB.git"
+    "url": "git+https://github.com/ZIZKA-AI-SL/ZizkaDB.git"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.12",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.12"
   }
 }
