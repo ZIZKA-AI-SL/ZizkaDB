@@ -88,6 +88,48 @@ class TestApiHelper:
         assert "error" in result
         assert result["status"] == 401
 
+    @pytest.mark.asyncio
+    async def test_non_json_body_returns_error_dict(self, monkeypatch):
+        """A 2xx response with a non-JSON body must not crash the tool."""
+        monkeypatch.setattr("zizkadb_mcp.server._KEY", "zizkadb_dev_local")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.is_success = True
+        mock_resp.text = "<html>Internal Server Error</html>"
+        mock_resp.json = MagicMock(side_effect=ValueError("Expecting value"))
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("zizkadb_mcp.server.httpx.AsyncClient", return_value=mock_client):
+            from zizkadb_mcp.server import _api
+            result = await _api("GET", "/events")
+        assert "error" in result
+        assert result["status"] == 200
+        assert "non-JSON" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_error_with_empty_body_returns_error_dict(self, monkeypatch):
+        """An error status with an empty body must still surface the error."""
+        monkeypatch.setattr("zizkadb_mcp.server._KEY", "zizkadb_dev_local")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 502
+        mock_resp.is_success = False
+        mock_resp.text = ""
+        mock_resp.json = MagicMock(side_effect=ValueError("Expecting value"))
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("zizkadb_mcp.server.httpx.AsyncClient", return_value=mock_client):
+            from zizkadb_mcp.server import _api
+            result = await _api("GET", "/events")
+        assert "error" in result
+        assert result["status"] == 502
+        assert result["error"] == "HTTP 502"
+
 
 # ── log_event ──────────────────────────────────────────────────────────────
 
@@ -199,12 +241,28 @@ class TestGetContext:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_error_response_returned_as_string(self):
+    async def test_error_response_returned_as_error_dict(self):
         with _patch_api({"error": "Embedding failed", "status": 400}, status=400):
             from zizkadb_mcp.server import get_context
             result = await get_context(agent="bot", task="task")
-        # Should not raise, just return a string
-        assert isinstance(result, str)
+        # Errors are surfaced as a dict, not silently swallowed as an empty string
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert result["status"] == 400
+
+    @pytest.mark.asyncio
+    async def test_empty_body_error_returned_as_error_dict(self):
+        """An empty error body ('') must not be falsy-swallowed."""
+        async def capture(method, path, body=None):
+            return {"error": "", "status": 502}
+
+        with patch("zizkadb_mcp.server._api", new=capture):
+            from zizkadb_mcp.server import get_context
+            result = await get_context(agent="bot", task="task")
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert result["status"] == 502
+        assert result["error"] == "HTTP 502"
 
 
 # ── why ────────────────────────────────────────────────────────────────────
