@@ -555,7 +555,7 @@ Router prefixes are mounted in `core/main.py:66-79`.
 |---|---|---|
 | `getAgents` | GET `/v1/agents` | `agents.py:41` |
 | `createAgent` | POST `/v1/agents` | `agents.py:74` |
-| `deleteAgent` | DELETE `/v1/agents/{id}` | `agents.py:114` |
+| `deleteAgent` | DELETE `/v1/agents/{id}` (returns `deleted`, `agent`, `events_deleted`, `vector_cleanup`; after the commit the Qdrant purge by tenant + agent filter is tried 3 times; `vector_cleanup: false` means it did not succeed, or Qdrant is not configured, and the rows are gone either way) | `agents.py:114` |
 | `sendAgentTestEvent` | POST `/v1/agents/{id}/test-event` | `agents.py:150` |
 | `getAgentApiKeys` | GET `/v1/agents/{id}/api-keys` | `agents.py:180` |
 | `createAgentApiKey` | POST `/v1/agents/{id}/api-keys` (optional `scope`: read_write / read_only, `expires_in_days`) | `agents.py` |
