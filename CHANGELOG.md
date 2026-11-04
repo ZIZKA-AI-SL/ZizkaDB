@@ -34,7 +34,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Signed images with SBOM and provenance.** Release images are signed with Sigstore cosign (keyless, bound to the publish workflow) and carry an SPDX SBOM and SLSA provenance. How to verify: `docs/security/release-verification.md`. Applies from the next release; 0.5.0 and older images are unsigned.
 - **Merge gates.** New *Dependency review* check blocks PRs that add vulnerable (moderate+) or malicious packages, or licences incompatible with AGPL. New *DCO* check requires `Signed-off-by` on every commit (`git commit -s`).
-- **Least-privilege workflows.** Every workflow grants only the permissions each job needs. The contributors workflow now opens a pull request instead of pushing to `main`.
+- **Least-privilege workflows.** Every workflow grants only the permissions each job needs. The contributors workflow no longer pushes to `main`: it pushes a `bot/contributors` branch and leaves a link for a maintainer to open the pull request.
 - **Policies and docs.** SECURITY.md states the support period (each minor line until the next minor release), advisories, a VEX document and SCA/SAST remediation thresholds. New `MAINTAINERS.md` (access, roles, granting access), `docs/security/` (threat model, release verification, secrets policy), and CONTRIBUTING sections on DCO, when tests run, and dependency selection.
 
 ### Dependencies

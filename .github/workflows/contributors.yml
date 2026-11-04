@@ -18,16 +18,19 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     # main is protected (no direct pushes), so changes arrive as a pull request.
+    # A maintainer opens it from the link this job leaves. "Allow GitHub Actions
+    # to create and approve pull requests" stays off: a workflow's approval would
+    # count as the required review.
     permissions:
       contents: write
-      pull-requests: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Regenerate contributors grid
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/update_contributors.py "$GITHUB_REPOSITORY"
-      - name: Open a pull request if changed
+      - name: Push the branch for a pull request if changed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -39,6 +42,12 @@ jobs:
           git commit -am 'docs(readme): sync contributors' \
             -m 'Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
           git push --force origin "$branch"
-          gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN \
-            || gh pr create --head "$branch" --title 'docs(readme): sync contributors' \
-                 --body 'Automated contributors grid update.'
+          # A push made with GITHUB_TOKEN does not start other workflows.
+          if gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            msg='The open contributors pull request was updated. Close and reopen it to run the required checks.'
+          else
+            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$branch?expand=1"
+            msg="Open a pull request from $url and check that it only changes README.md."
+          fi
+          echo "::notice title=Contributors grid changed::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
