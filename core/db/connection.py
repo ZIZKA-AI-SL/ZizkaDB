@@ -625,6 +625,28 @@ async def _run_migrations():
             WHERE idempotency_key IS NOT NULL;
     """)
 
+    # Webhook subscriptions: outbound event notifications to external URLs.
+    await _pg_pool.execute("""
+        CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+            webhook_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            tenant_id       UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            url             TEXT NOT NULL,
+            secret          TEXT,                          -- HMAC secret for signature verification
+            agent_id        VARCHAR(255),                  -- NULL = all agents
+            event_types     JSONB NOT NULL DEFAULT '[]'::jsonb,  -- [] = all types
+            active          BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_triggered  TIMESTAMPTZ,
+            last_status     INTEGER,
+            last_body       TEXT,
+            failure_count   INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_tenant
+            ON webhook_subscriptions (tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_active
+            ON webhook_subscriptions (active) WHERE active = TRUE;
+    """)
+
     # Per-agent hash chain (services/audit_chain.py) and the links of deleted rows.
     await _pg_pool.execute("""
         ALTER TABLE events ADD COLUMN IF NOT EXISTS chain_hash VARCHAR(64);

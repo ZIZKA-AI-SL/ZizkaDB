@@ -22,6 +22,7 @@ from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
 from services.exceptions import bad_request, not_found, payload_too_large
 from services.redaction import redact
+from services.webhooks import deliver_event
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,29 @@ async def write_event(
     )
     if redacted:
         result["redacted"] = redacted
+
+    # Fire-and-forget webhook delivery: never block the write on external
+    # network calls. Delivery failures are logged and retried on the next
+    # sweep; they never cause the event write to fail.
+    try:
+        await deliver_event(
+            {
+                "event_id": str(row["event_id"]),
+                "agent": agent,
+                "event_type": event,
+                "data": data,
+                "metadata": metadata,
+                "session_id": session_id,
+                "timestamp": row["timestamp"].isoformat(),
+                "sequence_no": row["sequence_no"],
+                "checksum": checksum,
+                "tenant_id": tenant_id,
+            }
+        )
+    except Exception:
+        # Webhook delivery must never break an event write.
+        logger.warning("Webhook delivery failed for event %s", row["event_id"], exc_info=True)
+
     return result
 
 
