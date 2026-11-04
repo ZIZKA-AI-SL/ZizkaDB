@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Self-hosted secrets
+
+- Production startup and `scripts/validate-selfhost-config.sh --production` also refuse the sample `JWT_SECRET` that the Self-Host docs page used to show. Both now ignore surrounding whitespace when they compare, so a sample with extra spaces or a trailing CR is refused too.
+- The Self-Host docs page now runs `scripts/init-secrets.sh`, like the README and the wiki, and no longer sets the dev API key that production refuses. `init-secrets.sh` now replaces every JWT value that production refuses, not only the `.env.example` placeholders.
+- A server that uses one of the newly refused values must set a new `JWT_SECRET` before upgrading. Users then sign in again, any saved BYOK embedding key must be re-entered, and unsubscribe links in emails already sent stop working.
+- New tests fail if a committed file shows a JWT secret that production would accept, or if the API, `validate-selfhost-config.sh` and `init-secrets.sh` disagree on the refused values.
+- Builds on #227 by @jonathanMLDev.
+
 ### TypeScript SDK
 
 - Added `logFork()`, which records sequentially submitted parallel lineage branches from one shared parent. It accepts an explicit agent, preserves branch metadata and importance, respects same-agent tracking sessions, and emits the standard causal-trace hint for every logged branch.

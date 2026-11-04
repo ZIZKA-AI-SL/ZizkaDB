@@ -1467,13 +1467,12 @@ zizkadb demo`}</Code>
       <Step n={3} title="Manual setup (optional)">
         <Code lang="bash">{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cd ZizkaDB
-cp .env.example infra/.env`}</Code>
+cp .env.example infra/.env
+bash scripts/init-secrets.sh        # random Postgres, Redis, Qdrant and JWT secrets`}</Code>
         <p style={S.p}>
           Edit <code style={codeMonoDark}>infra/.env</code>:
         </p>
         <Code lang="bash">{`OPENAI_API_KEY=sk-...          # for semantic search
-JWT_SECRET=your-random-32-char-secret
-DEV_API_KEY=zizkadb_dev_local       # default local dev key (SDK auto-sends this)
 
 # Optional: email OTP for production dashboard login
 EMAIL_HOST=smtp.gmail.com

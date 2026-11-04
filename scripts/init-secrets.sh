@@ -11,7 +11,8 @@
 #   password it was created with, so changing it later would lock the API out.
 # - REDIS_PASSWORD and QDRANT_API_KEY when empty. Neither is stored in the data,
 #   so adding them to an existing install is fine.
-# - JWT_SECRET and JWT_REFRESH_SECRET while they still hold the placeholder.
+# - JWT_SECRET and JWT_REFRESH_SECRET while they are empty or hold a published
+#   sample that the API refuses in production (core/main.py _DEFAULT_JWT_SECRETS).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,7 +69,9 @@ fi
 
 for key in JWT_SECRET JWT_REFRESH_SECRET; do
   case "$(current "$key")" in
-    ""|change-this*) set_value "$key" "$(rand_hex 32)" ;;
+    ""|change-this*|dev-secret|dev-refresh-secret|dev-secret-change-in-production|\
+    dev-refresh-secret-change-in-production|your-random-32-char-secret)
+      set_value "$key" "$(rand_hex 32)" ;;
   esac
 done
 
