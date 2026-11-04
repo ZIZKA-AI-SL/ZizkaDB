@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Embed worker: why an event failed to index
+
+- **`events.index_last_error`** keeps why the latest embedding attempt failed, so an operator can see why an event is `failed` or `dead` without the logs: `SELECT event_id, index_status, index_attempts, index_last_error FROM events WHERE index_status IN ('failed', 'dead')`. It is cleared once the event is indexed and kept by `--requeue` until then. The worker and the `EMBED_SYNC` write path both set it. No API returns it.
+- **The provider's error, not "no embedding returned".** The embedding service returned `None` for every failure and logged the cause, so the worker could not say why. `generate_embedding(..., raise_errors=True)` raises `EmbeddingUnavailable` with the reason instead (for example `HTTPStatusError: Client error '401 Unauthorized' …`). Only the worker asks for it: search, memory and the write path still get `None`.
+- **Safe to store and log.** New `services/error_text.py::safe_error_text()` turns an exception into one printable line, masks credentials (`Authorization` headers, bearer and basic credentials, `sk-…` provider keys, ZizkaDB API keys, `api-key` / `api_key` / `password` / `client_secret` style fields, secret query parameters, passwords in URLs) over the whole message, then caps it at 500 characters. The per-event failure logs of the worker and of `EMBED_SYNC` use the same text.
+- New nullable column (`schema.sql` and `init_db()`), so adding it does not rewrite the table, and 0.5.0 ignores it (an event it indexes keeps the old reason, so read the column for `failed` and `dead` events only). Thanks to @Tanmay-008, whose PR #271 proposed keeping the last error.
+
 ### TypeScript SDK
 
 - Added `logFork()`, which records sequentially submitted parallel lineage branches from one shared parent. It accepts an explicit agent, preserves branch metadata and importance, respects same-agent tracking sessions, and emits the standard causal-trace hint for every logged branch.
