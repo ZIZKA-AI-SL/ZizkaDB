@@ -39,6 +39,18 @@ jobs:
           git commit -am 'docs(readme): sync contributors' \
             -m 'Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
           git push --force origin "$branch"
-          gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN \
-            || gh pr create --head "$branch" --title 'docs(readme): sync contributors' \
-                 --body 'Automated contributors grid update.'
+          gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN && exit 0
+          # Opening or pushing with GITHUB_TOKEN does not start other workflows.
+          body=$(printf '%s\n\n%s' 'Automated contributors grid update.' \
+            'Required checks do not start when GitHub Actions opens or updates this pull request. Close and reopen it to run them on the latest commit.')
+          if out=$(gh pr create --head "$branch" --title 'docs(readme): sync contributors' --body "$body" 2>&1); then
+            echo "$out"
+            exit 0
+          fi
+          echo "$out"
+          # "Allow GitHub Actions to create and approve pull requests" is off for this
+          # repository. The branch is pushed, so leave a link instead of failing.
+          grep -q 'not permitted to create' <<<"$out" || exit 1
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$branch?expand=1"
+          echo "::warning title=Contributors pull request not opened::GitHub Actions may not open pull requests in this repository. Open it here: $url"
+          echo "The contributors grid changed. [Open the pull request]($url)." >> "$GITHUB_STEP_SUMMARY"
