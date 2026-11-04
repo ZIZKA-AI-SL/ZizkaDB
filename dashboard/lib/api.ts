@@ -98,7 +98,15 @@ export async function createAgent(token: string, agentId: string, keyName?: stri
   })
 }
 
-export async function deleteAgent(token: string, agentId: string): Promise<{ message?: string }> {
+export type DeleteAgentResult = {
+  deleted: boolean
+  agent: string
+  events_deleted: number
+  /** False when the search index could not be cleaned after 3 attempts; the rows are deleted either way. */
+  vector_cleanup: boolean
+}
+
+export async function deleteAgent(token: string, agentId: string): Promise<DeleteAgentResult> {
   return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}`, token, {
     method: 'DELETE',
   })
