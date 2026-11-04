@@ -243,33 +243,30 @@ _PURGE_ATTEMPTS = 3
 
 
 async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> bool:
-    """Purge an agent's vectors from Qdrant using the tenant_id + agent_id
-    payload filter, retrying up to ``_PURGE_ATTEMPTS`` times.
+    """Delete the agent's vectors by a tenant_id + agent_id payload filter,
+    retried like memory._delete_vectors. True once Qdrant accepts the delete.
 
-    Returns True if any attempt succeeded, False if every attempt failed.
-    Each failed attempt is logged.
+    Runs after the rows are committed, so it never raises: every failure is
+    logged and reported as False.
     """
-    from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
-
     try:
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+        # Raises when there is no client (QDRANT_URL="" in the single-container
+        # image). That is configuration, not a transient error: no retry.
         qdrant = get_qdrant()
-    except RuntimeError as e:
-        # No client (QDRANT_URL="" in the single-container image): nothing a
-        # retry could fix, and the rows are already deleted, so never raise.
+        points_selector = FilterSelector(
+            filter=Filter(
+                must=[
+                    FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                    FieldCondition(key="agent_id", match=MatchValue(value=agent_id)),
+                ]
+            )
+        )
+    except Exception as e:
         log.warning("Qdrant purge skipped for agent %s (tenant %s): %s", agent_id, tenant_id, e)
         return False
-    points_selector = FilterSelector(
-        filter=Filter(
-            must=[
-                FieldCondition(
-                    key="tenant_id", match=MatchValue(value=tenant_id)
-                ),
-                FieldCondition(
-                    key="agent_id", match=MatchValue(value=agent_id)
-                ),
-            ]
-        )
-    )
+
     for attempt in range(1, _PURGE_ATTEMPTS + 1):
         try:
             await qdrant.delete(
