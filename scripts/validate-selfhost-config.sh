@@ -76,6 +76,7 @@ _JWT_PLACEHOLDERS=(
   "dev-refresh-secret-change-in-production"
   "change-this-to-a-random-32-char-string"
   "change-this-to-another-random-32-char-string"
+  "your-random-32-char-secret"
 )
 
 _jwt_is_placeholder() {
