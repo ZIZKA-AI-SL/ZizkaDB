@@ -83,3 +83,7 @@ export function recordLogResult(agent: string, eventId: string): void {
     state.lastEventId = eventId
   }
 }
+
+export function getLineageState(): LineageState | undefined {
+  return storage.getStore()
+}
