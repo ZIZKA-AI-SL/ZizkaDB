@@ -132,6 +132,11 @@ def _setup(monkeypatch, rows, embedding_side_effect=None, embedding_result=None)
     # the exact module object the from-import will resolve.
     import importlib
 
+    # The worker imports services.event_write lazily, and that module binds
+    # db.connection.get_pool at import. Import it before patching, or a first
+    # import here binds the fake pool for the rest of the run (the real-Postgres
+    # worker tests then write through it).
+    importlib.import_module("services.event_write")
     db_connection = importlib.import_module("db.connection")
     monkeypatch.setattr(db_connection, "get_pool", lambda: pool, raising=False)
     monkeypatch.setattr(db_connection, "get_qdrant", lambda: qdrant, raising=False)
