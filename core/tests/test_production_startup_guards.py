@@ -164,6 +164,7 @@ class TestDevKeyRejectedInProduction:
 
 _REPO = Path(__file__).resolve().parents[2]
 _PREFLIGHT = _REPO / "scripts" / "validate-selfhost-config.sh"
+_INIT_SECRETS = _REPO / "scripts" / "init-secrets.sh"
 
 # Text files that can show a JWT secret value: templates, docs, Compose files,
 # scripts and code. Test files are left out; they use made-up values on purpose.
@@ -234,7 +235,7 @@ class TestPublishedJwtSecretsAreRefused:
         )
         assert not missing, (
             "JWT secret values that production would accept; add them to "
-            f"core/main.py _DEFAULT_JWT_SECRETS and the preflight script: {missing}"
+            f"core/main.py _DEFAULT_JWT_SECRETS and both scripts: {missing}"
         )
 
     def test_preflight_placeholders_match_api(self):
@@ -244,3 +245,23 @@ class TestPublishedJwtSecretsAreRefused:
         preflight = set(re.findall(r'"([^"]*)"', block.group(1)))
         assert preflight == _DEFAULT_JWT_SECRETS - {""}
 
+    @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+    @pytest.mark.parametrize("value", sorted(_DEFAULT_JWT_SECRETS))
+    def test_init_secrets_replaces_every_refused_value(self, tmp_path, value):
+        env_file = tmp_path / ".env"
+        # Non-default values for the other keys, so only the JWT lines change
+        # and the script never looks for Docker volumes.
+        env_file.write_text(
+            "POSTGRES_PASSWORD=already-unique\nREDIS_PASSWORD=set\n"
+            f"QDRANT_API_KEY=set\nJWT_SECRET={value}\nJWT_REFRESH_SECRET={value}\n"
+        )
+        subprocess.run(
+            ["bash", str(_INIT_SECRETS), str(env_file)],
+            capture_output=True, check=True, timeout=30,
+        )
+        lines = env_file.read_text().splitlines()
+        values = dict(line.split("=", 1) for line in lines if "=" in line)
+        for key in ("JWT_SECRET", "JWT_REFRESH_SECRET"):
+            assert values[key] not in _DEFAULT_JWT_SECRETS
+            assert re.fullmatch(r"[0-9a-f]{64}", values[key])
+        assert values["POSTGRES_PASSWORD"] == "already-unique"

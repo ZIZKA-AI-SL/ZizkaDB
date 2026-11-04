@@ -46,8 +46,9 @@ def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:
 
 _DEFAULT_DEV_KEYS = frozenset({"zizkadb_dev_local", "agdb_dev_local"})
 # Values published in .env.example, Compose defaults, auth.py dev fallbacks and
-# the dashboard docs. Keep in sync with scripts/validate-selfhost-config.sh;
-# core/tests/test_production_startup_guards.py checks both against the repo.
+# the dashboard docs. Keep in sync with scripts/validate-selfhost-config.sh and
+# scripts/init-secrets.sh; core/tests/test_production_startup_guards.py checks
+# all three against the repo.
 _DEFAULT_JWT_SECRETS = frozenset(
     {
         "",
