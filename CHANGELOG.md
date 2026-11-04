@@ -35,10 +35,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CONTRIBUTING and the PR template now require automated tests for new features and bug fixes.
 - SECURITY.md and the Production Deployment wiki page no longer say ZizkaDB Cloud is built from this repository; it is a separate product.
 
+### Audit chain: erasure receipts are checked
+
+- `GET /v1/events/chain` now checks every erasure receipt against the tombstones that name it: their number and the digest of their links must match what the receipt recorded. A sealed tombstone that was removed, added, moved to another erasure or changed (also in fields no link covers, like its `reason`) is reported as `receipt_digest_mismatch`, even when every link and the recorded head were recomputed. Tombstones whose receipt is gone are reported as `receipt_missing`: one problem per receipt, with `receipt_id`, the number of `tombstones` that name it and their first (`sequence_no`) and `last_sequence_no`. An agent deleted or re-created during the check is not reported.
+- **Older images.** 0.5.0 erases without receipts. Its erasures during a rolling deploy or after a downgrade still verify: a tombstone without a receipt, deleted after the upgrade, is counted in the new `summary.unsealed_tombstones` field instead of failing the check, because without a key (ADR-009 H4) it looks the same as one inserted by hand. Tombstones from before the upgrade are not counted.
+- **Upgrades.** The first start records when receipts started being checked (`tombstone_receipt_cutoff`) and builds the index `idx_event_tombstones_receipt` concurrently, so writes and erasures continue meanwhile.
+- **Compatibility.** The response only gains the `unsealed_tombstones` summary field and the `receipt_digest_mismatch` and `receipt_missing` problem kinds; no route or SDK change. Cost: one extra query per page of the walk that contains receipts.
+
 ### Audit chain: erasure receipts
 
 - Each forget, and each retention batch, now adds one **erasure receipt** to the chain of every agent it erased from. The receipt records how many chained events it seals (events from before the chain have no link and are not counted, so this can be lower than `deleted_events`) and a digest of their links, never the forget filter or any content. `GET /v1/events/chain` counts receipts in the new `summary.receipts` field, separately from `tombstones`, and checks their links like any other.
-- The next PR makes the check report a tombstone that no receipt covers. Without a key (ADR-009 H4), a database writer could still forge a receipt.
+- The check reads receipts against their tombstones (see "erasure receipts are checked" above). Without a key (ADR-009 H4), a database writer could still forge a receipt.
 - **Older images and SDKs.** Receipts are stored as tombstone rows, so 0.5.0 (rolling deploy or downgrade) links after them and reports the chain as intact. Older SDKs pass the new summary field through. Upgrading adds two nullable columns to `event_tombstones` (`erased_count`, `receipt_id`).
 - **Cost.** One extra row per erasure per agent, written in one more statement (for all agents at once) while the erasure already holds those agents' rows. A 2,000-event forget took the same time as before within noise. The `zizkadb_event_tombstones` metric still counts only deleted events.
 

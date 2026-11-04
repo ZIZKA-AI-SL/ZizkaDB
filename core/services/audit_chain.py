@@ -16,6 +16,14 @@ Tombstones written before the upgrade (0.5.0) have no checksum; they are
 accepted only if deleted before ``tombstone_checksum_cutoff.since``, which
 ``init_db()`` records once the trigger exists.
 
+Each erasure also appends one receipt per agent that commits to the tombstones
+it made (``erasure_digest``), and every tombstone names its receipt. The
+verifier recomputes each receipt's count and digest from the tombstones that
+name it (``receipt_digest_mismatch``) and reports tombstones whose receipt is
+gone (``receipt_missing``, one per receipt). A tombstone without a receipt, deleted after
+``tombstone_receipt_cutoff.since``, is counted in
+``summary.unsealed_tombstones`` (ADR-009 H3).
+
 Writes for one agent are serialised by the ``agents`` row lock the write path
 takes (``INSERT ... ON CONFLICT DO UPDATE``), so the previous link read here is
 the one the new event follows.
@@ -282,6 +290,7 @@ async def verify_chain(
         "tombstones": 0,
         "receipts": 0,
         "legacy_tombstones": 0,
+        "unsealed_tombstones": 0,
         "stale_head": 0,
         "head_checked": 0,
         "recorded_head_breaks": 0,
@@ -295,6 +304,11 @@ async def verify_chain(
     cursor = after_seq or 0
     # Tombstones without a checksum are accepted only from before this point.
     checksum_since = await pool.fetchval("SELECT since FROM tombstone_checksum_cutoff")
+    # Tombstones without an erasure receipt likewise (ADR-009 H3).
+    receipt_since = await pool.fetchval("SELECT since FROM tombstone_receipt_cutoff")
+    # Walked tombstones by the receipt they name, until that receipt is checked:
+    # [count, first sequence_no, last sequence_no].
+    awaiting: dict[Any, list[int]] = {}
     # The recorded head is read before and after the walk (see _check_stored_head).
     stored_head = await _stored_head(pool, tenant_id, agent_id)
     anchor_ok = True
@@ -312,12 +326,14 @@ async def verify_chain(
     while True:
         rows = await pool.fetch(
             f"""
-            SELECT 'event' AS kind, {CHECKSUM_COLUMNS}, chain_hash, NULL AS reason
+            SELECT 'event' AS kind, {CHECKSUM_COLUMNS}, chain_hash, NULL AS reason,
+                   NULL::uuid AS receipt_id, NULL::int AS erased_count
             FROM events
             WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no > $3
             UNION ALL
             SELECT 'tombstone', event_id, tenant_id, agent_id, deleted_at, NULL, NULL,
-                   NULL, NULL, sequence_no, NULL, checksum, chain_hash, reason
+                   NULL, NULL, sequence_no, NULL, checksum, chain_hash, reason,
+                   receipt_id, erased_count
             FROM event_tombstones
             WHERE tenant_id = $1 AND agent_id = $2 AND sequence_no > $3
             ORDER BY sequence_no
@@ -327,15 +343,32 @@ async def verify_chain(
         )
         if not rows:
             break
+        receipts = []
         for r in rows:
             _check_link(r, summary, problems, legacy_until_seq, prev, started, checksum_since)
+            if r["kind"] == "tombstone":
+                if r["reason"] == RECEIPT_REASON:
+                    receipts.append(r)
+                else:
+                    _expect_receipt(r, awaiting, summary, receipt_since)
             if r["chain_hash"] is not None:
                 prev = r["chain_hash"]
                 started = True
                 head = {"sequence_no": r["sequence_no"], "chain_hash": r["chain_hash"]}
             cursor = r["sequence_no"]
+        if receipts:
+            await _check_receipts(pool, tenant_id, agent_id, receipts, awaiting, summary, problems)
         if len(rows) < CHAIN_PAGE_SIZE:
             break
+
+    # A receipt always comes after the tombstones it seals, so the walk has
+    # passed the receipt of every tombstone left here: it is missing, a break
+    # (see _expect_receipt). Unless the agent was deleted, or deleted and
+    # created again, during the walk: its receipts went with it, so a large
+    # erasure whose tombstones and receipt are on different pages leaves
+    # tombstones here without any tampering.
+    if awaiting and _same_agent(stored_head, await _stored_head(pool, tenant_id, agent_id)):
+        _report_missing_receipts(awaiting, summary, problems)
 
     last_link = head
     if last_link is None and anchor is not None and after_seq is not None and anchor_ok:
@@ -427,6 +460,138 @@ def _check_tombstone(
             "problem": "chain_break",
             "detail": "The tombstone's link does not follow the previous one: a row "
                       "before it was removed, inserted or changed, or the tombstone was changed.",
+        })
+
+
+def _expect_receipt(
+    r: Mapping[str, Any],
+    awaiting: dict,
+    summary: dict,
+    receipt_since: Any,
+) -> None:
+    """Every erasure seals its tombstones with a receipt (ADR-009 H3).
+
+    A tombstone that names a receipt waits for it: the erasure writes the
+    receipt after its tombstones, in the same transaction, so the walk meets
+    it later. If it never comes, that is a break (``receipt_missing``). This
+    relies on one assumption: no version sets ``receipt_id`` without writing
+    that receipt (older images never set it). A future migration that fills
+    ``receipt_id`` on existing tombstones must write their receipts too.
+
+    A tombstone without one is normal if it was deleted before receipts were
+    checked (``tombstone_receipt_cutoff``). After that it was written by an
+    older image (0.5.0 during a rolling deploy or after a downgrade, whose
+    erasures must keep verifying) or straight into the table. Without a key
+    the two look the same, so it is counted, not a break, like a stale head:
+    ``summary.unsealed_tombstones`` tells an auditor to look.
+    """
+    if r["receipt_id"] is not None:
+        # [count, first sequence_no, last sequence_no]: the walk is in order.
+        seen = awaiting.setdefault(r["receipt_id"], [0, r["sequence_no"], r["sequence_no"]])
+        seen[0] += 1
+        seen[2] = r["sequence_no"]
+        return
+    # The timestamp column carries deleted_at for tombstones.
+    if receipt_since is not None and r["timestamp"] >= receipt_since:
+        summary["unsealed_tombstones"] += 1
+
+
+def _same_agent(before: tuple | None, after: tuple | None) -> bool:
+    """Whether the agent row read before the walk (``_stored_head``) is still
+    there and is the same one: not deleted, or deleted and created again (a
+    new ``first_seen``), during the check."""
+    if before is None or after is None:
+        return before is None and after is None
+    return before[2] == after[2]
+
+
+def _report_missing_receipts(awaiting: dict, summary: dict, problems: list) -> None:
+    """One problem per missing receipt, not per tombstone: a retention batch
+    can seal tens of thousands of them."""
+    for receipt_id, (count, first, last) in awaiting.items():
+        summary["breaks"] += 1
+        problems.append({
+            "sequence_no": first,
+            "last_sequence_no": last,
+            "tombstones": count,
+            "receipt_id": str(receipt_id),
+            "problem": "receipt_missing",
+            "detail": f"{count} tombstone(s), sequence {first} to {last}, name an erasure receipt "
+                      "that is not in the chain after them: the receipt was removed, or the "
+                      "tombstones were inserted or changed.",
+        })
+
+
+async def _check_receipts(
+    pool,
+    tenant_id: str,
+    agent_id: str,
+    receipts: list,
+    awaiting: dict,
+    summary: dict,
+    problems: list,
+) -> None:
+    """Recompute each receipt's count and digest from the tombstones that name it.
+
+    The tombstones are read by ``receipt_id``, not taken from the walk: a check
+    resumed from an anchor has not walked tombstones before it, and an erasure
+    that commits during the walk can tombstone rows the walk already passed as
+    events. A receipt and its tombstones are written in one transaction, so
+    this read sees all of them (one statement, one snapshot). A receipt that
+    is gone by now went with its agent (agent delete during the check), so it
+    is not reported.
+
+    The two branches are disjoint (by ``reason``) and each has its own index:
+    the sealed tombstones by ``idx_event_tombstones_receipt``, the receipts
+    themselves by the primary key.
+    """
+    ids = [r["event_id"] for r in receipts]
+    rows = await pool.fetch(
+        """
+        SELECT event_id, receipt_id, sequence_no, chain_hash, reason
+        FROM event_tombstones
+        WHERE tenant_id = $1 AND agent_id = $2
+          AND receipt_id = ANY($3::uuid[]) AND reason <> $4
+        UNION ALL
+        SELECT event_id, receipt_id, sequence_no, chain_hash, reason
+        FROM event_tombstones
+        WHERE tenant_id = $1 AND agent_id = $2
+          AND event_id = ANY($3::uuid[]) AND reason = $4
+        ORDER BY sequence_no
+        """,
+        tenant_id,
+        agent_id,
+        ids,
+        RECEIPT_REASON,
+    )
+    still_there = {row["event_id"] for row in rows if row["reason"] == RECEIPT_REASON}
+    sealed: dict[Any, list] = {}
+    for row in rows:
+        if row["receipt_id"] is not None and row["reason"] != RECEIPT_REASON:
+            sealed.setdefault(row["receipt_id"], []).append(row)
+
+    for r in receipts:
+        awaiting.pop(r["event_id"], None)
+        if r["event_id"] not in still_there:
+            continue
+        links = sealed.get(r["event_id"], [])
+        reasons = {row["reason"] for row in links}
+        digest_ok = len(reasons) == 1 and erasure_digest(
+            [(row["sequence_no"], row["chain_hash"]) for row in links], reasons.pop()
+        ) == r["checksum"]
+        if r["erased_count"] == len(links) and digest_ok:
+            continue
+        if r["erased_count"] != len(links):
+            found = f"It seals {r['erased_count']} tombstone(s), but {len(links)} name it"
+        else:
+            found = "The links of the tombstones it seals do not match its digest"
+        summary["breaks"] += 1
+        problems.append({
+            "sequence_no": r["sequence_no"],
+            "event_id": str(r["event_id"]),
+            "problem": "receipt_digest_mismatch",
+            "detail": f"Erasure receipt does not match its tombstones. {found}: "
+                      "a sealed tombstone was removed, added or changed.",
         })
 
 

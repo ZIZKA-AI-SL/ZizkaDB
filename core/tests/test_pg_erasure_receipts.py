@@ -1,4 +1,4 @@
-"""Erasure receipts (ADR-009 H3) on a real Postgres: written, chained, and safe to downgrade."""
+"""Erasure receipts (ADR-009 H3) on a real Postgres: written, chained, checked, and safe to downgrade."""
 
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from api.memory import ForgetRequest, forget
-from services.audit_chain import RECEIPT_REASON, erasure_digest, verify_chain
+from services import audit_chain
+from services.audit_chain import RECEIPT_REASON, compute_chain_hash, erasure_digest, verify_chain
 from services.event_write import write_event
 
 pytestmark = pytest.mark.postgres
@@ -138,7 +139,8 @@ async def test_a_receipt_with_its_checksum_blanked_is_not_legacy(pg_db):
     result = await verify_chain(pg_db, tenant_id, AGENT)
     assert result["intact"] is False
     assert result["summary"]["legacy_tombstones"] == 0
-    assert [p["problem"] for p in result["problems"]] == ["chain_break"]
+    # Its link breaks, and it no longer matches the tombstone it seals.
+    assert [p["problem"] for p in result["problems"]] == ["chain_break", "receipt_digest_mismatch"]
 
 
 async def test_the_next_write_links_to_the_receipt(pg_db):
@@ -212,3 +214,297 @@ async def test_forgets_racing_writes_keep_one_verifiable_chain(pg_db):
     result = await verify_chain(pg_db, tenant_id, AGENT)
     assert result["intact"] is True, result["problems"]
 
+
+
+# --------------------------------------------------------------------
+# The verifier checks receipts
+# --------------------------------------------------------------------
+
+async def _rechain(pool, tenant_id: str, agent: str = AGENT) -> None:
+    """What a database writer does to hide a change: recompute every link in
+    sequence order, events and tombstones alike, and the recorded head."""
+    rows = await pool.fetch(
+        """
+        SELECT 'events' AS tbl, event_id, sequence_no, checksum FROM events
+        WHERE tenant_id = $1 AND agent_id = $2 AND chain_hash IS NOT NULL
+        UNION ALL
+        SELECT 'event_tombstones', event_id, sequence_no, checksum FROM event_tombstones
+        WHERE tenant_id = $1 AND agent_id = $2
+        ORDER BY sequence_no
+        """,
+        tenant_id, agent,
+    )
+    prev = None
+    for r in rows:
+        prev = compute_chain_hash(prev, r["checksum"] or "")
+        await pool.execute(
+            f"UPDATE {r['tbl']} SET chain_hash = $1 WHERE tenant_id = $2 AND event_id = $3",
+            prev, tenant_id, r["event_id"],
+        )
+    await pool.execute(
+        "UPDATE agents SET chain_head_seq = $1, chain_head_hash = $2 WHERE tenant_id = $3 AND agent_id = $4",
+        rows[-1]["sequence_no"], prev, tenant_id, agent,
+    )
+
+
+async def _older_image_erases(pool, event_id) -> None:
+    """0.5.0's forget: a tombstone without a receipt, then the delete."""
+    await pool.execute(
+        """
+        INSERT INTO event_tombstones (tenant_id, agent_id, event_id, sequence_no, chain_hash, reason)
+        SELECT tenant_id, agent_id, event_id, sequence_no, chain_hash, 'forget'
+        FROM events WHERE event_id = $1
+        """,
+        event_id,
+    )
+    await pool.execute("DELETE FROM events WHERE event_id = $1", event_id)
+
+
+def _problems(result: dict) -> list[str]:
+    return [p["problem"] for p in result["problems"]]
+
+
+async def test_a_sealed_tombstone_removed_with_the_chain_recomputed_is_caught(pg_db):
+    """Every link and the head are recomputed: before receipts were checked,
+    this passed as intact. The receipt still says it sealed two."""
+    tenant_id = await _tenant(pg_db)
+    for user in ("gone", "kept", "gone", "kept"):
+        await _write(tenant_id, user)
+    await _forget(tenant_id, "gone")
+    first = await pg_db.fetchval(
+        "SELECT event_id FROM event_tombstones WHERE reason = 'forget' ORDER BY sequence_no LIMIT 1"
+    )
+    await pg_db.execute("DELETE FROM event_tombstones WHERE event_id = $1", first)
+    await _rechain(pg_db, tenant_id)
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is False
+    assert _problems(result) == ["receipt_digest_mismatch"]
+    assert "seals 2 tombstone(s), but 1 name it" in result["problems"][0]["detail"]
+
+
+async def test_a_sealed_tombstone_changed_without_touching_its_link_is_caught(pg_db):
+    """A tombstone's reason is not part of any link; the receipt's digest covers it."""
+    tenant_id = await _tenant(pg_db)
+    gone = await _write(tenant_id, "gone")
+    await _write(tenant_id, "kept")
+    await _forget(tenant_id, "gone")
+    await pg_db.execute(
+        "UPDATE event_tombstones SET reason = 'retention' WHERE event_id = $1", gone["event_id"]
+    )
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is False
+    assert _problems(result) == ["receipt_digest_mismatch"]
+
+
+async def test_a_tombstone_moved_to_another_erasure_is_caught(pg_db):
+    tenant_id = await _tenant(pg_db)
+    a = await _write(tenant_id, "a")
+    await _write(tenant_id, "b")
+    await _forget(tenant_id, "a")
+    await _forget(tenant_id, "b")
+    later = (await _receipts(pg_db, tenant_id))[1]["event_id"]
+    await pg_db.execute(
+        "UPDATE event_tombstones SET receipt_id = $1 WHERE event_id = $2", later, a["event_id"]
+    )
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert _problems(result) == ["receipt_digest_mismatch", "receipt_digest_mismatch"]
+
+
+async def test_a_removed_receipt_is_caught_even_with_the_chain_recomputed(pg_db):
+    tenant_id = await _tenant(pg_db)
+    for user in ("gone", "gone", "kept"):
+        await _write(tenant_id, user)
+    await _forget(tenant_id, "gone")
+    [receipt] = await _receipts(pg_db, tenant_id)
+    sealed = await _sealed_links(pg_db, tenant_id, receipt["event_id"])
+    await pg_db.execute("DELETE FROM event_tombstones WHERE reason = $1", RECEIPT_REASON)
+    await _rechain(pg_db, tenant_id)
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is False
+    # One problem for the missing receipt, not one per tombstone that names it.
+    assert _problems(result) == ["receipt_missing"]
+    assert result["summary"]["breaks"] == 1
+    [problem] = result["problems"]
+    assert problem["receipt_id"] == str(receipt["event_id"])
+    assert problem["tombstones"] == 2
+    assert (problem["sequence_no"], problem["last_sequence_no"]) == (sealed[0][0], sealed[-1][0])
+
+
+async def test_an_older_image_erasing_after_the_upgrade_is_counted_not_a_break(pg_db):
+    """Without a key, 0.5.0's erasure during a rolling deploy and a tombstone
+    inserted by hand look the same: the chain stays intact, and the summary
+    tells the auditor to look."""
+    tenant_id = await _tenant(pg_db)
+    old = await _write(tenant_id, "old-image")
+    await _write(tenant_id, "kept")
+    await _older_image_erases(pg_db, old["event_id"])
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is True, result["problems"]
+    assert result["summary"]["unsealed_tombstones"] == 1
+
+    # The same tombstone from before receipts were checked is normal.
+    await pg_db.execute("UPDATE event_tombstones SET deleted_at = '2000-01-01'")
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is True and result["summary"]["unsealed_tombstones"] == 0
+
+
+async def test_resuming_from_an_anchor_checks_tombstones_before_it(pg_db):
+    """The receipt is after the anchor, the tombstone it seals before it."""
+    tenant_id = await _tenant(pg_db)
+    gone = await _write(tenant_id, "gone")
+    anchor = await _write(tenant_id, "kept")
+    await _forget(tenant_id, "gone")
+    kw = {"after_seq": anchor["sequence_no"], "anchor": anchor["chain_hash"]}
+
+    resumed = await verify_chain(pg_db, tenant_id, AGENT, **kw)
+    assert resumed["intact"] is True, resumed["problems"]
+    assert (resumed["summary"]["tombstones"], resumed["summary"]["receipts"]) == (0, 1)
+
+    await pg_db.execute(
+        "UPDATE event_tombstones SET reason = 'retention' WHERE event_id = $1", gone["event_id"]
+    )
+    assert _problems(await verify_chain(pg_db, tenant_id, AGENT, **kw)) == ["receipt_digest_mismatch"]
+
+
+class _PoolThatActsBefore:
+    """Runs ``action`` once, just before the first ``fetch`` that ``when`` picks."""
+
+    def __init__(self, pool, action, when):
+        self._pool, self._action, self._when = pool, action, when
+        self._done, self._fetches = False, 0
+
+    async def fetch(self, query, *args):
+        self._fetches += 1
+        if not self._done and self._when(query, self._fetches):
+            self._done = True
+            await self._action()
+        return await self._pool.fetch(query, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._pool, name)
+
+
+async def test_an_erasure_during_the_check_is_not_a_mismatch(pg_db, monkeypatch):
+    """The walk already passed one of the erased rows as an event: the receipt
+    is checked against the tombstones that name it, not the ones walked."""
+    monkeypatch.setattr(audit_chain, "CHAIN_PAGE_SIZE", 2)
+    tenant_id = await _tenant(pg_db)
+    for user in ("gone", "kept", "kept", "kept", "gone", "kept"):
+        await _write(tenant_id, user)
+
+    async def erase():
+        await _forget(tenant_id, "gone")
+
+    pool = _PoolThatActsBefore(pg_db, erase, lambda query, n: n == 2)   # after the first page
+    result = await verify_chain(pool, tenant_id, AGENT)
+    assert result["intact"] is True, result["problems"]
+    assert result["summary"]["receipts"] == 1
+
+
+async def test_an_agent_deleted_before_its_receipt_is_checked_is_not_reported(pg_db):
+    tenant_id = await _tenant(pg_db)
+    await _write(tenant_id, "gone")
+    await _write(tenant_id, "kept")
+    await _forget(tenant_id, "gone")
+
+    async def delete_agent():
+        for table in ("event_tombstones", "events", "agents"):
+            await pg_db.execute(f"DELETE FROM {table} WHERE tenant_id = $1", tenant_id)
+
+    pool = _PoolThatActsBefore(pg_db, delete_agent, lambda query, n: "receipt_id = ANY" in query)
+    result = await verify_chain(pool, tenant_id, AGENT)
+    assert not {"receipt_digest_mismatch", "receipt_missing"} & set(_problems(result))
+
+
+async def _erasure_split_over_two_pages(tenant_id: str, monkeypatch) -> None:
+    """Two pages of two rows: the erased tombstones on the first, the receipt on
+    the second, like a retention batch larger than CHAIN_PAGE_SIZE."""
+    monkeypatch.setattr(audit_chain, "CHAIN_PAGE_SIZE", 2)
+    for user in ("gone", "gone", "kept"):
+        await _write(tenant_id, user)
+    await _forget(tenant_id, "gone")
+
+
+async def _delete_agent(pool, tenant_id: str) -> None:
+    """What DELETE /v1/agents/{id} does to the tables (without Qdrant)."""
+    for table in ("event_tombstones", "events", "agents"):
+        await pool.execute(f"DELETE FROM {table} WHERE tenant_id = $1", tenant_id)
+
+
+async def test_an_agent_deleted_between_the_pages_of_an_erasure_is_not_reported(pg_db, monkeypatch):
+    """The tombstones were walked, then the agent went with their receipt
+    before the next page: not a missing receipt."""
+    tenant_id = await _tenant(pg_db)
+    await _erasure_split_over_two_pages(tenant_id, monkeypatch)
+
+    async def delete_agent():
+        await _delete_agent(pg_db, tenant_id)
+
+    pool = _PoolThatActsBefore(pg_db, delete_agent, lambda query, n: n == 2)   # after the first page
+    result = await verify_chain(pool, tenant_id, AGENT)
+    assert result["summary"]["tombstones"] == 2
+    assert result["intact"] is True, result["problems"]
+
+
+async def test_an_agent_re_created_between_the_pages_of_an_erasure_is_not_reported(pg_db, monkeypatch):
+    """Deleted and created again under the same name (a new first_seen): the
+    old receipt is gone with the old agent, not removed."""
+    tenant_id = await _tenant(pg_db)
+    await _erasure_split_over_two_pages(tenant_id, monkeypatch)
+
+    async def delete_and_write_again():
+        await _delete_agent(pg_db, tenant_id)
+        await _write(tenant_id, "new")
+
+    pool = _PoolThatActsBefore(pg_db, delete_and_write_again, lambda query, n: n == 2)
+    result = await verify_chain(pool, tenant_id, AGENT)
+    assert "receipt_missing" not in _problems(result)
+
+
+async def test_a_receipt_removed_after_a_split_erasure_is_still_caught(pg_db, monkeypatch):
+    """The same split erasure, nothing deleted during the check: the guard
+    only skips the report when the agent row changed."""
+    tenant_id = await _tenant(pg_db)
+    await _erasure_split_over_two_pages(tenant_id, monkeypatch)
+    await pg_db.execute("DELETE FROM event_tombstones WHERE reason = $1", RECEIPT_REASON)
+    await _rechain(pg_db, tenant_id)
+
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert _problems(result) == ["receipt_missing"]
+    assert result["problems"][0]["tombstones"] == 2
+
+
+async def test_upgrade_records_the_receipt_cutoff_once_and_builds_the_index(pg_db):
+    """A database from before receipts were checked: its older tombstones stay
+    normal, and a later start keeps the first cutoff."""
+    import db.connection as connection
+
+    tenant_id = await _tenant(pg_db)
+    before = await _write(tenant_id, "before")
+    await _write(tenant_id, "kept")
+    await pg_db.execute("""
+        DROP INDEX idx_event_tombstones_receipt;
+        DROP TABLE tombstone_receipt_cutoff;
+    """)
+    await _older_image_erases(pg_db, before["event_id"])   # erased before the upgrade
+
+    await connection._run_migrations()
+    since = await pg_db.fetchval("SELECT since FROM tombstone_receipt_cutoff")
+    await connection._run_migrations()
+
+    assert await pg_db.fetchval("SELECT COUNT(*) FROM tombstone_receipt_cutoff") == 1
+    assert await pg_db.fetchval("SELECT since FROM tombstone_receipt_cutoff") == since
+    assert await pg_db.fetchval(
+        """
+        SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'idx_event_tombstones_receipt'
+        """
+    ) is True
+    result = await verify_chain(pg_db, tenant_id, AGENT)
+    assert result["intact"] is True, result["problems"]
+    assert result["summary"]["unsealed_tombstones"] == 0

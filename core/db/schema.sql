@@ -182,6 +182,10 @@ CREATE TABLE event_tombstones (
 CREATE INDEX idx_event_tombstones_agent_seq
     ON event_tombstones (tenant_id, agent_id, sequence_no DESC);
 
+-- The chain verifier reads the tombstones a receipt seals (services/audit_chain.py).
+CREATE INDEX idx_event_tombstones_receipt
+    ON event_tombstones (tenant_id, receipt_id) WHERE receipt_id IS NOT NULL;
+
 -- Kept when a write finds the agent's recorded newest link missing or changed:
 -- the newest events were removed or edited outside an erasure, and the new
 -- event would otherwise link past the gap (services/audit_chain.py).
@@ -202,6 +206,14 @@ CREATE INDEX IF NOT EXISTS idx_chain_head_breaks_agent ON chain_head_breaks (ten
 -- after the trigger below exists. A tombstone without a checksum deleted after
 -- it is reported by the chain verifier (services/audit_chain.py).
 CREATE TABLE IF NOT EXISTS tombstone_checksum_cutoff (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    since     TIMESTAMPTZ NOT NULL
+);
+
+-- When the chain verifier started requiring erasure receipts (ADR-009 H3);
+-- init_db() records it once. A tombstone that no receipt covers, deleted after
+-- it, is reported by the chain verifier (services/audit_chain.py).
+CREATE TABLE IF NOT EXISTS tombstone_receipt_cutoff (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
     since     TIMESTAMPTZ NOT NULL
 );
