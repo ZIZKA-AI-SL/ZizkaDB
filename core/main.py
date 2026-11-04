@@ -24,6 +24,7 @@ from api.demo_requests import router as demo_requests_router
 from api.community import router as community_router
 from api.marketing_subscriptions import router as marketing_subscriptions_router
 from api.metrics import router as metrics_router
+from api.webhooks import router as webhooks_router
 from middleware.body_limit import BodyLimitMiddleware
 from middleware.request_id import RequestIdMiddleware
 from services.runtime_env import env_name, is_dev_mode
@@ -227,6 +228,7 @@ app.include_router(demo_requests_router, prefix="/v1/demo-requests", tags=["demo
 app.include_router(community_router, prefix="/v1/community", tags=["community"])
 app.include_router(marketing_subscriptions_router, prefix="/v1/marketing-subscriptions", tags=["marketing"])
 app.include_router(metrics_router)
+app.include_router(webhooks_router, prefix="/v1/webhooks", tags=["webhooks"])
 
 
 @app.get("/health")
