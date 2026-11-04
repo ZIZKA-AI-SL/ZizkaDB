@@ -251,7 +251,13 @@ async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> bool:
     """
     from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
 
-    qdrant = get_qdrant()
+    try:
+        qdrant = get_qdrant()
+    except RuntimeError as e:
+        # No client (QDRANT_URL="" in the single-container image): nothing a
+        # retry could fix, and the rows are already deleted, so never raise.
+        log.warning("Qdrant purge skipped for agent %s (tenant %s): %s", agent_id, tenant_id, e)
+        return False
     points_selector = FilterSelector(
         filter=Filter(
             must=[

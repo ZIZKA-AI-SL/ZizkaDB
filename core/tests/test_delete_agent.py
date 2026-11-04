@@ -118,6 +118,27 @@ async def test_delete_agent_purge_persistent_failure(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_delete_agent_without_qdrant_client(monkeypatch):
+    # QDRANT_URL="" (single-container image): get_qdrant() raises. The rows
+    # are already committed, so the delete still succeeds, without retries.
+    pool, _ = _make_pool_conn()
+
+    def _no_qdrant():
+        raise RuntimeError("Qdrant not initialized")
+
+    monkeypatch.setattr("api.agents.get_pool", lambda: pool)
+    monkeypatch.setattr("api.agents.get_qdrant", _no_qdrant)
+    sleep = AsyncMock()
+    monkeypatch.setattr("api.agents.asyncio.sleep", sleep)
+
+    result = await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
+
+    assert result["deleted"] is True
+    assert result["vector_cleanup"] is False
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_delete_agent_not_found(monkeypatch):
     pool = AsyncMock()
     conn = AsyncMock()
