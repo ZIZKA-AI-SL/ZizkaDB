@@ -36,6 +36,7 @@ Do this **before** merging the first CI PR if merges are blocked.
 | Merge button | **Squash merge only** |
 | Auto-delete head branches | **On** |
 | Actions → Workflow permissions | **Read repository contents** |
+| Actions → Workflow permissions → Allow GitHub Actions to create and approve pull requests | **On** (the contributors workflow opens a PR). This also lets workflows approve PRs, so keep `pull-requests: write` limited to the contributors job |
 
 Path: https://github.com/ZIZKA-AI-SL/ZizkaDB/settings
 
@@ -107,3 +108,5 @@ No signed commits, no Code Scanning merge gate.
 | `gpg: signing failed` | Remove required signed commits from ruleset |
 | PR blocked but CI green | Status check names in ruleset don't match Checks tab |
 | Skipped CI jobs block merge | Don't use path filters on required jobs until optional checks exist |
+| Contributors workflow warns `Contributors pull request not opened` | Turn on *Allow GitHub Actions to create and approve pull requests* (organization and repository), or open the PR from the link in the warning |
+| Contributors PR waits for required checks | A PR opened or updated by GitHub Actions does not start other workflows; close and reopen it |
