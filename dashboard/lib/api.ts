@@ -272,7 +272,7 @@ export async function getEvents(
 }
 
 export async function getWhyChain(token: string, eventId: string): Promise<WhyChain> {
-  return apiFetch(`/v1/events/${eventId}/why`, token)
+  return apiFetch(`/v1/events/${encodeURIComponent(eventId)}/why`, token)
 }
 
 // Downstream mirror of getWhyChain: everything an event caused.
@@ -282,7 +282,7 @@ export async function getImpactTree(
   depth?: number,
 ): Promise<ImpactTree> {
   const qs = depth !== undefined ? `?depth=${depth}` : ''
-  return apiFetch(`/v1/events/${eventId}/impact${qs}`, token)
+  return apiFetch(`/v1/events/${encodeURIComponent(eventId)}/impact${qs}`, token)
 }
 
 export async function getTenantSessions(
