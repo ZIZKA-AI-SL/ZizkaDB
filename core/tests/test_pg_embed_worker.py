@@ -332,3 +332,27 @@ async def test_a_provider_error_reaches_the_stored_reason(pg_db, worker_env, mon
         "for url 'https://api.openai.com/v1/embeddings'"
     )
     assert "sk-test" not in reason
+
+
+async def test_a_failed_sync_embed_keeps_the_masked_reason(pg_db, worker_env, monkeypatch):
+    """EMBED_SYNC: the write path embeds inline, and a failure there is recorded too."""
+    import services.event_write as event_write
+    from services.event_write import write_event
+
+    tenant, _ = worker_env
+    monkeypatch.setenv("EMBED_SYNC", "true")
+    _embedding(monkeypatch, fail=False)
+
+    class _FailingQdrant:
+        async def upsert(self, collection_name, points):
+            raise RuntimeError("qdrant refused api-key: abc123secret")
+
+    monkeypatch.setattr(event_write, "get_qdrant", lambda: _FailingQdrant())
+    monkeypatch.setattr(event_write, "generate_embedding", embeddings.generate_embedding)
+
+    result = await write_event(tenant_id=tenant, agent="bot", event="e", data={"i": 1})
+
+    assert result["index_status"] == "failed"
+    assert await _last_error(pg_db, result["event_id"]) == (
+        "RuntimeError: qdrant refused api-key: [redacted]"
+    )

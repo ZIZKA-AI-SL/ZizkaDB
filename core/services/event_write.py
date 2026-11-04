@@ -20,6 +20,7 @@ from services.agent_limits import assert_agent_slot
 from services.audit_chain import compute_chain_hash, latest_link, record_head_break
 from services.checksum import compute_row_checksum_v2
 from services.entitlements import embeddings_enabled
+from services.error_text import safe_error_text
 from services.exceptions import bad_request, not_found, payload_too_large
 from services.redaction import redact
 
@@ -436,10 +437,13 @@ async def _after_insert(
                 indexed = True
                 index_status = "indexed"
         except Exception as e:
-            logger.warning("Embedding/index skipped for event %s: %s", event_id, e)
+            # Masked and capped: stored for the operator (index_last_error) and logged.
+            reason = safe_error_text(e)
+            logger.warning("Embedding/index skipped for event %s: %s", event_id, reason)
             await pool.execute(
-                "UPDATE events SET index_status = 'failed' WHERE event_id = $1",
+                "UPDATE events SET index_status = 'failed', index_last_error = $2 WHERE event_id = $1",
                 row["event_id"],
+                reason,
             )
             index_status = "failed"
 
