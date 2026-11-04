@@ -143,6 +143,14 @@ class TestGhostRecords:
 
         async def pool_fetch(query, *args):
             q = " ".join(query.split())  # collapse whitespace for matching
+            if "DELETE FROM events" in q:
+                # delete_and_tombstone(): one statement that deletes the rows
+                # and returns how many it removed (no receipts to seal here).
+                ids = set(str(e) for e in args[1])
+                gone = [eid for eid in store.postgres if eid in ids]
+                for eid in gone:
+                    del store.postgres[eid]
+                return [{"deleted": len(gone), "agent_id": None}]
             if "SELECT event_id FROM events" in q and "data" in q:
                 # Forget query: SELECT ... WHERE tenant_id=$1 AND data->$2 = to_jsonb($3::text)
                 tenant_match = str(args[0])

@@ -1,13 +1,13 @@
 # Connect your agent (self-host / OSS)
 
-**Current PyPI releases:** `zizkadb-sdk` **0.2.8** · `zizkadb-mcp` **0.1.7** · `zizkadb-langchain` **0.1.3** · `zizkadb-crewai` **0.1.3** · `zizkadb-livekit` **0.2.0**
+**Current releases:** `zizkadb-sdk` **0.5.0** (PyPI and npm) · `zizkadb-mcp` **0.1.11** · `zizkadb-langchain` **0.1.5** · `zizkadb-crewai` **0.1.5** · `zizkadb-langgraph` **0.1.2** · `zizkadb-livekit` **0.2.3**
 
 ## Start the stack (pick one)
 
 **No repo clone** (recommended for new users):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 Only ~4 small files land in `~/.zizkadb/infra/`. Pre-built images from `ghcr.io/zizka-ai-sl/`.
@@ -15,7 +15,7 @@ Only ~4 small files land in `~/.zizkadb/infra/`. Pre-built images from `ghcr.io/
 **From a git clone** (contributors):
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/quickstart.sh
 ```
 
@@ -28,7 +28,7 @@ Pick your stack below. Use the **same agent name** in code and dashboard.
 ## Python SDK
 
 ```bash
-pip install "zizkadb-sdk>=0.2.8"
+pip install "zizkadb-sdk>=0.3.0"
 ```
 
 ```python
@@ -124,7 +124,7 @@ await db.log({
 ## LangChain
 
 ```bash
-pip install "zizkadb-sdk>=0.2.8" "zizkadb-langchain>=0.1.3"
+pip install "zizkadb-sdk>=0.3.0" "zizkadb-langchain>=0.1.3"
 ```
 
 ```python
@@ -149,7 +149,7 @@ Or scaffold: `zizkadb init my-agent --template langchain`
 ## CrewAI
 
 ```bash
-pip install "zizkadb-sdk>=0.2.8" "zizkadb-crewai>=0.1.3"
+pip install "zizkadb-sdk>=0.3.0" "zizkadb-crewai>=0.1.3"
 ```
 
 ```python
@@ -173,7 +173,7 @@ Or scaffold: `zizkadb init my-agent --template crewai`
 One **LiveKit call** → one **ZizkaDB session** in Activity. Transcript text is copied from LiveKit at call end — **no audio** stored in ZizkaDB.
 
 ```bash
-pip install "zizkadb-livekit>=0.2.0"
+pip install "zizkadb-livekit>=0.2.1"
 ```
 
 ```python
@@ -223,7 +223,7 @@ Full sample: [examples/livekit-agent/](examples/livekit-agent/) (voice worker + 
 ## MCP (Cursor, Claude Desktop, Windsurf)
 
 ```bash
-pip install "zizkadb-mcp>=0.1.7"
+pip install "zizkadb-mcp>=0.1.8"
 # or: uvx zizkadb-mcp
 ```
 
@@ -251,6 +251,38 @@ Full guide: [mcp/README.md](mcp/README.md)
 
 ---
 
+## Beyond `log` and `why`
+
+Python shown; the TypeScript SDK has the same methods in camelCase (`verifyChain`, `logBatch`, `iterEvents`, `exportEvents`, `importEvents`).
+
+```python
+# Safe retries: the same key is stored once
+await db.log("my-bot", "tool_call", {"tool": "refund"}, idempotency_key=request_id)
+
+# Up to 500 events in one request; parent_index links inside the batch
+await db.log_batch([
+    {"agent": "my-bot", "event": "user_message", "data": {"text": "hi"}},
+    {"agent": "my-bot", "event": "llm_response", "data": {"text": "hello"}, "parent_index": 0},
+])
+
+# Memory: replace an outdated fact, weight what matters
+new = await db.log("my-bot", "fact", {"city": "Berlin"}, supersedes=old.event_id, importance=0.9)
+context = await db.context_for("my-bot", task="ship the order")   # works without OpenAI
+
+# Search: keyword out of the box, hybrid with embeddings
+hits = await db.search("refund order 1234", agent="my-bot")
+
+# Audit: prove nothing was edited, removed or reordered
+check = await db.verify_chain("my-bot")
+print(check["intact"], check["chain_head"])     # store the head elsewhere as an anchor
+
+# Read everything, or move it to another instance
+async for event in db.iter_events("my-bot"):
+    ...
+lines = [line async for line in db.export_events("my-bot")]
+await other_db.import_events(lines)
+```
+
 ## REST (any language)
 
 ```bash
@@ -259,6 +291,8 @@ curl -s -H "Authorization: Bearer zizkadb_dev_local" \
   -d '{"agent":"my-bot","event":"started","data":{"ok":true}}' \
   http://localhost:8000/v1/events
 ```
+
+Retries: add `-H "Idempotency-Key: <id>"`. Batches: `POST /v1/events/batch` with `{"events": [...]}`. Chain check: `GET /v1/events/chain?agent=my-bot`.
 
 Swagger: http://localhost:8000/swagger
 
@@ -281,7 +315,7 @@ Local dev uses the auto dev key. For a VPS:
 3. `bash infra/deploy-selfhost.sh`
 4. Open the dashboard → enter the admin token → create API keys in Settings → use them in SDK/MCP
 
-See [wiki/Self-Hosting](https://github.com/Zizka-ai/ZizkaDB/wiki/Self-Hosting) and [Production Deployment](https://github.com/Zizka-ai/ZizkaDB/wiki/Production-Deployment).
+See [wiki/Self-Hosting](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Self-Hosting) and [Production Deployment](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/Production-Deployment).
 
 ---
 

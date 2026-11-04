@@ -10,6 +10,7 @@ from services.embedding_config import (
     TenantEmbeddingConfig,
     VECTOR_SIZE,
     get_tenant_embedding_config,
+    local_embeddings_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,12 +141,39 @@ async def _openai_embedding(
 
 
 
+async def _local_embedding(
+    text: str,
+    config: TenantEmbeddingConfig,
+) -> list[float] | None:
+    settings = local_embeddings_settings()
+    if not settings:
+        return None
+    headers = {"Authorization": f"Bearer {settings['api_key']}"} if settings["api_key"] else {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{settings['url']}/embeddings",
+            headers=headers,
+            json={"input": text, "model": config.model},
+        )
+        response.raise_for_status()
+        embedding = response.json()["data"][0]["embedding"]
+    if len(embedding) > VECTOR_SIZE:
+        logger.warning(
+            "Local embedding model %s returns %s dims; at most %s are supported",
+            config.model, len(embedding), VECTOR_SIZE,
+        )
+        return None
+    # Zero padding keeps dot products and norms, so cosine similarity is unchanged.
+    return list(embedding) + [0.0] * (VECTOR_SIZE - len(embedding))
+
+
 # Map provider id -> the module-level function that implements it.
 # The function is resolved from module globals at call time rather
 # than storing a direct function reference. This allows monkeypatching
 # provider implementations in tests without leaving stale bindings.
 _EMBEDDING_PROVIDER_NAMES: dict[str, str] = {
     "openai": "_openai_embedding",
+    "local": "_local_embedding",
 }
 
 

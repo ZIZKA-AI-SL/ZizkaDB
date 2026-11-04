@@ -5,8 +5,12 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from services.exceptions import conflict
+import asyncpg
 
+from services.exceptions import bad_request, conflict
+
+from services.agent_ids import AGENT_ID_RULE, is_storable, is_valid_agent_id
+from services.agent_limits import assert_agent_slot, lock_agent_row, lock_tenant
 from services.auth import generate_api_key
 from services.billing import fetch_effective_plan
 from services.entitlements import api_key_limit_for_plan, limits_enforced
@@ -22,7 +26,11 @@ async def count_active_api_keys(conn, tenant_id: str) -> int:
     """
     return int(
         await conn.fetchval(
-            "SELECT COUNT(*) FROM api_keys WHERE tenant_id = $1 AND revoked = FALSE",
+            """
+            SELECT COUNT(*) FROM api_keys
+            WHERE tenant_id = $1 AND revoked = FALSE
+              AND (expires_at IS NULL OR expires_at > NOW())
+            """,
             tenant_id,
         )
     )
@@ -43,7 +51,7 @@ async def assert_and_reserve_api_key_slot(conn, *, tenant_id: str) -> None:
         return
 
     # Serialize creates for this tenant within the surrounding transaction.
-    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", tenant_id)
+    await lock_tenant(conn, tenant_id)
 
     try:
         # Read plan on the guard's own connection so it stays inside the
@@ -78,7 +86,7 @@ async def assert_and_reserve_api_key_slot(conn, *, tenant_id: str) -> None:
         )
 
 
-def _key_row(row) -> dict:
+def key_row(row) -> dict:
     return {
         "key_id": str(row["key_id"]),
         "prefix": row["key_prefix"],
@@ -86,6 +94,8 @@ def _key_row(row) -> dict:
         "agent_id": row["agent_id"],
         "created_at": row["created_at"].isoformat(),
         "last_used": row["last_used"].isoformat() if row["last_used"] else None,
+        "scope": row["scope"],
+        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
     }
 
 
@@ -95,20 +105,29 @@ async def create_api_key_record(
     tenant_id: str,
     name: str | None,
     agent_id: str | None = None,
+    scope: str = "read_write",
+    expires_in_days: int | None = None,
 ) -> dict:
-    """``db`` is a pool or a transaction connection (used by the create guard)."""
+    """``db`` is a pool or a transaction connection (used by the create guard).
+
+    ``scope``: ``read_write`` or ``read_only`` (refused by every write route).
+    ``expires_in_days``: the key stops working after that many days.
+    """
     raw_key, key_hash, prefix = generate_api_key()
     row = await db.fetchrow(
         """
-        INSERT INTO api_keys (tenant_id, key_hash, key_prefix, name, agent_id)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING key_id
+        INSERT INTO api_keys (tenant_id, key_hash, key_prefix, name, agent_id, scope, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6,
+                CASE WHEN $7::int IS NULL THEN NULL ELSE NOW() + make_interval(days => $7::int) END)
+        RETURNING key_id, expires_at
         """,
         tenant_id,
         key_hash,
         prefix,
         name,
         agent_id,
+        scope,
+        expires_in_days,
     )
     return {
         "key_id": str(row["key_id"]),
@@ -116,6 +135,8 @@ async def create_api_key_record(
         "prefix": prefix,
         "name": name,
         "agent_id": agent_id,
+        "scope": scope,
+        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
         "warning": "Save this key — it will not be shown again.",
     }
 
@@ -123,7 +144,7 @@ async def create_api_key_record(
 async def list_api_keys_for_agent(pool, tenant_id: str, agent_id: str) -> list[dict]:
     rows = await pool.fetch(
         """
-        SELECT key_id, key_prefix, name, agent_id, created_at, last_used
+        SELECT key_id, key_prefix, name, agent_id, created_at, last_used, scope, expires_at
         FROM api_keys
         WHERE tenant_id = $1 AND agent_id = $2 AND revoked = FALSE
         ORDER BY created_at DESC
@@ -131,7 +152,7 @@ async def list_api_keys_for_agent(pool, tenant_id: str, agent_id: str) -> list[d
         tenant_id,
         agent_id,
     )
-    return [_key_row(r) for r in rows]
+    return [key_row(r) for r in rows]
 
 
 async def revoke_api_key_record(pool, tenant_id: str, key_id: str, agent_id: str | None = None) -> bool:
@@ -181,52 +202,92 @@ async def claim_unassigned_api_key(
     tenant — callers must not treat that as a successful bind.
 
     The UPDATE is conditional (``agent_id IS NULL``) so two concurrent
-    requests cannot both bind the same key. The ``agents`` row is inserted
-    first so the ``api_keys.agent_id`` foreign key succeeds.
+    requests cannot both bind the same key. The ``agents`` row is locked
+    (or created) first so the ``api_keys.agent_id`` foreign key succeeds.
     """
     if pool is None:
         from db.connection import get_pool
 
         pool = get_pool()
-    # Binding a key to a new agent name creates that agent: the plan must
-    # have room for it (409 otherwise; the key stays unassigned).
-    from services.agent_limits import reserve_agent_slot
-
-    await reserve_agent_slot(pool, tenant_id=tenant_id, agent_id=agent_id)
+    # Binding a key to a new agent name creates that agent: it must be
+    # reachable through /v1/agents/{id} (400 otherwise), and the plan must
+    # have room for it (409 otherwise). Either way the key stays unassigned.
+    if not is_valid_agent_id(agent_id) and (
+        not is_storable(agent_id)
+        or not await pool.fetchval(
+            "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+            tenant_id,
+            agent_id,
+        )
+    ):
+        raise bad_request(f"agent must be {AGENT_ID_RULE}")
 
     async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO agents (agent_id, tenant_id)
-            VALUES ($1, $2)
-            ON CONFLICT (agent_id, tenant_id) DO NOTHING
-            """,
-            agent_id,
-            tenant_id,
-        )
-        result = await conn.execute(
-            """
-            UPDATE api_keys
-            SET agent_id = $1
-            WHERE key_id = $2::uuid
-              AND tenant_id = $3::uuid
-              AND agent_id IS NULL
-              AND revoked = FALSE
-            """,
-            agent_id,
-            key_id,
-            tenant_id,
-        )
-        if result == "UPDATE 1":
-            return agent_id
-        row = await conn.fetchrow(
-            """
-            SELECT agent_id FROM api_keys
-            WHERE key_id = $1::uuid AND tenant_id = $2::uuid AND revoked = FALSE
-            """,
-            key_id,
-            tenant_id,
-        )
+        try:
+            async with conn.transaction():
+                created = False
+                # The agent row before the key row, the order agent and
+                # account delete use. If an agent delete holds it, this waits,
+                # then finds it gone and creates it through the agent cap.
+                for _ in range(3):
+                    if await lock_agent_row(conn, tenant_id, agent_id):
+                        break
+                    if not is_valid_agent_id(agent_id):
+                        raise bad_request(f"agent must be {AGENT_ID_RULE}")
+                    await assert_agent_slot(conn, tenant_id=tenant_id, agent_id=agent_id)
+                    created = "INSERT 0 1" == await conn.execute(
+                        """
+                        INSERT INTO agents (agent_id, tenant_id)
+                        VALUES ($1, $2)
+                        ON CONFLICT (agent_id, tenant_id) DO NOTHING
+                        """,
+                        agent_id,
+                        tenant_id,
+                    )
+                else:
+                    return None
+                bound = await _bind_key(conn, key_id, tenant_id, agent_id)
+                if created and bound != agent_id:
+                    # The key went elsewhere: don't leave an unused agent.
+                    raise _KeyNotBound(bound)
+                return bound
+        except _KeyNotBound as e:
+            return e.bound
+        except asyncpg.ForeignKeyViolationError:
+            # The account was deleted meanwhile.
+            return None
+
+
+class _KeyNotBound(Exception):
+    def __init__(self, bound: str | None):
+        self.bound = bound
+
+
+async def _bind_key(conn, key_id: str, tenant_id: str, agent_id: str) -> str | None:
+    """Bind the key unless another request already did; returns its agent."""
+    result = await conn.execute(
+        """
+        UPDATE api_keys
+        SET agent_id = $1
+        WHERE key_id = $2::uuid
+          AND tenant_id = $3::uuid
+          AND agent_id IS NULL
+          AND revoked = FALSE
+        """,
+        agent_id,
+        key_id,
+        tenant_id,
+    )
+    if result == "UPDATE 1":
+        return agent_id
+    row = await conn.fetchrow(
+        """
+        SELECT agent_id FROM api_keys
+        WHERE key_id = $1::uuid AND tenant_id = $2::uuid AND revoked = FALSE
+        """,
+        key_id,
+        tenant_id,
+    )
     if not row or row["agent_id"] is None:
         return None
     return row["agent_id"]

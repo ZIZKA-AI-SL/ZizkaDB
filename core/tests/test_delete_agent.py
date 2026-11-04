@@ -11,14 +11,14 @@ from api.deps import require_dashboard_session
 DASHBOARD_TENANT = {"tenant_id": "t-1", "user_id": "u-1"}
 
 
-def _make_pool_conn(event_count=5):
+def _make_pool_conn():
     pool = AsyncMock()
     conn = AsyncMock()
     conn.transaction = MagicMock(return_value=AsyncMock())
     conn.transaction.return_value.__aenter__ = AsyncMock(return_value=None)
     conn.transaction.return_value.__aexit__ = AsyncMock(return_value=None)
-    conn.execute = AsyncMock()
-    pool.fetchrow = AsyncMock(return_value={"event_count": event_count})
+    conn.execute = AsyncMock(return_value="DELETE 5")
+    conn.fetchval = AsyncMock(return_value=1)
     pool.acquire = MagicMock(return_value=AsyncMock())
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -27,7 +27,7 @@ def _make_pool_conn(event_count=5):
 
 @pytest.mark.asyncio
 async def test_delete_agent_purges_qdrant_vectors(monkeypatch):
-    pool, _conn = _make_pool_conn()
+    pool, conn = _make_pool_conn()
     qdrant = AsyncMock()
     qdrant.delete = AsyncMock()
 
@@ -36,9 +36,11 @@ async def test_delete_agent_purges_qdrant_vectors(monkeypatch):
 
     result = await agents_api.delete_agent("my-agent", tenant=DASHBOARD_TENANT)
 
+    # The agent row is locked before anything is deleted.
+    assert "FOR UPDATE" in conn.fetchval.await_args.args[0]
     assert result["deleted"] is True
+    assert result["events_deleted"] == 5  # from the DELETE's row count
     assert result["agent"] == "my-agent"
-    assert result["events_deleted"] == 5
     assert result["vector_cleanup"] is True
     # Purge uses the tenant_id + agent_id payload filter (not PointIdsList,
     # not a per-event-ID fetch) and succeeds on the first attempt.
@@ -88,7 +90,11 @@ async def test_delete_agent_purge_persistent_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_delete_agent_not_found(monkeypatch):
     pool = AsyncMock()
-    pool.fetchrow = AsyncMock(return_value=None)
+    conn = AsyncMock()
+    conn.transaction = MagicMock(return_value=AsyncMock())
+    conn.fetchval = AsyncMock(return_value=None)
+    pool.acquire = MagicMock(return_value=AsyncMock())
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     monkeypatch.setattr("api.agents.get_pool", lambda: pool)
 
     from fastapi import HTTPException
@@ -96,6 +102,7 @@ async def test_delete_agent_not_found(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await agents_api.delete_agent("missing", tenant=DASHBOARD_TENANT)
     assert exc.value.status_code == 404
+    conn.execute.assert_not_awaited()
 
 
 def test_delete_agent_requires_dashboard_session():

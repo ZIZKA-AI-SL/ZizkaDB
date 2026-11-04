@@ -17,7 +17,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 | TypeScript SDK | `zizkadb-sdk` (npm) | `sdk/typescript/src/index.ts` |
 | Integrations | `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit` | `integrations/` (standalone) + LangChain/CrewAI bundled in `sdk/python/zizkadb/integrations/` |
 | MCP server | `zizkadb-mcp` (PyPI, **MIT**) | `mcp/zizkadb_mcp/server.py` |
-| Infra | Docker Compose | `infra/docker-compose.yml` (prod) + `infra/docker-compose.dev.yml` (dev overlay) |
+| Infra | Docker Compose + single image | `infra/docker-compose.yml` (prod) + `infra/docker-compose.dev.yml` (dev overlay) · `infra/allinone/` (one container: Postgres, Redis, API, dashboard; used by the quickstart and Redu Cloud via `redu.md`) |
 | CI | GitHub Actions | `.github/workflows/ci.yml` (lint+tests+vitest) · `integration.yml` (weekly stack) · `publish-images.yml` (GHCR on `v*` tag) |
 
 ---
@@ -44,7 +44,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 ## Local dev setup
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/setup-local.sh
 ```
 
@@ -102,11 +102,19 @@ cd dashboard && npm run lint && npm test && npm run build
 **Auth split** — Two FastAPI dependency functions:
 - `get_tenant` (`core/api/deps.py`): accepts API keys + JWTs. Use for SDK-callable routes (`/v1/events`, `/v1/search`, `/v1/memory`, etc.)
 - `require_dashboard_session` (`core/api/deps.py`): JWT only, rejects API keys. Use for any route that accesses `user_id`, manages API keys, or performs destructive ops. (There is no admin router / `require_admin` in this codebase.)
-- `assert_agent_allowed(tenant, agent_id)` (`core/api/deps.py`): call at the top of any per-agent analytics route AND any SDK read scoped to one agent (`memory/context`, `memory/diff`, `events/why`) to enforce scoped-key isolation.
+- `assert_agent_allowed(tenant, agent_id)` (`core/api/deps.py`): call at the top of any per-agent analytics route AND any SDK read scoped to one agent (`memory/context`, `memory/diff`, `events/why`, `events/impact`) to enforce scoped-key isolation.
 
 **Billing stub** — `billing_status_payload()` always returns `has_access: True`. No Stripe or payment provider is wired. The architecture is ready for Stripe to be added; billing routes exist but are stubs.
 
 **Rate limiting** — `core/services/rate_limiter.py` (`RateLimiter` + `RedisStorage`/`InMemoryStorage`). OTP login, the AI `/v1/agents/{id}/suggestions` throttle, community and demo-request routes use Redis-backed limits shared across workers, falling back to in-memory (per-worker) only if Redis is unavailable (`check_rate_fail_open`). OTP uses Redis when `ENV=production` or `OTP_RATE_LIMIT_STORAGE=redis`. Background: `docs/adr/005-in-process-rate-limiting.md`.
+
+**Single-container image** (`infra/allinone/`) — `ENV=production` by default; the quickstart passes `ENV=development`. The entrypoint generates the JWT secrets, `SELFHOST_ADMIN_TOKEN` and the Postgres password into `/data/secrets.env` (missing keys only, atomic write) and re-applies the role password when it changes. `front-proxy.js` owns port 3001: `/v1`, `/health`, `/swagger`, `/openapi.json` go to the API (:8000), the rest to the dashboard (127.0.0.1:3002, built with an empty `NEXT_PUBLIC_API_URL`). It appends the peer to `X-Forwarded-For`; the image trusts only loopback (`TRUSTED_PROXIES=127.0.0.1,::1`), so a platform proxy's range must be added per deployment. CORS defaults to the dashboard address in both modes (local mode also accepts the well-known dev key, so never widen it to `*`). Without `ZIZKADB_PUBLIC_URL`, production leaves `PUBLIC_API_URL` unset so links follow the request address. A well-known `DEV_API_KEY` is dropped in production with a warning; an operator's unique one is kept. Image checks live in CI as `node --test infra/allinone/`; run the full container verification before changing the entrypoint.
+
+**SDK host resolution** — explicit `host` → `ZIZKADB_HOST` → legacy `AGENTDB_HOST` → ZizkaDB Cloud when an API key is given (Python `client.py`, TypeScript `index.ts`; blank values count as unset). Templates and examples pass `host = HOST or (None if API_KEY else "http://localhost:8000")` so they also work with the SDK already on PyPI.
+
+**Audit chain** — `services/audit_chain.py`: each event stores `chain_hash = sha256(prev + ":" + checksum)` per agent, written under the `agents` row lock. Any code that deletes events must do it through `delete_and_tombstone()` (one statement: the `DELETE`, its tombstones with the row's checksum, and the real count; then one chained erasure receipt per affected agent, ADR-009 H3), after taking the per-event locks with `lock_events()` (forget and retention do; deleting a whole agent drops its tombstones too), or `GET /v1/events/chain` reports a break (the verifier also checks each receipt's count and digest against the tombstones that name it). Retention (`services/retention.py`, background task under an advisory lock) does the same. The write path also records each agent's newest link (`agents.chain_head_seq` / `chain_head_hash`) for the verifier only, and keeps evidence in `chain_head_breaks` when it finds that link gone; never compute a link from the head. `parent_event_id` is a soft link (no foreign key), so a deleted parent never blocks deletes or changes a child's checksum.
+
+**Redaction** — `services/redaction.py` runs in `write_event()` before the size check and the checksum: secret-named keys are always redacted, patterns only with `REDACT_PATTERNS`. Never store or log the pre-redaction payload.
 
 **Health** — `/health` is liveness only (always 200). `/health/deep` returns 503 when Postgres, Redis, or (with embeddings enabled) Qdrant is down.
 
@@ -141,14 +149,15 @@ cd dashboard && npm run lint && npm test && npm run build
 
 ## Critical invariants — never break these
 
-1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data.
+1. **Auth deps**: never put `require_dashboard_session` routes on `get_tenant` — API-key holders must not be able to manage keys or access user data. Routes that write or delete through an API key use `get_writer_tenant`, which refuses read-only keys.
 2. **Route paths**: never rename `/v1/...` paths without updating `dashboard/lib/api.ts` — there is no runtime contract enforcement between backend and dashboard.
-3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`) must call this.
+3. **`assert_agent_allowed()`**: every per-agent analytics route and scoped SDK read (`agent_stats`, `list_sessions`, `agent_baseline`, `agent_behavior_change`, `time_travel`, `report`, `token-usage`, `token-optimization`, `suggestions`, `memory/context`, `memory/diff`, `events/why`, `events/impact`, `events/verify`, `events/chain`) must call this.
 4. **Entitlements single source**: plan caps live only in `core/services/entitlements.py::PLAN_ENTITLEMENTS`.
 5. **Idempotent DDL**: all schema changes must use `IF NOT EXISTS` / `IF EXISTS` — the same migration runs on fresh installs and live databases.
 6. **`docker-compose.yml` is production**: never add `--reload` or `../core:/app` volume mounts to the base compose file. Those belong in `docker-compose.dev.yml`.
-7. **Self-hosted security**: development mode is opt-in. Only `ENV=development` enables the hardcoded dev API keys (`zizkadb_dev_local`), `/v1/auth/dev-token` and one-click sign-in; an unset or misspelt `ENV` is production (`core/services/runtime_env.py`). Never set `ENV=development` on a reachable deployment, and gate any new dev-only behaviour on `is_dev_mode()`, never on a raw `os.getenv("ENV")` comparison.
-8. **`NEXT_PUBLIC_DEV_MODE`**: must be `false` in any public-facing deployment — when `true`, the dashboard login screen is bypassed entirely (no OTP required).
+7. **Data ports stay private**: `infra/docker-compose.yml` publishes Postgres/Redis/Qdrant on `127.0.0.1` only. Never publish them on all interfaces.
+8. **Self-hosted security**: development mode is opt-in. Only `ENV=development` enables the hardcoded dev API keys (`zizkadb_dev_local`), `/v1/auth/dev-token` and one-click sign-in; an unset or misspelt `ENV` is production (`core/services/runtime_env.py`). Never set `ENV=development` on a reachable deployment, and gate any new dev-only behaviour on `is_dev_mode()`, never on a raw `os.getenv("ENV")` comparison.
+9. **`NEXT_PUBLIC_DEV_MODE`**: must be `false` in any public-facing deployment — when `true`, the dashboard login screen is bypassed entirely (no OTP required).
 
 ---
 
@@ -160,7 +169,9 @@ cd dashboard && npm run lint && npm test && npm run build
 | Auth / billing / signup flow | `dashboard/DASHBOARD_KNOWLEDGE_BASE.md` §18 |
 | DB schema | `core/db/schema.sql` + `core/db/connection.py::init_db()` + KB §21 |
 | Plan entitlements | Only `core/services/entitlements.py::PLAN_ENTITLEMENTS` |
-| SDK version | Bump `sdk/python/pyproject.toml`, `sdk/typescript/package.json`, `mcp/pyproject.toml`, `core/main.py version=` together |
+| What any component sends by default (pings, third-party requests) | `docs/telemetry.md` + CHANGELOG, before it ships (Redu agreement §4) |
+| Single-container image (ports, env, secrets, proxy) | `redu.md` + README single-container section + `wiki/Self-Hosting.md` |
+| SDK version | Bump `sdk/python/pyproject.toml`, `sdk/typescript/package.json` and `core/main.py` `API_VERSION` together (`scripts/publish-packages.sh` refuses mismatched SDK versions). `mcp/pyproject.toml` has its own version line: bump it whenever `mcp/` changes |
 
 ---
 
@@ -176,6 +187,8 @@ cd dashboard && npm run lint && npm test && npm run build
 | Cursor rules (per-area conventions) | `.cursor/rules/` — **`coding-standards.mdc` and `ai-knowledge-base.mdc` always apply** |
 | Agent entry (all tools) | `AGENTS.md` |
 | Release workflow | `.cursor/skills/zizkadb-release/SKILL.md` |
-| Wiki (14 pages) | `wiki/` or https://github.com/Zizka-ai/ZizkaDB/wiki |
+| Wiki (14 pages) | `wiki/` or https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki |
 | REST API explorer | http://localhost:8000/swagger |
 | Self-hosting guide | `wiki/Self-Hosting.md` |
+| Redu Cloud deploy recipe | `redu.md` |
+| What ZizkaDB sends by default | `docs/telemetry.md` |

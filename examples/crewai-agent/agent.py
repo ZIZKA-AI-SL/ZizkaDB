@@ -20,7 +20,7 @@ from zizkadb_crewai import ZizkaDBCrewLogger
 
 AGENT = os.getenv("ZIZKADB_AGENT", "crewai-research")
 API_KEY = os.getenv("ZIZKADB_API_KEY")
-HOST = os.getenv("ZIZKADB_HOST", "http://localhost:8000")
+HOST = os.getenv("ZIZKADB_HOST")
 GOAL = "Explain why AI agents need causal event logging."
 
 
@@ -56,8 +56,9 @@ def build_crew() -> Crew:
 
 
 def connect() -> ZizkaDB:
-    """OSS-first: use api_key only when explicitly set, else a self-hosted host."""
-    return ZizkaDB(api_key=API_KEY) if API_KEY else ZizkaDB(host=HOST)
+    """An explicit ZIZKADB_HOST wins (self-hosted with an API key); a key alone
+    means ZizkaDB Cloud; neither means the local dev stack."""
+    return ZizkaDB(api_key=API_KEY, host=HOST or (None if API_KEY else "http://localhost:8000"))
 
 
 async def main() -> None:

@@ -1,6 +1,6 @@
 # MCP and Cursor
 
-**Package:** `zizkadb-mcp` on PyPI (**0.1.7**)  
+**Package:** `zizkadb-mcp` on PyPI (**0.1.8**)  
 **Run:** `uvx zizkadb-mcp`
 
 ## Install uv (for uvx)
@@ -60,7 +60,8 @@ Dev key `zizkadb_dev_local` is auto-injected on localhost (matches `DEV_API_KEY`
 | Tool | Purpose |
 |------|---------|
 | `log_event` | Record decision / action |
-| `search_memory` | Semantic search |
+| `search_memory` | Keyword or hybrid search (`mode` optional) |
+| `verify_chain` | Check the agent's hash chain: no event edited, removed or reordered |
 | `get_context` | Memory for system prompt |
 | `why` | Causal chain |
 | `query_events` | List/filter recent events |

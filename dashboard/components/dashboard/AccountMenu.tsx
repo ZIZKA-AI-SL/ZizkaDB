@@ -211,7 +211,7 @@ export function AccountMenu() {
               style={{ color: colors.textFaint, fontFamily: 'monospace' }}
               title={API || 'same-origin'}
             >
-              {API || 'same-origin (nginx)'}
+              {API || 'same-origin'}
             </code>
             {(IS_DEV_MODE || IS_SELF_HOSTED) && (
               <p className="text-xs mt-1" style={{ color: colors.textFaint }}>

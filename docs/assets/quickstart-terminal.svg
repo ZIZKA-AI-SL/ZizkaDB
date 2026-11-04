@@ -34,7 +34,7 @@ text{font:13.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
 <rect width="900" height="38" rx="12" fill="#161b22"/><rect y="26" width="900" height="12" fill="#161b22"/>
 <circle cx="24" cy="19" r="6" fill="#ff5f57"/><circle cx="44" cy="19" r="6" fill="#febc2e"/><circle cx="64" cy="19" r="6" fill="#28c840"/>
 <text class="title" x="450.0" y="23" text-anchor="middle">ZizkaDB quickstart — ~60 seconds</text>
-<text class="l0 cmd" x="28" y="70"><tspan class="p">$ </tspan>curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash</text>
+<text class="l0 cmd" x="28" y="70"><tspan class="p">$ </tspan>curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash</text>
 <text class="l1 acc" x="28" y="94">  ZizkaDB — remote quickstart (no repo clone)</text>
 <text class="l2 out" x="28" y="118">→ Downloading compose + schema (not the full repo)...</text>
 <text class="l3 out" x="28" y="142">→ Pulling pre-built images from ghcr.io/zizka-ai-sl/ ...</text>

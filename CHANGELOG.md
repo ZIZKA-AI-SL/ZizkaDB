@@ -6,6 +6,237 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### TypeScript SDK
+
+- Added `logFork()`, which records sequentially submitted parallel lineage branches from one shared parent. It accepts an explicit agent, preserves branch metadata and importance, respects same-agent tracking sessions, and emits the standard causal-trace hint for every logged branch.
+
+### MCP Registry
+
+- `zizkadb-mcp` 0.1.12 is set up for the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.ZIZKA-AI-SL/zizkadb-mcp`: `mcp/server.json` describes the PyPI package and its environment variables, and the README carries the `mcp-name` line the registry checks. The new manual workflow `publish-mcp-registry.yml` publishes it through GitHub OIDC once 0.1.12 is on PyPI. No code change. 0.1.12 fixes the name's case: the registry matches the namespace case-sensitively against the GitHub org (`ZIZKA-AI-SL`), so the lowercase name was refused with a 403.
+
+### GitHub Actions
+
+- New guide `docs/integrate/github-actions.md` for the two GitHub Actions that run ZizkaDB in CI: **ZizkaDB Why** (causal chains of agent test failures in the PR) and **ZizkaDB Audit** (hash-chain check, exported history, attested report). Linked from the README and the integration guides.
+
+### Removed
+
+- **`POST /v1/a2a/messages`** is gone from the open-source edition. Agent-to-agent messaging needs several agents, and self-hosted ZizkaDB is one agent per install, so the route only ever returned 403 here. It remains a ZizkaDB Cloud feature. No SDK, MCP or dashboard code called it.
+
+### Security process (OpenSSF OSPS Baseline Level 3)
+
+- **Signed images with SBOM and provenance.** Release images are signed with Sigstore cosign (keyless, bound to the publish workflow) and carry an SPDX SBOM and SLSA provenance. How to verify: `docs/security/release-verification.md`. Applies from the next release; 0.5.0 and older images are unsigned.
+- **Merge gates.** New *Dependency review* check blocks PRs that add vulnerable (moderate+) or malicious packages, or licences incompatible with AGPL. New *DCO* check requires `Signed-off-by` on every commit (`git commit -s`).
+- **Least-privilege workflows.** Every workflow grants only the permissions each job needs. The contributors workflow now opens a pull request instead of pushing to `main`.
+- **Policies and docs.** SECURITY.md states the support period (each minor line until the next minor release), advisories, a VEX document and SCA/SAST remediation thresholds. New `MAINTAINERS.md` (access, roles, granting access), `docs/security/` (threat model, release verification, secrets policy), and CONTRIBUTING sections on DCO, when tests run, and dependency selection.
+
+### Dependencies
+
+- Fixed the open npm security alerts in the dashboard and the TypeScript SDK: vitest 4.1.12 (with `@vitest/mocker` and `@vitest/coverage-v8`), vite, esbuild, zod and postcss-selector-parser. All are test or build tools; nothing shipped to users changes. `npm audit` reports 0 vulnerabilities in both.
+
+### Project
+
+- Dependabot checks the Python, npm, Docker and GitHub Actions dependencies of the shipped packages weekly and opens security updates as they appear.
+- CONTRIBUTING and the PR template now require automated tests for new features and bug fixes.
+- SECURITY.md and the Production Deployment wiki page no longer say ZizkaDB Cloud is built from this repository; it is a separate product.
+
+### Audit chain: erasure receipts are checked
+
+- `GET /v1/events/chain` now checks every erasure receipt against the tombstones that name it: their number and the digest of their links must match what the receipt recorded. A sealed tombstone that was removed, added, moved to another erasure or changed (also in fields no link covers, like its `reason`) is reported as `receipt_digest_mismatch`, even when every link and the recorded head were recomputed. Tombstones whose receipt is gone are reported as `receipt_missing`: one problem per receipt, with `receipt_id`, the number of `tombstones` that name it and their first (`sequence_no`) and `last_sequence_no`. An agent deleted or re-created during the check is not reported.
+- **Older images.** 0.5.0 erases without receipts. Its erasures during a rolling deploy or after a downgrade still verify: a tombstone without a receipt, deleted after the upgrade, is counted in the new `summary.unsealed_tombstones` field instead of failing the check, because without a key (ADR-009 H4) it looks the same as one inserted by hand. Tombstones from before the upgrade are not counted.
+- **Upgrades.** The first start records when receipts started being checked (`tombstone_receipt_cutoff`) and builds the index `idx_event_tombstones_receipt` concurrently, so writes and erasures continue meanwhile.
+- **Compatibility.** The response only gains the `unsealed_tombstones` summary field and the `receipt_digest_mismatch` and `receipt_missing` problem kinds; no route or SDK change. Cost: one extra query per page of the walk that contains receipts.
+
+### Audit chain: erasure receipts
+
+- Each forget, and each retention batch, now adds one **erasure receipt** to the chain of every agent it erased from. The receipt records how many chained events it seals (events from before the chain have no link and are not counted, so this can be lower than `deleted_events`) and a digest of their links, never the forget filter or any content. `GET /v1/events/chain` counts receipts in the new `summary.receipts` field, separately from `tombstones`, and checks their links like any other.
+- The check reads receipts against their tombstones (see "erasure receipts are checked" above). Without a key (ADR-009 H4), a database writer could still forge a receipt.
+- **Older images and SDKs.** Receipts are stored as tombstone rows, so 0.5.0 (rolling deploy or downgrade) links after them and reports the chain as intact. Older SDKs pass the new summary field through. Upgrading adds two nullable columns to `event_tombstones` (`erased_count`, `receipt_id`).
+- **Cost.** One extra row per erasure per agent, written in one more statement (for all agents at once) while the erasure already holds those agents' rows. A 2,000-event forget took the same time as before within noise. The `zizkadb_event_tombstones` metric still counts only deleted events.
+
+### Agent and account deletes during live writes
+
+- **Agent delete** no longer fails with a 500 when the agent writes an event at the same moment. The delete waits for the write in flight and removes its event too. A write that arrives during the delete waits, then creates the agent again, through the plan's agent cap like any new agent (on self-hosted that is a 409 if another agent already holds the slot).
+- **Account delete** (ZizkaDB Cloud) no longer deadlocks with an agent that is still writing, with a forget or retention pass, or with an API key being created or used for the first time; it waits for them to finish.
+- **Forget and retention** now lock the affected agents' rows before deleting their events, the same order the deletes use. Writes to those agents wait while the rows are deleted (about 10 ms per 1,000 events); the search-index call happens before the lock.
+- Account delete removes the account's search vectors after the data is gone, so vectors from a write that finished during the delete are removed too.
+- **Binding a key on first use** while its agent is being deleted now re-creates the agent through the agent cap, like an event write, instead of failing with a 500.
+- A write that waited out an account delete gets a 404 (the account is gone), and a key binding is simply refused, instead of a 500.
+- Agent delete reports the number of events it actually deleted (`events_deleted`), not the agent's running counter, which forget does not lower.
+- Ordinary write latency is unchanged (measured with 1 and 20 concurrent writers). No schema, route or response shape change.
+
+### Audit chain: the newest events are covered too
+
+- Each agent now records its newest chain link, and `GET /v1/events/chain` checks it. Deleting an agent's newest events, or editing the newest one with its own link recomputed, was invisible before, because nothing linked after it. It is now reported as `head_mismatch`, once the agent has written since the upgrade and its recorded link is current. The report stays after later writes: the next write would otherwise link past the gap, so it records what it found.
+- **Older images.** The recorded link is only used for checking, never for writing. If an older version wrote after it (rolling deploy, downgrade), the summary shows `stale_head: 1`, which is not a break, and the next write records it again.
+- **Upgrades.** Agents from before this version have no recorded link until their next write, and are checked as before.
+- **Cost.** No measurable change in write latency: the link is recorded in the same statement as the event. The response only gains the `stale_head`, `head_checked` and `recorded_head_breaks` summary fields and the `head_mismatch` problem kind.
+
+### Audit chain: erasures no longer restart the chain; exact erasure counts
+
+- **Tombstones are checked.** A tombstone now keeps the deleted event's checksum, and `GET /v1/events/chain` checks the tombstone's link like any other. Before, the chain restarted at every erasure, so an edit to the event just before a deleted one went unnoticed.
+- **Old tombstones.** Tombstones written by 0.5.0 before the upgrade have no checksum. They still verify and are counted as `legacy_tombstones`. A tombstone without a checksum written after the upgrade is reported as `tombstone_missing_checksum`.
+- **Exact counts.** Forget and retention delete and keep tombstones in one statement. When two forgets overlap, each reports only the events it actually deleted (before, both reported the full count).
+- **Rolling deploys and downgrades.** A database trigger fills in the checksum when an older image writes a tombstone, so 0.5.0 running on an upgraded database keeps working, and its erasures verify normally.
+- **Retention and forget no longer deadlock.** Retention now takes its per-event locks before touching any row, in the same order as forget and the embedding worker.
+- **Privacy.** A tombstone now keeps the deleted event's checksum, as well as its chain link. Someone with database access who already knows an erased event's exact content could use either to confirm that it existed; the content itself is gone.
+- **Compatibility.** The chain response only gains the `legacy_tombstones` summary field and the `tombstone_missing_checksum` problem kind; no route or SDK change.
+
+### Python integrations republished for SDK 0.5.0
+
+- `zizkadb-langchain` 0.1.5, `zizkadb-crewai` 0.1.5, `zizkadb-langgraph` 0.1.2 and `zizkadb-livekit` 0.2.3 require `zizkadb-sdk>=0.5.0`, so installing any of them brings the new SDK methods.
+
+## [0.5.0] - 2026-10-25
+
+### Docs and project page
+
+- `LICENSE` is now the plain AGPL-3.0 text, so GitHub and licence scanners recognise it. The MCP server's MIT licence is noted in the new `NOTICE` file.
+- Every link uses the organisation's current name, `ZIZKA-AI-SL/ZizkaDB`, including the `curl` quickstart. Before, links relied on GitHub's rename redirect.
+- The README describes the product as it is now: memory and audit database, hash-chained history, search without OpenAI, database operations (retention, export, read-only keys, metrics), `init-secrets.sh` for servers, and new FAQ answers. CONNECT.md and the SDK READMEs show the new methods.
+- MCP server: new `verify_chain` tool; `search_memory` accepts `mode`.
+
+### Read-only and expiring API keys
+
+- `POST /v1/agents/{id}/api-keys` accepts `scope: "read_only"`. A read-only key can query, search, build context, export and verify, but every write or delete route (`/v1/events`, `/batch`, `/import`, `/v1/memory/forget`, A2A, test events) refuses it with 403. This suits dashboards, evaluation tools and auditors. Read-only keys always belong to one agent.
+- `expires_in_days` (1–3650) on both key-creation routes makes a key stop working after that many days. Expired keys get a 401 and no longer count towards the plan's key limit. Key lists show `scope` and `expires_at`.
+
+### Memory quality: superseded facts, importance, recency, duplicates
+
+- **`supersedes`.** `POST /v1/events` (and the batch route) accepts `supersedes: <event_id>` for an earlier event of the same agent. The old fact stays in the log but leaves `context_for()` and search, so "the user moved to Berlin" replaces the old address instead of competing with it. Search can still include it with `include_superseded: true`.
+- **`STATE_SET` supersedes automatically.** A `STATE_SET` whose keys were all set again, or deleted, by later state events leaves memory, following the same rule as time travel.
+- **`importance` (0–1)** and recency now rank the relevant part of `context_for()`: score = relevance × (0.5 + importance) × recency, where recency halves every `CONTEXT_RECENCY_HALF_LIFE_DAYS` (default 30). An unset importance counts as 0.5.
+- **Exact duplicates** (same type and data) appear once in `context_for()`, leaving room in the token budget.
+- Both fields are stored in `metadata`, so the checksum and chain cover them. SDKs: `log(..., supersedes=, importance=)`, `search(..., include_superseded=)`, and the camelCase equivalents.
+
+### Retention, export/import, redaction
+
+- **Retention.** `EVENT_RETENTION_DAYS` (unset by default, meaning keep forever), or a per-agent setting via `GET/PUT /v1/agents/{id}/retention`. Events past the limit are deleted every hour (`RETENTION_INTERVAL_SECONDS`) by one worker at a time. Their vectors are removed and each leaves an audit-chain tombstone with reason `retention`.
+- **Export / import.** `GET /v1/events/export?agent=` streams an agent's events as NDJSON, oldest first. `POST /v1/events/import` loads them, up to 1000 per request. Original timestamps are kept, parent links are remapped to the new ids (also across requests), and every event gets fresh checksums and chain links. Re-running an import returns duplicates instead of copies. SDKs: `export_events` / `import_events`, `exportEvents` / `importEvents`.
+- **Redaction before storage.** Values under secret-named keys (`password`, `api_key`, `authorization`, `access_token` and similar) are now stored as `[REDACTED]`; extend the list with `REDACT_KEYS`, or turn it off with `REDACT_KEYS=off`. Optional `REDACT_PATTERNS=email,phone,card,iban,ipv4` redacts matches inside strings (cards must pass the Luhn check). Write responses include `redacted` with a count when anything was replaced.
+- `parent_event_id` is now a soft link (the foreign key is dropped). This fixes a 500 when `forget` deleted an event that had children, and lets retention delete old parents without changing their children's checksums. The write path still requires the parent to exist in the same tenant.
+
+### Batch writes, cursor paging, metrics
+
+- **New `POST /v1/events/batch`** writes up to 500 events in one request, in order. Each event is checked, chained and deduplicated like a single write. One bad event does not reject the others: every result is `ok` or carries its own `status` and `error`. `parent_index` links to an earlier event in the same batch. SDKs: Python `db.log_batch(events)`, TypeScript `db.logBatch(events)`.
+- **Cursor paging on `GET /v1/events`.** A full page returns an `X-Next-Cursor` header; pass it back as `cursor` for the next page. It stays fast at any depth and never repeats or skips events, unlike `offset`, which still works. Results are now ordered by `timestamp, sequence_no`, so ties are stable. SDKs: Python `async for e in db.iter_events(agent)`, TypeScript `for await (const e of db.iterEvents(agent))`.
+- **New `GET /metrics`** (Prometheus text format), off unless `METRICS_TOKEN` is set. It reports Postgres/Redis up, estimated events, agents, the embedding queue, tombstones, database size and per-worker pool connections.
+
+### Search works without OpenAI
+
+- **Keyword search.** `POST /v1/search` and `context_for()` now work with embeddings off, which is the self-hosted default; they used to return a 400. Search uses Postgres full-text search over the event type and every string and number in `data`. Any word may match, prefixes count ("refund" finds "refunded"), it works the same in any language, and an index keeps it fast. On existing installs the index is built `CONCURRENTLY` on first start, so writes keep flowing.
+- **Hybrid search.** With embeddings on, `mode: "auto"` (the default) combines vector and keyword results by reciprocal rank fusion. `mode` can also be `keyword`, `semantic` (the old behaviour) or `hybrid`. If an embedding cannot be made, `auto` still answers from keywords and adds a `warning`. Responses include `mode`. The SDKs accept `mode` in `search()`.
+- **Local embeddings.** Setting `EMBEDDINGS_PROVIDER=local` with `LOCAL_EMBEDDINGS_URL` / `LOCAL_EMBEDDINGS_MODEL` uses any OpenAI-compatible `/embeddings` endpoint (Ollama, LM Studio, vLLM), so no data leaves the machine. Models of up to 1536 dimensions are supported; shorter vectors are zero-padded, which leaves cosine similarity unchanged.
+
+### Tamper-evident audit chain
+
+- Every new event stores a `chain_hash` that links it to the agent's previous event (SHA-256 of the previous link and the event's checksum). Deleting, inserting, reordering or editing a row now breaks the chain. The per-event checksum could not show a deleted row.
+- **New `GET /v1/events/chain?agent=`** checks the whole chain and every checksum. It returns `intact`, a summary, the problems found, and `chain_head`. Keep the head outside ZizkaDB, then pass it back as `after_seq` + `anchor` to check only newer events and prove the older ones were not rewritten. SDKs: Python `db.verify_chain(agent, after_seq=, anchor=)`, TypeScript `db.verifyChain(agent, after?)`.
+- **GDPR `forget` leaves a tombstone** per deleted event, holding its link and the reason but none of its content, so the chain still verifies and shows where data was removed. Events written before this release have no link and are reported as `unchained_legacy`.
+- Write responses (and the SDK `LogResult`) include `chain_hash`.
+
+### Database safety: size limits, idempotent writes, migration lock, restore
+
+- **Event size limit.** One event's `data` + `metadata` may be up to `MAX_EVENT_BYTES` (default 256 KB). Larger events get a 413 with the limit in the message, before anything is written. Any request body over `MAX_REQUEST_BYTES` (default 10 MB) gets a 413 before it is read.
+- **Idempotent writes.** `POST /v1/events` accepts an optional `idempotency_key` (body field or `Idempotency-Key` header). A retry with the same key for the same agent returns the first event, with `"duplicate": true`. It is not stored twice and does not count twice; concurrent retries are safe too. Every response now has a `duplicate` field. Python `db.log(..., idempotency_key=)` and TypeScript `db.log({ idempotencyKey })` send it.
+- **Start-up migrations take a Postgres advisory lock**, so several uvicorn workers starting together no longer race on the same DDL. That race could crash a worker on start.
+- **New `infra/restore-postgres.sh`** restores a `backup-postgres.sh` file. It backs up the current database first, asks for confirmation (`--yes` skips it), stops and restarts the API, and checks health.
+
+### Security hardening, without extra setup
+
+- **New installs get random secrets.** `scripts/setup-local.sh` runs the new `scripts/init-secrets.sh` when it creates `infra/.env`. The script replaces the defaults with a random Postgres password, Redis password, Qdrant API key and JWT secrets, and prints only the names it changed. It never changes the Postgres password of an existing database volume. Servers can run it by hand.
+- **Optional Redis password and Qdrant API key** in `infra/docker-compose.yml`. Set `REDIS_PASSWORD` / `QDRANT_API_KEY` in `infra/.env` and the containers and the API use them. Empty keeps the old behaviour. `scripts/restart-native-stack.sh` ignores both, because the native Redis and Qdrant run without auth.
+- **The API warns at start-up in production when Postgres uses a well-known password.** `scripts/validate-selfhost-config.sh` warns about the same thing, and also when the Redis password or Qdrant API key is missing. `wiki/Self-Hosting.md` shows how to change the password of an existing install.
+- **Self-host admin login has a global attempt limit:** 60 per minute across all IPs, checked before the token is compared, on top of the per-IP limit.
+- **Anonymous telemetry pings are rate-limited** to 120 per IP per hour. Pings over the limit are dropped, still with a 200, so SDKs never see an error.
+- **Dashboard security headers:** `X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`, `nosniff`, a referrer policy and a permissions policy.
+- Community image links use the request's `Host` header only when it is a plain hostname. Otherwise they use the default; set `PUBLIC_API_URL` to pin it.
+- `infra/docker-compose.dashboard.yml` builds the dashboard with `NEXT_PUBLIC_DEV_MODE=false` by default. Local one-click sign-in still works through `ENV=development`.
+
+### Python integrations and MCP republished for SDK 0.4.1
+
+- `zizkadb-langchain` 0.1.4, `zizkadb-crewai` 0.1.4, `zizkadb-langgraph` 0.1.1 and `zizkadb-livekit` 0.2.2 require `zizkadb-sdk>=0.4.1`, so installing any of them brings the current SDK.
+- `zizkadb-mcp` 0.1.9: the `log_event` tool states the agent name rule.
+
+### Agent names on write follow the agent-route rule
+
+- **Breaking:** a new agent can no longer be created under a name no `/v1/agents/{agent_id}` route accepts. `POST /v1/events`, and the first use of an unassigned API key, return a 400 that states the rule: 1–255 characters of letters, numbers, dots, dashes and underscores, starting with a letter or number. Before, names such as `my bot` or `team/bot` were stored but could not be opened, analysed or deleted, and an unassigned key could be bound to a new one on its first use, from any route that takes an `agent`. Leading or trailing spaces are rejected, not trimmed. Agents already stored under such names keep accepting events.
+
+## [0.4.1] - 2026-10-24
+
+### Single image: front proxy hardening
+
+- The front proxy handles any redirect value from the upstreams safely; redirects it cannot parse are passed through untouched.
+- Local mode (`ENV=development`) answers only on `localhost`, `127.0.0.1`, `[::1]` and the host of `ZIZKADB_PUBLIC_URL`.
+- `TRUSTED_PROXIES` entries the proxy cannot parse are skipped with a warning, as the API does.
+- The proxy keeps idle connections for 65 s, longer than common platform proxies pool them, so reused connections are not cut.
+- `/api-explorer/...` subpaths are left to the dashboard's redirect again.
+- Image publishing: a manual run with a version publishes only that version and no longer moves `latest`.
+- Docs: the dashboard docs page no longer suggests exporting `ZIZKADB_HOST` together with a Cloud key; the README covers `TRUSTED_PROXIES` behind a reverse proxy; `docs/telemetry.md` lists the `/swagger` page's CDN requests.
+
+### Single image: review fixes; README for every reader
+
+- A production container started with a well-known `DEV_API_KEY` (`zizkadb_dev_local`) now ignores it with a warning instead of refusing to start in a loop. An operator's own unique key is left alone.
+- Without `ZIZKADB_PUBLIC_URL`, production builds links from each request's own address instead of `http://localhost:8000`; the banner shows the dashboard port (3001), which serves the API too. `ZIZKADB_PUBLIC_URL` also applies in local mode.
+- Browsers may call the API only from the dashboard's own address (set `CORS_ALLOWED_ORIGINS` to allow others), in both modes; in local mode this keeps other websites away from the well-known dev key.
+- `/api-explorer` reaches the API through port 3001. A custom `FRONT_PORT` keeps the health check and banner correct; an invalid one, or one already used inside the container, stops with a clear message.
+- TypeScript SDK: every environment read is guarded, so a `process` shim without `env` no longer breaks construction or `log()`.
+- `scripts/publish-packages.sh` stops if the Python SDK version is already on PyPI, unless `PUBLISH_RESUME=1` (to finish a release whose npm step failed). An unchanged MCP version is always skipped, and the Python and TypeScript SDK versions must match before anything uploads. It runs on macOS bash 3.2.
+- README: a plain-language summary, a "Start here" guide for each kind of reader, a server command for the single image, and FAQ answers about the admin token and where data goes.
+
+## [0.4.0] - 2026-10-24
+
+### Dashboard fonts ship with the app
+
+- Inter and JetBrains Mono are bundled with the dashboard (`@fontsource`) instead of loaded from Google Fonts, so a visitor's browser no longer contacts Google for fonts. With that, a self-hosted dashboard makes no third-party requests. `docs/telemetry.md` is updated.
+
+### Fixed: single image redirected browsers to localhost:3002
+
+- On the single image (`infra/allinone/`), opening `/` or a protected page redirected to `http://localhost:3002/login`, the dashboard's internal address, so sign-in was unreachable from a browser on any public URL. The front proxy now turns redirects that point at an internal address into relative paths, so the browser stays on the address it used.
+
+### Docs: deploy on Redu Cloud, and what ZizkaDB sends
+
+- New `redu.md`: the recipe redu uses to deploy the open-source single container from this repository. README and wiki have a "Deploy on Redu Cloud" section.
+- New `docs/telemetry.md`: every network call ZizkaDB makes on its own (SDK and install pings, dashboard fonts, optional features) and how to turn each off.
+### Fixed: templates and examples ignored ZIZKADB_HOST when an API key was set
+
+- Python and TypeScript SDKs: when no host is passed, the client now uses `ZIZKADB_HOST` if it is set, so `ZizkaDB(api_key=...)` with a self-hosted key no longer goes to ZizkaDB Cloud and fails with "Invalid API key". An explicit host still wins, a key with no `ZIZKADB_HOST` still means Cloud, and the legacy `AGENTDB_HOST` is honoured too. **Behaviour change:** a Cloud API key used while `ZIZKADB_HOST` is exported now goes to that host; unset it to reach Cloud. The TypeScript constructor reads the environment only where a `process` global exists.
+  If your `.env` came from an older crewai or livekit `.env.example` and you use ZizkaDB Cloud, remove its `ZIZKADB_HOST=http://localhost:8000` line.
+- `zizkadb init` templates (basic, openai, langchain, crewai, langgraph, rag) and the examples (minimal-python, openai-agent, langchain-agent, crewai-agent, livekit-agent) follow the same rule with the current SDK too: `ZIZKADB_HOST` wins, a key alone means Cloud, and neither means the local stack. The langgraph and rag templates and the crewai example no longer send a Cloud key to localhost.
+- New `examples/anthropic-agent/`: the same causal-logging example with the Anthropic API (Claude).
+### Single-container image runs in production mode by default
+
+- **Breaking for plain `docker run` users:** `ghcr.io/zizka-ai-sl/zizkadb` now starts with `ENV=production`. Pass `-e ENV=development` to keep the one-click dashboard and the `zizkadb_dev_local` API key on your own machine. `scripts/quickstart-remote.sh` already does this, so the quickstart is unchanged.
+- In production mode the dashboard asks for an admin token, generated on first start and kept in the volume: `docker exec <container> sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Setting `SELFHOST_ADMIN_TOKEN` yourself still takes precedence.
+- The database password is generated per install and kept in `/data/secrets.env`. Existing volumes are moved to a generated password on first start of the new image; data is untouched.
+- If `/data/secrets.env` changes, the database password is re-applied on the next start, and an interrupted first start can no longer leave an empty secret behind.
+- Port 3001 now serves the whole product: a small front proxy in the image sends `/v1`, `/health` and `/swagger` to the API and everything else to the dashboard, which calls the API on its own origin. One public port is enough behind a domain or a platform proxy; 8000 still serves the API alone. The proxy appends the connecting address to `X-Forwarded-For`, and the image trusts only that proxy (`TRUSTED_PROXIES=127.0.0.1,::1`). Behind another reverse proxy, add its address range to `TRUSTED_PROXIES`; otherwise every visitor shares that proxy's address for rate limits.
+- If an operator-supplied `DATABASE_URL` points at the container's own database, the role password follows the password in that URL.
+- New optional `ZIZKADB_PUBLIC_URL` sets the public address used for links. `CORS_ALLOWED_ORIGINS` now defaults to the dashboard's address (that URL, or `http://localhost:3001`) instead of allowing every origin; the dashboard itself is same-origin and needs no CORS.
+- Dashboard: after creating an API key, the usage snippet's `ZIZKADB_HOST` is the dashboard's own address when the API shares its origin, instead of `http://localhost:8000`.
+
+### Fixed: agent baseline with a time window returned 500
+
+- `GET /v1/agents/{id}/baseline?window=24h|7d|30d` failed for every window (a naive cutoff was compared with timezone-aware session times). It now splits sessions at the cutoff, using the database clock. The count-based split (`recent_window`) was not affected.
+- With a window and no session inside it, the response is `no_current_data` (the status `/behavior-change` already uses) instead of a drift report against an empty window, which would have shown `significant_drift` for an agent that simply did not run. Every baseline response now includes `window`, and the warming-up message explains that a session which ended before the window is needed. A session counts as recent when its last event falls in the window.
+- Dashboard: the behaviour panel names the time window in its labels, taken from the window the data was computed for.
+
+### Embed worker backs off and gives up on events that keep failing
+
+- A failed embedding is retried after 30 s, then 60 s, doubling up to 1 hour, instead of on every poll. After 10 attempts (about 3 hours) the event is marked `index_status = 'dead'` and no longer retried. Tunable with `EMBED_MAX_ATTEMPTS`, `EMBED_RETRY_BASE_SEC` and `EMBED_RETRY_MAX_SEC` on the worker.
+- Events waiting for a retry no longer fill the batch, so they cannot stop newer events from being indexed.
+- New columns `events.index_attempts` and `events.index_retry_at`, added on startup without rewriting the table. Existing `failed` events start again at attempt 0.
+- Re-queue `failed` and `dead` events, with a fresh retry budget, from inside the worker container: `docker exec zizkadb_embed_worker python workers/embed_worker.py --requeue` (or `scripts/reindex-events.py` from a checkout).
+- The worker keeps running when a whole batch fails (for example, Postgres briefly unreachable), backing off up to 60 s and logging the traceback once per outage.
+- With `EMBED_SYNC=true` the inline attempt at write time is not counted, so such an event gets one extra try.
+
+## [0.3.0] - 2026-10-19
+
+Packages: `zizkadb-sdk` 0.3.0 (PyPI + npm), `zizkadb-mcp` 0.1.8, `zizkadb-livekit` 0.2.1, `zizkadb-crewai` 0.1.3, `zizkadb-langgraph` 0.1.0 (first release). `zizkadb-langchain` is unchanged at 0.1.3. API display version 0.3.0.
+
+### Impact trace: what did this event cause?
+
+- New `GET /v1/events/{event_id}/impact?depth=` walks the causal graph downstream, the mirror of `/why`: every event that descends from the given one through `parent_event_id`, with its `depth` (anchor first, then by depth). `depth` is 0–50 (default 10). At most 500 nodes are returned (the shallowest first); `truncated: true` says the cap was hit, and `depth_truncated: true` says more events lie below the depth limit.
+- Same scoping as `/why`: an agent-scoped key anchors on and descends through its own agent's events only, and an unbound key is bound to the anchor's agent and sees only that agent's subtree.
+
 ### Event checksums cover the audit fields
 
 - New events get a v2 checksum over tenant, agent, event type, data, `parent_event_id`, session, timestamp, sequence number and metadata — not just event type + data. Rewriting any of these in the database now shows up as a mismatch. `embedding` and `index_status` are excluded because the embedding pipeline updates them after insert.
@@ -26,7 +257,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `infra/lib/production-guard.sh` (used by `scripts/reset-local-db.sh`) now refuses unless `infra/.env` sets `ENV=development`; an unset `ENV` counts as production, matching the API.
 - `infra/backup-postgres.sh` and `infra/backup-qdrant.sh` keep working on a server whose `infra/.env` has no `ENV` line (they only read from the running containers).
 - `scripts/validate-selfhost-config.sh` follows the API: an unset `ENV` is production, and an empty `DEV_API_KEY` is accepted in production (only the published dev keys are rejected).
-- Unchanged for now: data ports in `infra/docker-compose.yml` (Postgres, Redis, Qdrant) are still published on all interfaces, and `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers.
+- Unchanged for now: `EMBEDDING_ENCRYPTION_KEY` is still not passed to the containers. (The data ports were moved to `127.0.0.1` later; see Security hardening above.)
 
 ### Development mode is opt-in (unset `ENV` means production)
 
@@ -93,6 +324,15 @@ Fifteen-day self-host / OSS hardening pass. User-visible highlights:
 - `GET /v1/sessions/{id}/events` no longer binds the key to the first returned event's agent; it accepts an optional `?agent=` filter.
 - `GET /v1/sessions/{id}/why/{event_id}` and `GET /v1/events/{id}/why` no longer return other agents' ancestor events to an agent-scoped key.
 - `GET /v1/sessions?agent=X` with a key scoped to another agent now returns 403 (previously silently returned the key's own sessions).
+- Client IPs for rate limiting are taken from `X-Forwarded-For` only when the peer is a trusted proxy (new `TRUSTED_PROXIES` env var, default `127.0.0.1,::1,172.16.0.0/12` to cover nginx → Docker bridge). The header is walked from the right and the first untrusted hop is used, so a client-supplied left-most value can no longer spoof its rate-limit bucket.
+- OTP codes are burned after 5 wrong guesses. The attempt counter (`auth_otps.attempts`) is incremented atomically, so concurrent guesses cannot bypass the lockout.
+- Rate limits are checked and recorded atomically (Redis Lua script via EVALSHA; locked in memory), closing the check-then-record race under concurrent requests.
+- `GET /v1/memory/diff/{session_id}` with an agent-scoped key filters events by agent in SQL: other agents' events are never returned, a key whose agent was not first in the session can still diff it, and a session with none of the key's events returns 404 (was 403).
+- `POST /v1/auth/test-event` requires a dashboard session (API keys are rejected).
+- Community image uploads are checked against PNG/JPEG/GIF/WebP magic bytes; served uploads send `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'`. The community list `LIMIT` is now a bound parameter.
+- Malformed `parent_id` on event writes returns 400 instead of a 500.
+- Incoming `X-Request-ID` values must match `[A-Za-z0-9_.-]{1,64}`; anything else is replaced with a fresh UUID (prevents log injection).
+- `infra/docker-compose.yml` binds Postgres, Qdrant and Redis to `127.0.0.1` only.
 
 ### Fixed
 
@@ -223,10 +463,10 @@ Production-hardening sprint merged to `main` (via stacked PRs #125–#139), incl
 - CLI: `why`, `baseline`, `token-usage`, `token-opt`
 - Docs: always-on Cursor coding standards, KB OSS scope updates
 
-See [GitHub releases](https://github.com/Zizka-ai/ZizkaDB/releases) for tagged artifacts.
+See [GitHub releases](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) for tagged artifacts.
 
-[Unreleased]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.8...HEAD
-[0.2.8]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.7...v0.2.8
-[0.2.7]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.2.6...v0.2.7
-[0.2.6]: https://github.com/Zizka-ai/ZizkaDB/compare/v0.1.0...v0.2.6
-[0.1.0]: https://github.com/Zizka-ai/ZizkaDB/releases
+[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.1.0...v0.2.6
+[0.1.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/releases

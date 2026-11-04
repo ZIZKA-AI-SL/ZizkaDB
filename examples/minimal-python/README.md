@@ -14,7 +14,7 @@ From this directory:
 ```bash
 cp .env.example .env   # optional; localhost uses dev key auto-injection
 pip install -r requirements.txt
-export ZIZKADB_HOST=http://localhost:8000   # omit if using managed cloud + API key in .env
+export ZIZKADB_HOST=http://localhost:8000   # your server URL if self-hosted; omit for ZizkaDB Cloud
 python agent.py
 ```
 

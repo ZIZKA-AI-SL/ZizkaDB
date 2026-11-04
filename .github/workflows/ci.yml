@@ -125,4 +125,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - name: Single-image front proxy tests
+        run: node --test ../infra/allinone/
       - run: npm run build

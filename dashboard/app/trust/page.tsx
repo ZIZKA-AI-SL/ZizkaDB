@@ -250,7 +250,7 @@ export default function TrustPage() {
               embedding-backed features; logging and causal APIs work without
               it.
             </p>
-            <Code>{`git clone https://github.com/Zizka-ai/ZizkaDB
+            <Code>{`git clone https://github.com/ZIZKA-AI-SL/ZizkaDB
 cp .env.example infra/.env
 docker compose -f infra/docker-compose.yml up -d`}</Code>
           </Section>

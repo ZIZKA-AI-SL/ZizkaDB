@@ -70,7 +70,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        response = client.post("/v1/search", json={"query": "hello"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         assert response.status_code == 200
         body = response.json()
@@ -93,7 +93,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        response = client.post("/v1/search", json={"query": "hello"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         assert response.status_code == 200
         assert response.json()["results"] == []
@@ -108,7 +108,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=None),
         )
 
-        response = client.post("/v1/search", json={"query": "hello"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         assert response.status_code == 400
         assert "embedding" in response.json()["detail"].lower()
@@ -131,7 +131,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        response = client.post("/v1/search", json={"query": "hello"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         body = response.json()
         assert body["results"][0]["score"] == 0.42
@@ -151,7 +151,7 @@ class TestSearchRoundTrip:
             AsyncMock(return_value=[0.1] * 1536),
         )
 
-        client.post("/v1/search", json={"query": "hello"})
+        client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
 
         _, kwargs = qdrant.search.call_args
         must_conditions = kwargs["query_filter"].must
@@ -172,6 +172,44 @@ class TestSearchAgentScope:
             "tenant_id": _TENANT["tenant_id"],
             "key_id": "key-1",
         }
-        response = client.post("/v1/search", json={"query": "hello"})
+        response = client.post("/v1/search", json={"query": "hello", "mode": "semantic", "include_superseded": True})
         assert response.status_code == 400
         assert "agent is required" in response.json()["detail"]
+
+
+class TestSearchModes:
+    def setup_method(self):
+        app.dependency_overrides[get_tenant] = _override_tenant
+
+    def teardown_method(self):
+        app.dependency_overrides.pop(get_tenant, None)
+
+    def test_auto_uses_keywords_when_embeddings_are_off(self, monkeypatch):
+        monkeypatch.setattr("api.search.embeddings_enabled", lambda: False)
+        keyword = AsyncMock(return_value=[])
+        monkeypatch.setattr("api.search.keyword_search", keyword)
+        monkeypatch.setattr("api.search.get_pool", lambda: AsyncMock())
+
+        r = client.post("/v1/search", json={"query": "refund"})
+
+        assert r.status_code == 200
+        assert r.json()["mode"] == "keyword"
+        keyword.assert_awaited_once()
+
+    def test_semantic_is_refused_when_embeddings_are_off(self, monkeypatch):
+        monkeypatch.setattr("api.search.embeddings_enabled", lambda: False)
+        monkeypatch.setattr("api.search.is_self_hosted_deployment", lambda: True)
+        r = client.post("/v1/search", json={"query": "refund", "mode": "semantic"})
+        assert r.status_code == 400
+        assert "keyword" in r.json()["detail"]
+
+    def test_auto_falls_back_to_keywords_when_embedding_fails(self, monkeypatch):
+        monkeypatch.setattr("api.search.embeddings_enabled", lambda: True)
+        monkeypatch.setattr("api.search.generate_embedding", AsyncMock(return_value=None))
+        monkeypatch.setattr("api.search.keyword_search", AsyncMock(return_value=[]))
+        monkeypatch.setattr("api.search.get_pool", lambda: AsyncMock())
+
+        body = client.post("/v1/search", json={"query": "refund"}).json()
+
+        assert body["mode"] == "keyword"
+        assert "keyword search only" in body["warning"]

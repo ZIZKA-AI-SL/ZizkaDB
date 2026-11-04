@@ -1,6 +1,6 @@
 # TypeScript SDK
 
-**Package:** `zizkadb-sdk` on npm (**0.2.8**)
+**Package:** `zizkadb-sdk` on npm (**0.5.0**)
 
 ```bash
 npm install zizkadb-sdk
@@ -29,8 +29,8 @@ chain.print()
 |----------|---------|
 | `ZIZKADB_API_KEY` | Cloud API key |
 | `AGENTDB_API_KEY` | Legacy alias |
-| `ZIZKADB_HOST` | Self-hosted URL |
-| `ZIZKADB_TELEMETRY` | Set `false` to opt out |
+| `ZIZKADB_HOST` | Self-hosted API URL. Used when the client gets no `host` argument, so with an API key it sends requests here instead of ZizkaDB Cloud (legacy alias `AGENTDB_HOST`) |
+| `ZIZKADB_TELEMETRY` | Set `false` to opt out of the anonymous install ping (see [docs/telemetry.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/docs/telemetry.md)) |
 
 Core HTTP client only — LangChain, CrewAI, and LiveKit adapters are Python packages (`zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`).
 

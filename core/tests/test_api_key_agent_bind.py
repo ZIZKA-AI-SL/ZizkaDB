@@ -37,6 +37,13 @@ class _FakeConn:
             return None
         return {"agent_id": self.bound_agent}
 
+    async def fetchval(self, sql, *args):
+        assert "FOR KEY SHARE" in sql  # the agent row is locked before the key row
+        return 1
+
+    def transaction(self):
+        return _Acquire(None)
+
 
 class _FakePool:
     def __init__(self, conn):
@@ -184,3 +191,62 @@ async def test_claim_none_is_unauthorized(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await assert_agent_allowed(tenant, "agent-a")
     assert exc.value.status_code == 401
+
+
+class _NamePool:
+    def __init__(self, *, exists):
+        self.exists = exists
+        self.acquired = False
+
+    async def fetchval(self, sql, *args):
+        return 1 if self.exists else None
+
+    def acquire(self):
+        self.acquired = True
+        raise AssertionError("must not touch api_keys or agents")
+
+
+@pytest.mark.asyncio
+async def test_claim_rejects_a_new_name_no_agent_route_can_reach():
+    pool = _NamePool(exists=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await api_keys.claim_unassigned_api_key(
+            key_id="k", tenant_id="t", agent_id="my bot", pool=pool
+        )
+
+    assert exc.value.status_code == 400
+    assert not pool.acquired
+
+
+@pytest.mark.asyncio
+async def test_claim_does_not_look_up_a_valid_name(monkeypatch):
+    calls = []
+
+    class _Pool(_NamePool):
+        async def fetchval(self, sql, *args):
+            calls.append(sql)
+            raise AssertionError("stop here")
+
+        def acquire(self):
+            raise RuntimeError("reserved")  # the next step after validation
+    with pytest.raises(RuntimeError, match="reserved"):
+        await api_keys.claim_unassigned_api_key(
+            key_id="k", tenant_id="t", agent_id="my-bot", pool=_Pool(exists=False)
+        )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", ["a\x00b", "\ud800x"])
+async def test_claim_rejects_a_name_postgres_cannot_store_without_looking_it_up(agent):
+    class _Pool(_NamePool):
+        async def fetchval(self, sql, *args):
+            raise AssertionError("asyncpg would fail on this value")
+
+    with pytest.raises(HTTPException) as exc:
+        await api_keys.claim_unassigned_api_key(
+            key_id="k", tenant_id="t", agent_id=agent, pool=_Pool(exists=False)
+        )
+
+    assert exc.value.status_code == 400

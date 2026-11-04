@@ -2,14 +2,15 @@ import asyncio
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from services.exceptions import bad_request, conflict, not_found, service_unavailable
 from pydantic import BaseModel, Field
 
 from api.deps import (
+    get_writer_tenant,
     assert_agent_allowed,
     get_tenant,
     is_unbound_api_key,
@@ -26,11 +27,12 @@ from services.rate_limiter import (
 )
 from services import reports, token_optimization, token_usage
 from services.actions import action_breakdown, action_distribution
-from services.agent_limits import assert_agent_slot
+from services.agent_limits import assert_agent_slot, lock_agent_row
 from services import token_optimization_config
 from services.ai import config as ai_config
 from services.ai.provider import AIProviderError
 from services.suggestions import engine as suggestions_engine
+from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.api_keys import (
     assert_and_reserve_api_key_slot,
     create_api_key_record,
@@ -43,7 +45,8 @@ from services.runtime_env import is_dev_mode
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$")
+# Time windows accepted by /baseline (the route's Query pattern lists the same keys).
+_BASELINE_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 
 # Per-tenant throttle for the AI suggestions endpoint. Cache + Redis lock already
 # coalesce repeat reads, but `refresh=true` bypasses both and triggers a live
@@ -124,10 +127,8 @@ async def _check_suggestions_rate(
 
 def _validate_agent_id(agent_id: str) -> str:
     agent_id = agent_id.strip()
-    if not agent_id or not _AGENT_ID_RE.match(agent_id):
-        raise bad_request(
-            "agent_id must be 1–255 chars: letters, numbers, dots, dashes, underscores"
-        )
+    if not is_valid_agent_id(agent_id):
+        raise bad_request(f"agent_id must be {AGENT_ID_RULE}")
     return agent_id
 
 
@@ -139,6 +140,9 @@ class CreateAgentBody(BaseModel):
 
 class CreateAgentKeyBody(BaseModel):
     name: str | None = None
+    # read_only keys can query, search and verify but never write or delete.
+    scope: Literal["read_write", "read_only"] = "read_write"
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.get("")
@@ -281,6 +285,56 @@ async def _purge_agent_vectors(tenant_id: str, agent_id: str) -> bool:
     return False
 
 
+class RetentionBody(BaseModel):
+    # Days to keep events; null = use EVENT_RETENTION_DAYS (or keep forever).
+    days: int | None = Field(default=None, ge=1, le=36500)
+
+
+@router.get("/{agent_id}/retention")
+async def get_agent_retention(
+    agent_id: str,
+    tenant: dict = Depends(require_dashboard_session),
+):
+    from services.retention import default_retention_days
+
+    agent_id = _validate_agent_id(agent_id)
+    row = await get_pool().fetchrow(
+        "SELECT retention_days FROM agents WHERE tenant_id = $1 AND agent_id = $2",
+        tenant["tenant_id"], agent_id,
+    )
+    if not row:
+        raise not_found("Agent not found")
+    default = default_retention_days()
+    return {
+        "agent": agent_id,
+        "days": row["retention_days"],
+        "default_days": default,
+        "effective_days": row["retention_days"] or default,
+    }
+
+
+@router.put("/{agent_id}/retention")
+async def set_agent_retention(
+    agent_id: str,
+    body: RetentionBody,
+    tenant: dict = Depends(require_dashboard_session),
+):
+    """Keep this agent's events for ``days`` (older ones are deleted hourly,
+    leaving audit-chain tombstones). ``null`` falls back to the server default."""
+    agent_id = _validate_agent_id(agent_id)
+    updated = await get_pool().fetchval(
+        """
+        UPDATE agents SET retention_days = $3
+        WHERE tenant_id = $1 AND agent_id = $2
+        RETURNING 1
+        """,
+        tenant["tenant_id"], agent_id, body.days,
+    )
+    if not updated:
+        raise not_found("Agent not found")
+    return await get_agent_retention(agent_id, tenant=tenant)
+
+
 @router.delete("/{agent_id}")
 async def delete_agent(
     agent_id: str,
@@ -291,26 +345,26 @@ async def delete_agent(
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
 
-    row = await pool.fetchrow(
-        "SELECT event_count FROM agents WHERE tenant_id = $1 AND agent_id = $2",
-        tenant_id, agent_id,
-    )
-    if not row:
-        raise not_found("Agent not found")
-
-    # Purge Qdrant vectors by tenant_id + agent_id payload filter (retried
-    # inside _purge_agent_vectors). Best-effort: report success/failure in the
-    # response without blocking or rolling back the Postgres deletion.
-    vector_cleanup = await _purge_agent_vectors(tenant_id, agent_id)
-
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "UPDATE events SET parent_event_id = NULL WHERE tenant_id = $1 AND agent_id = $2",
+            # Lock the agent first. A write in flight finishes before the
+            # delete goes on, and a write arriving later waits, then finds the
+            # agent gone and creates it again under the plan's agent cap.
+            exists = await conn.fetchval(
+                "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2 FOR UPDATE",
                 tenant_id, agent_id,
             )
-            await conn.execute(
+            if not exists:
+                raise not_found("Agent not found")
+            # The rows actually deleted: event_count is not lowered by forget.
+            status = await conn.execute(
                 "DELETE FROM events WHERE tenant_id = $1 AND agent_id = $2",
+                tenant_id, agent_id,
+            )
+            # The whole agent goes, so its chain does too: a new agent under
+            # the same name starts a fresh chain.
+            await conn.execute(
+                "DELETE FROM event_tombstones WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
             )
             await conn.execute(
@@ -318,10 +372,15 @@ async def delete_agent(
                 tenant_id, agent_id,
             )
 
+    # After the commit, so no lock is held while Qdrant is retried. Best
+    # effort: the rows are already gone, so a failure is reported in the
+    # response rather than rolling the delete back.
+    vector_cleanup = await _purge_agent_vectors(tenant_id, agent_id)
+
     return {
         "deleted": True,
         "agent": agent_id,
-        "events_deleted": int(row["event_count"] or 0),
+        "events_deleted": int(status.split()[-1]),
         "vector_cleanup": vector_cleanup,
     }
 
@@ -329,7 +388,7 @@ async def delete_agent(
 @router.post("/{agent_id}/test-event", status_code=201)
 async def test_agent_event(
     agent_id: str,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(get_writer_tenant),
 ):
     """Log a test event to this agent (dashboard JWT). Verifies the pipeline for this agent."""
     agent_id = _validate_agent_id(agent_id)
@@ -390,20 +449,26 @@ async def create_agent_api_key(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            exists = await conn.fetchrow(
+            if not await conn.fetchval(
                 "SELECT 1 FROM agents WHERE tenant_id = $1 AND agent_id = $2",
                 tenant_id, agent_id,
-            )
-            if not exists:
+            ):
                 raise not_found("Agent not found")
-
+            # The tenant lock (when caps are enforced), then the agent row
+            # (KEY SHARE, held until the key is inserted): account delete takes
+            # them in this order, and the key's foreign key would otherwise
+            # take the tenant row first. The agent may be gone by now.
             await assert_and_reserve_api_key_slot(conn, tenant_id=tenant_id)
+            if not await lock_agent_row(conn, tenant_id, agent_id):
+                raise not_found("Agent not found")
 
             return await create_api_key_record(
                 conn,
                 tenant_id=tenant_id,
                 name=body.name or f"{agent_id} key",
                 agent_id=agent_id,
+                scope=body.scope,
+                expires_in_days=body.expires_in_days,
             )
 
 
@@ -843,15 +908,19 @@ async def agent_baseline(
     await assert_agent_allowed(tenant, agent_id)
     pool = get_pool()
 
+    delta = _BASELINE_WINDOWS[window] if window else None
+    # The window split is decided in SQL against the database clock, the same
+    # clock that stamped the events.
     sessions = await pool.fetch(
         """
-        SELECT session_id, MAX(timestamp) AS ended_at
+        SELECT session_id, MAX(timestamp) AS ended_at,
+               ($3::interval IS NOT NULL AND MAX(timestamp) >= NOW() - $3::interval) AS is_recent
         FROM events
         WHERE tenant_id = $1 AND agent_id = $2 AND session_id IS NOT NULL
         GROUP BY session_id
         ORDER BY MAX(timestamp) DESC
         """,
-        tenant["tenant_id"], agent_id,
+        tenant["tenant_id"], agent_id, delta,
     )
 
     if not sessions:
@@ -861,25 +930,42 @@ async def agent_baseline(
             "message":       "No sessions logged yet. Add session_id to your db.log() calls to start building a baseline.",
             "sessions":      0,
             "recent_window": recent_window,
+            "window":        window,
         }
 
     # Time-based split when a window param is supplied
     if window:
-        delta = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}[window]
-        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - delta
-        recent_ids   = [r["session_id"] for r in sessions if r["ended_at"] >= cutoff]
-        baseline_ids = [r["session_id"] for r in sessions if r["ended_at"] <  cutoff]
+        recent_ids   = [r["session_id"] for r in sessions if r["is_recent"]]
+        baseline_ids = [r["session_id"] for r in sessions if not r["is_recent"]]
+        if not recent_ids:
+            # Comparing an empty window with the past would report drift for an
+            # agent that simply did not run.
+            # Same status as /behavior-change for "nothing in the current window".
+            return {
+                "agent":         agent_id,
+                "status":        "no_current_data",
+                "message":       f"No sessions in the last {window}, so there is nothing recent to compare. Pick a wider window or check back after the agent runs.",
+                "sessions":      len(sessions),
+                "recent_window": recent_window,
+                "window":        window,
+            }
     else:
         recent_ids   = [r["session_id"] for r in sessions[:recent_window]]
         baseline_ids = [r["session_id"] for r in sessions[recent_window:]]
 
     if not baseline_ids:
+        message = (
+            f"All {len(sessions)} sessions ended within the last {window}. Drift needs at least one session that ended earlier to compare against."
+            if window else
+            f"Need at least {recent_window + 1} sessions to compute drift. You have {len(sessions)}. Keep logging."
+        )
         return {
             "agent":         agent_id,
             "status":        "warming_up",
-            "message":       f"Need at least {recent_window + 1} sessions to compute drift. You have {len(sessions)}. Keep logging.",
+            "message":       message,
             "sessions":      len(sessions),
             "recent_window": recent_window,
+            "window":        window,
             "recent":        await _baseline_for(pool, tenant["tenant_id"], agent_id, recent_ids),
         }
 

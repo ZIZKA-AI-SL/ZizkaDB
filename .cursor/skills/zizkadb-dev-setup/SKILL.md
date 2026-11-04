@@ -8,7 +8,7 @@ description: Set up and start the local ZizkaDB development stack. Use when sett
 ## First-time setup (one command)
 
 ```bash
-git clone https://github.com/Zizka-ai/ZizkaDB.git && cd ZizkaDB
+git clone https://github.com/ZIZKA-AI-SL/ZizkaDB.git && cd ZizkaDB
 bash scripts/setup-local.sh
 ```
 

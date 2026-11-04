@@ -26,6 +26,8 @@ Issue: <!-- paste issue title for reviewers, e.g. "Run dashboard vitest in CI (#
 
 CI runs three jobs on every PR: **python**, **typescript-sdk**, **dashboard**. Check the boxes that match files you changed.
 
+- [ ] New features and bug fixes include automated tests (required; see CONTRIBUTING.md). Docs-only: say so here.
+
 ### python (`core/`, `sdk/python/`, `mcp/`, `integrations/`)
 
 - [ ] `ruff check core/ sdk/python/ mcp/ integrations/`

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from api.telemetry import updates_limiter
+from api.telemetry import ping_limiter, updates_limiter
 from main import app
 from services.country_from_request import country_code_from_ip, country_code_from_request
 from services.rate_limiter import InMemoryStorage
@@ -37,6 +37,20 @@ class TestCountryFromRequest:
 
 
 class TestTelemetryPing:
+    def setup_method(self):
+        ping_limiter.storage = InMemoryStorage()
+
+    @patch("api.telemetry.get_pool")
+    def test_flood_is_dropped_but_still_ok(self, mock_get_pool, monkeypatch):
+        mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_get_pool.return_value = mock_pool
+        monkeypatch.setattr(ping_limiter, "limit", 2)
+
+        codes = [client.post("/v1/telemetry", json=PING).status_code for _ in range(4)]
+        assert codes == [200] * 4
+        assert mock_pool.execute.await_count == 2
+
     @patch("api.telemetry.get_pool")
     def test_ping_stores_country_from_header(self, mock_get_pool):
         mock_pool = MagicMock()

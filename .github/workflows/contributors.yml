@@ -8,8 +8,7 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: contributors
@@ -18,17 +17,28 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # main is protected (no direct pushes), so changes arrive as a pull request.
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Regenerate contributors grid
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/update_contributors.py "$GITHUB_REPOSITORY"
-      - name: Commit if changed
+      - name: Open a pull request if changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git diff --quiet README.md && exit 0
+          branch=bot/contributors
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -am 'docs(readme): sync contributors [skip ci]'
-          git pull --rebase origin main
-          git push
+          git switch -C "$branch"
+          git commit -am 'docs(readme): sync contributors' \
+            -m 'Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+          git push --force origin "$branch"
+          gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN \
+            || gh pr create --head "$branch" --title 'docs(readme): sync contributors' \
+                 --body 'Automated contributors grid update.'

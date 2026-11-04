@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Configure Zizka-ai/ZizkaDB GitHub settings and replace the broken "Only admin" ruleset.
+# Configure ZIZKA-AI-SL/ZizkaDB GitHub settings and replace the broken "Only admin" ruleset.
 # Requires: gh CLI authenticated as a repo/org admin.
 #
 # Usage:
@@ -9,7 +9,7 @@
 # Run AFTER .github/workflows/ci.yml is on main (so status check names exist).
 set -euo pipefail
 
-REPO="${ZIZKADB_GITHUB_REPO:-Zizka-ai/ZizkaDB}"
+REPO="${ZIZKADB_GITHUB_REPO:-ZIZKA-AI-SL/ZizkaDB}"
 OLD_RULESET_ID="${ZIZKADB_OLD_RULESET_ID:-18095491}"
 
 echo "→ Repository: ${REPO}"

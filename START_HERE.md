@@ -5,7 +5,7 @@
 ## 1. Try it (60 seconds)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zizka-ai/ZizkaDB/main/scripts/quickstart-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZIZKA-AI-SL/ZizkaDB/main/scripts/quickstart-remote.sh | bash
 ```
 
 Requires Docker. You should see a tree from `tool_call` back to `user_message`.

@@ -8,6 +8,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ZizkaDB, ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError } from '../index'
 
+// The client reads ZIZKADB_HOST / AGENTDB_HOST when no host is passed; a
+// developer's exported values must not change which server a test talks to.
+for (const name of ['ZIZKADB_HOST', 'AGENTDB_HOST']) vi.stubEnv(name, '')
+
 // ─────────────────────────────────────────
 // Fetch mock helpers
 // ─────────────────────────────────────────
@@ -20,12 +24,16 @@ function mockFetch(status: number, body: unknown): void {
   }))
 }
 
-function mockFetchOnce(status: number, body: unknown): void {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
-    status,
-    statusText: String(status),
-    json: () => Promise.resolve(body),
-  }))
+function mockFetchSequence(responses: { status: number; body: unknown }[]): void {
+  const fn = vi.fn()
+  for (const r of responses) {
+    fn.mockResolvedValueOnce({
+      status: r.status,
+      statusText: String(r.status),
+      json: () => Promise.resolve(r.body),
+    })
+  }
+  vi.stubGlobal('fetch', fn)
 }
 
 beforeEach(() => {
@@ -49,7 +57,6 @@ describe('ZizkaDB constructor', () => {
   })
 
   it('throws when neither apiKey nor host is provided', () => {
-    // @ts-expect-error — intentional bad config
     expect(() => new ZizkaDB({})).toThrow(ZizkaDBError)
   })
 
@@ -116,6 +123,26 @@ describe('log()', () => {
     expect(body.data).toEqual({ tool: 'search' })
     expect(body.parent_id).toBeNull()
     expect(body.session_id).toBeNull()
+  })
+
+  it('sends idempotency_key only when given', async () => {
+    mockFetch(201, { event_id: 'evt-003', timestamp: '2026-06-01T00:00:00Z', sequence_no: 3, checksum: 'ghi' })
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.log({ agent: 'my-bot', event: 'e', data: {}, idempotencyKey: 'req-1' })
+    await db.log({ agent: 'my-bot', event: 'e', data: {} })
+
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit][]
+    expect(JSON.parse(calls[0][1].body as string).idempotency_key).toBe('req-1')
+    expect('idempotency_key' in JSON.parse(calls[1][1].body as string)).toBe(false)
+  })
+
+  it('returns chainHash and duplicate when the server sends them', async () => {
+    mockFetch(201, { event_id: 'e', timestamp: '2026-06-01T00:00:00Z', sequence_no: 4, checksum: 'c', chain_hash: 'h', duplicate: true })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const r = await db.log({ agent: 'my-bot', event: 'e', data: {} })
+    expect(r.chainHash).toBe('h')
+    expect(r.duplicate).toBe(true)
   })
 
   it('forwards parentId and sessionId', async () => {
@@ -509,5 +536,264 @@ describe('SDK version', () => {
     const { SDK_VERSION } = await import('../index')
     const packageJson = await import('../../package.json')
     expect(SDK_VERSION).toBe(packageJson.version)
+  })
+})
+
+describe('verifyChain()', () => {
+  it('maps the chain head and passes an anchor', async () => {
+    mockFetch(200, { agent: 'a', intact: true, summary: { events: 2 }, problems: [], chain_head: { sequence_no: 9, chain_hash: 'h9' } })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const r = await db.verifyChain('a', { sequenceNo: 5, chainHash: 'h5' })
+    expect(r.intact).toBe(true)
+    expect(r.chainHead).toEqual({ sequenceNo: 9, chainHash: 'h9' })
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string]
+    expect(url).toContain('/v1/events/chain?agent=a&after_seq=5&anchor=h5')
+  })
+})
+
+describe('iterEvents() and logBatch()', () => {
+  it('follows the cursor with the raw timestamp until a short page', async () => {
+    const page1 = [
+      { event_id: 'a', agent: 'b', timestamp: '2026-06-01T00:00:00.123456+00:00', event: 'e', data: {}, sequence_no: 9 },
+      { event_id: 'c', agent: 'b', timestamp: '2026-06-01T00:00:00.000001+00:00', event: 'e', data: {}, sequence_no: 8 },
+    ]
+    const page2 = [{ event_id: 'd', agent: 'b', timestamp: '2026-05-01T00:00:00+00:00', event: 'e', data: {}, sequence_no: 1 }]
+    const fn = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 })
+    vi.stubGlobal('fetch', fn)
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ids: string[] = []
+    for await (const e of db.iterEvents('b', { pageSize: 2 })) ids.push(e.eventId)
+    expect(ids).toEqual(['a', 'c', 'd'])
+    const secondUrl = fn.mock.calls[1][0] as string
+    expect(decodeURIComponent(secondUrl)).toContain('cursor=2026-06-01T00:00:00.000001+00:00|8')
+  })
+
+  it('maps batch results', async () => {
+    mockFetch(200, { written: 1, failed: 1, results: [
+      { index: 0, ok: true, event_id: 'e1', sequence_no: 1 },
+      { index: 1, ok: false, status: 400, error: 'bad' },
+    ] })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const r = await db.logBatch([
+      { agent: 'a', event: 'x', data: {} },
+      { agent: 'a', event: 'y', data: {}, parentIndex: 0 },
+    ])
+    expect(r.results[0]).toEqual({ index: 0, ok: true, eventId: 'e1', sequenceNo: 1, duplicate: false })
+    expect(r.results[1]).toEqual({ index: 1, ok: false, status: 400, error: 'bad' })
+    const body = JSON.parse(((fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit])[1].body as string)
+    expect(body.events[1].parent_index).toBe(0)
+  })
+})
+
+describe('exportEvents() and importEvents()', () => {
+  it('splits streamed NDJSON across chunk boundaries', async () => {
+    const enc = new TextEncoder()
+    const chunks = ['{"event_id":"a"}\n{"event_', 'id":"b"}\n']
+    const body = new ReadableStream({
+      start(c) { for (const ch of chunks) c.enqueue(enc.encode(ch)); c.close() },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, body }))
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ids: unknown[] = []
+    for await (const line of db.exportEvents('bot')) ids.push(line.event_id)
+    expect(ids).toEqual(['a', 'b'])
+  })
+
+  it('imports in chunks and sums the totals', async () => {
+    mockFetch(200, { imported: 1, duplicates: 0, failed: 0, parents_dropped: 0, errors: [] })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const totals = await db.importEvents([{ event_id: 'a' }, { event_id: 'b' }], { chunkSize: 1, agent: 'n' })
+    expect(totals.imported).toBe(2)
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+  })
+})
+
+describe('memory fields', () => {
+  it('sends supersedes and importance only when given', async () => {
+    mockFetch(201, { event_id: 'e', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'c' })
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.log({ agent: 'a', event: 'fact', data: {}, supersedes: 'old', importance: 0.9 })
+    await db.log({ agent: 'a', event: 'fact', data: {} })
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit][]
+    const first = JSON.parse(calls[0][1].body as string)
+    expect([first.supersedes, first.importance]).toEqual(['old', 0.9])
+    expect('supersedes' in JSON.parse(calls[1][1].body as string)).toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────
+// logFork()
+// ─────────────────────────────────────────
+
+describe('logFork()', () => {
+  function fetchBodies(): Record<string, unknown>[] {
+    return (fetch as ReturnType<typeof vi.fn>).mock.calls.map(([, opts]) =>
+      JSON.parse((opts as RequestInit).body as string) as Record<string, unknown>
+    )
+  }
+
+  it('outside track(): uses explicit agent, null parent', async () => {
+    mockFetchSequence([{ status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.logFork({
+      agent: 'my-bot',
+      events: [{ event: 'branch', data: { tool: 'search' } }],
+    })
+
+    const bodies = fetchBodies()
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].agent).toBe('my-bot')
+    expect(bodies[0].parent_id).toBeNull()
+    expect(bodies[0].session_id).toBeNull()
+  })
+
+  it('inside track() after an event: all branches share that parent', async () => {
+    mockFetchSequence([
+      { status: 201, body: { event_id: 'parent', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'p' } },
+      { status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:01Z', sequence_no: 2, checksum: 'x' } },
+      { status: 201, body: { event_id: 'b2', timestamp: '2026-06-01T00:00:02Z', sequence_no: 3, checksum: 'y' } },
+    ])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ctx = db.track('my-bot')
+    await ctx.run(async () => {
+      await db.log({ agent: 'my-bot', event: 'parent', data: {} })
+      const results = await db.logFork({
+        agent: 'my-bot',
+        events: [
+          { event: 'branch1', data: {} },
+          { event: 'branch2', data: {} },
+        ],
+      })
+
+      expect(results).toHaveLength(2)
+      expect(results[0].eventId).toBe('b1')
+      expect(results[1].eventId).toBe('b2')
+
+      const bodies = fetchBodies()
+      // log() call + 2 fork branches
+      expect(bodies).toHaveLength(3)
+      expect(bodies[1].parent_id).toBe('parent')
+      expect(bodies[2].parent_id).toBe('parent')
+      // Branches do NOT chain: both have the same parent
+      expect(bodies[2].parent_id).not.toBe('b1')
+    })
+  })
+
+  it('inside track() with no prior event: branches have null parent, not chained', async () => {
+    mockFetchSequence([
+      { status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } },
+      { status: 201, body: { event_id: 'b2', timestamp: '2026-06-01T00:00:01Z', sequence_no: 2, checksum: 'y' } },
+    ])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ctx = db.track('my-bot')
+    await ctx.run(async () => {
+      const results = await db.logFork({
+        agent: 'my-bot',
+        events: [
+          { event: 'branch1', data: {} },
+          { event: 'branch2', data: {} },
+        ],
+      })
+
+      expect(results).toHaveLength(2)
+      const bodies = fetchBodies()
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0].parent_id).toBeNull()
+      expect(bodies[1].parent_id).toBeNull()
+      // Not chained: second branch does not use the first as parent
+    })
+  })
+
+  it('sessionId override is sent to every branch', async () => {
+    mockFetchSequence([{ status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.logFork({
+      agent: 'my-bot',
+      sessionId: 'custom-session',
+      events: [{ event: 'branch', data: {} }],
+    })
+
+    const bodies = fetchBodies()
+    expect(bodies[0].session_id).toBe('custom-session')
+  })
+
+  it('does not inherit a session from another agent context', async () => {
+    mockFetchSequence([{ status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ctx = db.track('agent-a', 'session-a')
+    await ctx.run(async () => {
+      await db.logFork({
+        agent: 'agent-b',
+        events: [{ event: 'branch', data: {} }],
+      })
+    })
+
+    const bodies = fetchBodies()
+    expect(bodies[0].agent).toBe('agent-b')
+    expect(bodies[0].session_id).toBeNull()
+  })
+
+  it('empty events array returns empty results', async () => {
+    mockFetchSequence([{ status: 201, body: { event_id: 'unused', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const results = await db.logFork({
+      agent: 'my-bot',
+      events: [],
+    })
+    expect(results).toEqual([])
+    expect(fetchBodies()).toHaveLength(0)
+  })
+
+  it('forwards metadata and importance per branch', async () => {
+    mockFetchSequence([{ status: 201, body: { event_id: 'b1', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'x' } }])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.logFork({
+      agent: 'my-bot',
+      events: [
+        { event: 'e1', data: {}, metadata: { key: 'val' }, importance: 0.8 },
+      ],
+    })
+
+    const bodies = fetchBodies()
+    expect(bodies[0].metadata).toEqual({ key: 'val' })
+    expect(bodies[0].importance).toBe(0.8)
+  })
+
+  it('inside ctx.fork(): does not advance lastEventId', async () => {
+    mockFetchSequence([
+      { status: 201, body: { event_id: 'parent', timestamp: '2026-06-01T00:00:00Z', sequence_no: 1, checksum: 'p' } },
+      { status: 201, body: { event_id: 'branch', timestamp: '2026-06-01T00:00:01Z', sequence_no: 2, checksum: 'x' } },
+      { status: 201, body: { event_id: 'after', timestamp: '2026-06-01T00:00:02Z', sequence_no: 3, checksum: 'a' } },
+    ])
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    const ctx = db.track('my-bot')
+    await ctx.run(async () => {
+      await db.log({ agent: 'my-bot', event: 'parent', data: {} })
+      ctx.fork() // sets forkParentId
+      await db.logFork({
+        agent: 'my-bot',
+        events: [{ event: 'branch', data: {} }],
+      })
+      // After logFork inside fork(), lastEventId must NOT be advanced.
+      // The next log() should still use forkParentId (the parent event) as parent,
+      // not the branch from logFork.
+      await db.log({ agent: 'my-bot', event: 'after', data: {} })
+    })
+
+    const bodies = fetchBodies()
+    // log('parent'), logFork('branch'), log('after')
+    expect(bodies).toHaveLength(3)
+    // 'after' uses forkParentId (which is 'parent'), not the branch id
+    expect(bodies[2].parent_id).toBe('parent')
   })
 })

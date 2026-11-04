@@ -73,7 +73,7 @@ app/dashboard/layout.tsx
 **Feature flags (env):**
 - `NEXT_PUBLIC_DEV_MODE === 'true'` → legacy dev-token button on the managed login page, changes onboarding copy.
 - `NEXT_PUBLIC_DEPLOYMENT_MODE === 'self_hosted'` (`IS_SELF_HOSTED`, `lib/constants.ts`) → self-hosted build: `middleware.ts` redirects `/` and every website route (signup, pricing, docs, trust, community…) to `/dashboard` (signed in) or `/login`; `/login` renders `SelfHostLogin` (no OTP/signup); cookie banner + marketing popup hidden; robots disallow-all, empty sitemap. Unset or `managed` = full website (managed PM2 build never sets it).
-- `NEXT_PUBLIC_API_URL` → API base (default same-origin; login dev-token defaults to `http://localhost:8000`).
+- `NEXT_PUBLIC_API_URL` → API base (default same-origin). When it is empty, `CreateApiKeyCard` shows `window.location.origin` as `ZIZKADB_HOST` (the single-container image serves the API on the dashboard's port through `infra/allinone/front-proxy.js`).
 
 **Loading/error handling:** per-page. Suspense boundaries wrap pages using `useSearchParams` (`/signup`, `/signup/start`, `/signup/checkout`, `/signup/success`, `/login`) — required by Next for CSR bailout. Errors are local component state rendered inline.
 
@@ -468,7 +468,7 @@ Landing → (Pricing: Pro) → `/signup?plan=pro` → `/signup/start` (consent) 
 
 | Var | Where read | Default | Purpose |
 |-----|-----------|---------|---------|
-| `NEXT_PUBLIC_API_URL` | client (`lib/api.ts`, `lib/demo.ts`, `lib/community.ts`, `useConnectionHealth`, `login`) | `''` (same-origin; `login` falls back to `http://localhost:8000`) | API base URL |
+| `NEXT_PUBLIC_API_URL` | client (`lib/api.ts`, `lib/demo.ts`, `lib/community.ts`, `useConnectionHealth`, `login`) | `''` (same-origin) | API base URL |
 | `NEXT_PUBLIC_DEV_MODE` | client (`login`, onboarding copy) | unset | `'true'` = self-host: enables dev-token login, changes onboarding copy |
 | `API_REWRITE_TARGET` | build/server (`next.config.mjs`) | `http://127.0.0.1:8000` | upstream host for the `/swagger` + `/openapi.json` rewrites |
 
@@ -536,8 +536,6 @@ One bearer-token entry point resolves **three** credential types, in order:
 
 Router prefixes are mounted in `core/main.py:66-79`.
 
-**SDK-only (not called from `lib/api.ts`):** `POST /v1/a2a/messages` (`core/api/a2a.py`) — agent-scoped API key required; sender is the key’s `agent_id`; recipient must exist in the same tenant. See `core/CLAUDE.md` (A2A).
-
 **Auth (`core/api/auth.py`, prefix `/v1/auth`):**
 | Dashboard fn (`lib/api.ts`) | Method · Path | Backend |
 |---|---|---|
@@ -560,11 +558,11 @@ Router prefixes are mounted in `core/main.py:66-79`.
 | `deleteAgent` | DELETE `/v1/agents/{id}` | `agents.py:114` |
 | `sendAgentTestEvent` | POST `/v1/agents/{id}/test-event` | `agents.py:150` |
 | `getAgentApiKeys` | GET `/v1/agents/{id}/api-keys` | `agents.py:180` |
-| `createAgentApiKey` | POST `/v1/agents/{id}/api-keys` | `agents.py:199` |
+| `createAgentApiKey` | POST `/v1/agents/{id}/api-keys` (optional `scope`: read_write / read_only, `expires_in_days`) | `agents.py` |
 | `revokeAgentApiKey` | DELETE `/v1/agents/{id}/api-keys/{keyId}` | `agents.py:224` |
 | `getAgentStats` | GET `/v1/agents/{id}/stats` (incl. `top_actions`: per-tool/API calls + error rate, `services/actions.py`) | `agents.py:239` |
 | `getAgentSessions` | GET `/v1/agents/{id}/sessions` | `agents.py:280` |
-| `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`) | `agents.py:453` |
+| `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`; `?window=24h\|7d\|30d` splits by time in SQL and every response echoes `window`; no session inside the window → `no_current_data` (as `/behavior-change`), no session that ended earlier → `warming_up`; labels in `BehaviorPanel` follow `baseline.window`) | `agents.py:804` |
 | `getAgentReport` | GET `/v1/agents/{id}/report?from=&to=&granularity=` (incl. `actions`, rendered by `components/dashboard/ActionsTable.tsx`) | `agents.py` → `services/reports.py` |
 | `getAgentTokenUsage` | GET `/v1/agents/{id}/token-usage?from=&to=&granularity=` | `agents.py` → `services/token_usage.py` + `services/pricing.py` |
 | `getAgentTokenOptimization` | GET `/v1/agents/{id}/token-optimization?from=&to=&granularity=` | `agents.py` → `services/token_optimization.py` |
@@ -636,10 +634,11 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 **Events / Search / Memory (dashboard read side):**
 | Dashboard fn | Method · Path | Backend |
 |---|---|---|
-| `getEvents` | GET `/v1/events` | `events.py:64` |
-| `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:123` |
-| `timeTravel` | GET `/v1/events/at` | `events.py:274` |
-| `searchEvents` | POST `/v1/search` | `search.py:18` |
+| `getEvents` | GET `/v1/events` | `events.py:56` (each event has `index_status`: `skipped`/`pending`/`indexed`/`failed`/`dead`) |
+| `getWhyChain` | GET `/v1/events/{id}/why` | `events.py:129` |
+| `getImpactTree` | GET `/v1/events/{id}/impact` | `events.py:222` |
+| `timeTravel` | GET `/v1/events/at` | `events.py:373` |
+| `searchEvents` | POST `/v1/search` (`mode` auto: hybrid with embeddings, keyword without; response has `mode`) | `search.py` |
 | `getMemoryDiff` | GET `/v1/memory/diff/{sessionId}` | `memory.py:190` |
 
 **Billing (`core/api/billing_checkout.py`, prefix `/v1/billing`):**
@@ -669,8 +668,12 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 ### 17.4 Data producers vs the dashboard (consumer)
 
 The dashboard **reads and visualizes** data that the **rest of the ecosystem writes** using API keys created in the dashboard:
-- **SDKs** (`sdk/python`, `sdk/typescript`), **integrations** (`integrations/langchain`, `integrations/crewai`), and **MCP** (`mcp/`) call **POST `/v1/events`** (`events.py:43`), `POST /v1/memory/context` (`memory.py:46`), `POST /v1/telemetry` (`telemetry.py:27`).
+- **SDKs** (`sdk/python`, `sdk/typescript`), **integrations** (`integrations/langchain`, `integrations/crewai`), and **MCP** (`mcp/`) call **POST `/v1/events`** (`events.py:35`), `POST /v1/memory/context` (`memory.py:46`), `POST /v1/telemetry` (`telemetry.py:27`).
 - The dashboard's Agents / Sessions / Search / Memory-diff / Baseline views read those rows back through the GET endpoints above.
+- **Audit chain (SDK / auditor only, not called by the dashboard):** GET `/v1/events/chain?agent=&after_seq=&anchor=` (`events.py`, `get_tenant` + `assert_agent_allowed`; `core/services/audit_chain.py::verify_chain`) walks the agent's events and tombstones by `sequence_no` and returns `{agent, intact, summary, problems (≤100), chain_head}`.
+  - `summary`: `events`, `chained`, `unchained_legacy`, `tombstones`, `receipts` (erasure receipts, one per forget or retention batch per agent; not counted in `tombstones`), `legacy_tombstones`, `unsealed_tombstones` (tombstones without an erasure receipt deleted after `tombstone_receipt_cutoff.since`: an older image's erasure during a rolling deploy or downgrade, or one inserted by hand; not a break), `stale_head` (0/1: the stored head is an older link: an older image wrote after it, or the head was moved back; not a break), `head_checked` (0/1: the recorded head was checked), `recorded_head_breaks` (tail removals a later write found and kept; with `after_seq`, only those after it), `checksum_mismatch`, `breaks`.
+  - Problem kinds: `checksum_mismatch` / `checksum_missing`, `chain_break` (events and tombstones), `unchained_after_chain_start`, `tombstone_missing_checksum`, `receipt_digest_mismatch` (an erasure receipt's count or digest does not match the tombstones that name it), `receipt_missing` (tombstones name a receipt that is not in the chain; one problem per receipt with `receipt_id`, `tombstones`, `sequence_no` of the first and `last_sequence_no`), `head_mismatch` (the newest events were removed or changed outside an erasure), `anchor_mismatch`.
+  - SDKs: Python `verify_chain()`, TypeScript `verifyChain()`.
 - **Audit verification (SDK / auditor only, not called by the dashboard):** GET `/v1/events/verify?agent=&limit=&before=&after=&before_seq=` (pages by `sequence_no`, returns `next_before_seq`) and GET `/v1/events/{id}/verify` (404 for an unbound API key) (`events.py`, `get_tenant` + `assert_agent_allowed`) recompute event checksums (`core/services/checksum.py`) and report `valid` (v2: tenant, agent, type, data, parent, session, timestamp, sequence_no, metadata) / `valid_legacy` (v1: type + data only, only for rows at or below `checksum_v2_cutoff.legacy_until_seq`) / `mismatch` / `missing`. Status and version only; no hashes in the response.
 
 **Implication:** an event-schema or agent-scoping change in `core/api/events.py` or `deps.py` affects **both** the write path (SDKs) and the dashboard read views — keep field names in sync across `lib/api.ts` types and SDK payloads.
@@ -721,7 +724,8 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 - **JWT** (`auth.py:17-43`): access token 7 days, refresh 30 days; `JWT_SECRET`/`JWT_REFRESH_SECRET` **required** in production (else `dev-secret`). In production the API also **refuses to start** if either secret is empty or matches a published placeholder: `.env.example`, Compose defaults, or the `dev-secret` / `dev-refresh-secret` fallbacks in `auth.py`. Payload `{sub: user_id, email, tenant_id, exp, iat}`.
 - **API keys** (`auth.py:50-89`): format `zizkadb_live_{32 url-safe}`; stored as SHA-256 hash + 16-char prefix; legacy `agdb_live_*` still resolve by hash; valid use bumps `last_used`.
-- **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config.
+- **OTP** (`auth.py:96-295`): 6-digit, bcrypt-hashed, 15-min expiry; prior unused OTPs invalidated; sent via SMTP or printed to console when no SMTP config. Each wrong guess atomically increments `auth_otps.attempts` (`UPDATE … SET attempts = attempts + 1 … RETURNING`); the 5th (`OTP_MAX_ATTEMPTS`) burns the code and verify returns "Too many failed attempts. Please request a new code." — the user must request a new OTP.
+- **Client IP** (`core/api/utils.py::client_ip`): used for per-IP rate limits (verify-otp, selfhost-login, community, demo requests). `X-Forwarded-For` is honoured only when the peer is in `TRUSTED_PROXIES` (default `127.0.0.1,::1,172.16.0.0/12`), walked right-to-left to the first untrusted hop.
 - **request-otp** (`core/api/auth.py:58-77`): rate-limited 10/15min; `intent="signup"` + existing email → **409** "already registered".
 - **verify-otp** (`core/api/auth.py:80-121`): new users **must** pass `gdpr_consent=true` (else 401 ValueError); sets a **HttpOnly, Secure, SameSite=Lax refresh-token cookie** (30-day, `auth.py:104-112`); returns access token + billing routing flags. Consent fields persisted.
 - **dev-token** (`core/api/auth.py:151-164`): development only — 403 unless `ENV=development`; an unset `ENV` counts as production (`core/services/runtime_env.py::is_dev_mode`).
@@ -735,13 +739,13 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 ### 18.4 Events & memory
 
-- **`write_event`** (`core/services/event_write.py:16-109`): upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
-- **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
+- **`write_event`** (`core/services/event_write.py:16-109`): a **new** agent name must match the agent-id rule (`core/services/agent_ids.py`, 400 otherwise; agents stored before the rule keep working; first use of an unassigned key applies the same rule in `claim_unassigned_api_key`); upsert agent + bump `event_count`; insert event with SHA-256 checksum of sorted JSON; best-effort embedding + Qdrant upsert to `agent_events`; increment `usage_daily.events_written`; returns `{event_id, timestamp, sequence_no, checksum}`.
+- **Events API** (`core/api/events.py`): `POST /`, `GET /`, and `GET /at` all enforce agent scope (`assert_agent_allowed`); `GET /{id}/why` walks the parent chain (`depth≤50`); `GET /{id}/impact` walks downstream through children (`0≤depth≤50`, at most 500 nodes; `truncated` when the node cap was hit, `depth_truncated` when events lie below the depth limit) with the same agent scoping as `/why`; `GET /at` reconstructs state at a timestamp via `STATE_SET`/`STATE_DELETE` reduction — **scoped API keys (bound to a specific `agent_id`) cannot time-travel into another agent's state and will receive 403**.
 - **Memory** (`core/api/memory.py`): `POST /context` (recent + semantic search merged into a char-budgeted prompt block), `GET /diff/{session_id}` (session summary + new event types vs prior), `DELETE /forget` (deletes events by exact JSONB match; Qdrant vectors are deleted **first** — if that fails with embeddings on it returns 503 and deletes nothing; response has `vector_cleanup`; logs only a hash of the value; scoped key → own agent only, unbound key → 400, JWT → tenant-wide).
 
 ### 18.5 Agents & baseline (`core/api/agents.py`)
 
-- `agent_id` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$` (`agents.py:18-28`); `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
+- `agent_id` must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}` (`core/services/agent_ids.py`, full match). The same rule applies when `POST /v1/events` or key binding would create a new agent (400); agents stored before the rule keep working. `POST /` returns a one-time API key (`{agent, api_key:{key,key_id,prefix}, message}`).
 - **Baseline / drift** (`agents.py:453-544`): splits sessions into recent N (default 50) vs older; computes event distribution, parent→child transitions, session shape, error rate; `drift_score = 0.5·L1(event_dist) + 0.5·L1(transitions)`; verdicts `stable | minor_drift | noticeable_drift | significant_drift`; status can be `insufficient_data`, `warming_up`, or `ok`.
 
 ### 18.6 Admin (`core/api/admin.py`) — managed-cloud only (not in OSS)
@@ -997,11 +1001,15 @@ Schema sources: `core/db/schema.sql` (base DDL, Docker init) + named migrations 
 | Table | Key columns | Purpose |
 |-------|-------------|---------|
 | `tenants` | `tenant_id` (PK), `name`, `embedding_provider`, `embedding_model`, `embedding_use_platform_key`, `embedding_api_key_encrypted` | Root of multi-tenant isolation; per-tenant embedding config (Fernet-encrypted BYOK key) |
-| `agents` | `(agent_id, tenant_id)` (PK), `first_seen`, `last_seen`, `event_count`, `metadata` | Registered agent identities; upserted on every event write |
+| `agents` | `(agent_id, tenant_id)` (PK), `first_seen`, `last_seen`, `event_count`, `metadata`, `retention_days`, `chain_head_seq` / `chain_head_hash` (newest chain link, for the verifier only; NULL until the agent's first write after the upgrade that added them) | Registered agent identities; upserted on every event write |
 | `api_keys` | `key_id` (PK), `tenant_id`, `agent_id` (NULL = unassigned until first use, set = bound to one agent), `key_hash` (SHA-256, unique), `key_prefix`, `revoked`, `last_used` | API-key auth; hashed only, prefix for display |
 | `users` | `user_id` (PK), `email` (unique), `tenant_id`, **billing cols** (see §21.2), `gdpr_consent_at`, `marketing_consent`, `last_login` | Dashboard users (passwordless OTP). **All billing state lives here.** |
-| `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used` | Passwordless login OTPs (15-min expiry) |
-| `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256) | Append-only event log — source of truth. HNSW index on `embedding` (cosine); partial index `idx_events_state_writes` on `(tenant_id, agent_id, timestamp)` for `STATE_SET`/`STATE_DELETE` serves time travel |
+| `auth_otps` | `otp_id` (PK), `email`, `otp_hash`, `expires_at`, `used`, `attempts` | Passwordless login OTPs (15-min expiry); `attempts` counts wrong guesses, code burned at 5 (`OTP_MAX_ATTEMPTS`) |
+| `events` | `event_id` (PK), `tenant_id`, `agent_id`, `timestamp`, `event_type`, `data` (JSONB), `embedding vector(1536)`, `parent_event_id` (causal link), `session_id`, `sequence_no` (BIGSERIAL), `checksum` (SHA-256), `index_status` (`skipped`/`pending`/`indexed`/`failed`/`dead`), `index_attempts`, `index_retry_at` (embed worker retry state) | Append-only event log — source of truth. HNSW index on `embedding` (cosine); partial index `idx_events_state_writes` on `(tenant_id, agent_id, timestamp)` for `STATE_SET`/`STATE_DELETE` serves time travel |
+| `event_tombstones` | `(tenant_id, event_id)` (PK), `agent_id`, `sequence_no`, `chain_hash`, `checksum` (NULL only on tombstones written before the upgrade cutoff; the trigger fills it for any image after), `reason` (`forget` / `retention`, or `erasure_receipt` on a receipt), `deleted_at`, `erased_count` (receipts only: how many tombstones it seals), `receipt_id` (on a tombstone: the receipt that seals it; NULL before H3) | Audit-chain links of lawfully deleted events, no content, plus one chained erasure receipt per erasure per agent whose `checksum` is the digest of the tombstones it seals (`core/services/audit_chain.py::delete_and_tombstone`); removed by agent delete, cascades from `tenants` |
+| `chain_head_breaks` | `id` (PK), `tenant_id`, `agent_id` (FK → `agents`, cascade), `expected_seq`, `expected_hash`, `found_seq`, `found_hash`, `detected_at` | Written by the event write when the agent's recorded newest link is missing or changed (the newest events were removed outside an erasure); reported by the chain verifier as `head_mismatch` |
+| `tombstone_receipt_cutoff` | `singleton` (PK), `since` | When the chain verifier started checking erasure receipts; `init_db()` records it once. A tombstone without a receipt deleted after it is counted in `summary.unsealed_tombstones`. Receipts are read by `receipt_id` through `idx_event_tombstones_receipt` on `event_tombstones (tenant_id, receipt_id)` |
+| `tombstone_checksum_cutoff` | `singleton` (PK), `since` | When tombstones started carrying a checksum; `init_db()` records it once, after the `trg_tombstone_checksum` trigger (fills a missing checksum from the deleted row, so older images write checkable tombstones) exists. A checksum-less tombstone deleted after it is reported by the chain verifier |
 | `usage_daily` | `(tenant_id, date)` (PK), `events_written`, `queries_run`, `searches_run` | Daily metering (only `events_written` is incremented today) |
 | `community_posts` | `post_id` (PK), `author_name`, `category`, `title`, `body`, `image_urls` (JSONB), `reply_count` | Public community board |
 | `community_replies` | `reply_id` (PK), `post_id` (FK cascade), `author_name`, `body` | Replies; bumps parent `reply_count` |
@@ -1049,6 +1057,7 @@ erDiagram
 | **Event** | An append-only record of one agent step (`events`): `event_type` + `data` JSONB, optional `parent_event_id` (causal link) and `session_id`. Source of truth. |
 | **Session** | A grouping of events sharing a `session_id` (one conversation/run). |
 | **Why-chain** | The recursive parent-event lineage for an event (`GET /v1/events/{id}/why`) — "why did this happen?". |
+| **Impact tree** | The recursive child-event fan-out of an event (`GET /v1/events/{id}/impact`) — "what did this cause?". |
 | **Time-travel** | Reconstructing agent state at a past timestamp by replaying events (`GET /v1/events/at`, `STATE_SET`/`STATE_DELETE` reduction). |
 | **Memory diff** | Per-session summary of new event types / behavior vs prior (`GET /v1/memory/diff/{session_id}`). |
 | **Baseline / drift** | Behavioral comparison of recent vs older sessions; `drift_score` + verdicts `stable/minor/noticeable/significant` (`GET /v1/agents/{id}/baseline`). |

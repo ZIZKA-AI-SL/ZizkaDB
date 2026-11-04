@@ -79,7 +79,7 @@ def render(logins: list[str]) -> str:
 
 
 def main() -> None:
-    repo = sys.argv[1] if len(sys.argv) > 1 else os.getenv("GITHUB_REPOSITORY", "Zizka-ai/ZizkaDB")
+    repo = sys.argv[1] if len(sys.argv) > 1 else os.getenv("GITHUB_REPOSITORY", "ZIZKA-AI-SL/ZizkaDB")
     text = README.read_text()
     if START not in text or END not in text:
         sys.exit(f"README is missing {START} / {END} markers")
