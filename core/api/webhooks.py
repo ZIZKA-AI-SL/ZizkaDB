@@ -17,6 +17,8 @@ dashboard-only action, never callable with a scoped API key.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field, HttpUrl
 from typing import Any
@@ -30,10 +32,12 @@ from services.webhooks import (
     get_subscription,
     update_subscription,
     delete_subscription,
-    deliver_event,
+    _deliver_one,
 )
 
 router = APIRouter()
+
+log = logging.getLogger(__name__)
 
 
 class WebhookSubscription(BaseModel):
@@ -186,23 +190,27 @@ async def test_webhook(
         "tenant_id": session["tenant_id"],
     }
 
-    from services.webhooks import _deliver_one
-    ok = await _deliver_one(dict(row), test_event)
+    ok = False
+    status_code = None
+    body_text = None
+    try:
+        ok, status_code, body_text = await _deliver_one(dict(row), test_event)
+    except Exception as exc:
+        log.warning("webhook test delivery failed: url=%s error=%s", row["url"], exc)
+        ok = False
 
-    pool = get_pool() if False else None  # placeholder, not used
-    from db.connection import get_pool as _get_pool
-    pool = _get_pool()
+    pool = get_pool()
     if ok:
         await pool.execute(
             """
             UPDATE webhook_subscriptions
             SET last_triggered = NOW(),
-                last_status = 200,
-                last_body = NULL,
+                last_status = $2,
+                last_body = $3,
                 failure_count = 0
             WHERE webhook_id = $1
             """,
-            webhook_id,
+            webhook_id, status_code, body_text,
         )
         return {"delivered": True, "webhook_id": webhook_id}
     else:
