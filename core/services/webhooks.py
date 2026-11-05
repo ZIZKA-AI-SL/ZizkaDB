@@ -30,9 +30,35 @@ from db.connection import get_pool
 
 logger = logging.getLogger(__name__)
 
-WEBHOOK_DELIVERY_TIMEOUT_SEC = float(os.getenv("WEBHOOK_DELIVERY_TIMEOUT_SEC", "10"))
-WEBHOOK_MAX_RETRIES = int(os.getenv("WEBHOOK_MAX_RETRIES", "3"))
-WEBHOOK_RETRY_BASE_SEC = float(os.getenv("WEBHOOK_RETRY_BASE_SEC", "1"))
+def _parse_float(env: str, default: float) -> float:
+    try:
+        return float(os.getenv(env, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_int(env: str, default: int) -> int:
+    try:
+        return int(os.getenv(env, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+WEBHOOK_DELIVERY_TIMEOUT_SEC = _parse_float("WEBHOOK_DELIVERY_TIMEOUT_SEC", 10.0)
+WEBHOOK_MAX_RETRIES = _parse_int("WEBHOOK_MAX_RETRIES", 3)
+WEBHOOK_RETRY_BASE_SEC = _parse_float("WEBHOOK_RETRY_BASE_SEC", 1.0)
+
+# Shared HTTP client for webhook deliveries — created lazily on first use
+# to avoid one connection per delivery (which exhausts file descriptors under
+# load and defeats HTTP keep-alive).
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=WEBHOOK_DELIVERY_TIMEOUT_SEC)
+    return _http_client
 
 
 def _sign(secret: str | None, body: bytes) -> str | None:
@@ -69,10 +95,10 @@ def _matches_filter(event: dict, sub: dict) -> bool:
     return True
 
 
-async def _deliver_one(sub: dict, event: dict) -> bool:
+async def _deliver_one(sub: dict, event: dict) -> tuple[bool, int | None, str | None]:
     """Deliver a single event to a single webhook subscription.
 
-    Returns True on success (2xx), False otherwise.
+    Returns (ok, status_code, body_text).
     """
     url = sub["url"]
     secret = sub.get("secret")
@@ -87,20 +113,19 @@ async def _deliver_one(sub: dict, event: dict) -> bool:
         headers["X-ZizkaDB-Event-Id"] = str(event.get("event_id", ""))
 
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_DELIVERY_TIMEOUT_SEC) as client:
-            resp = await client.post(url, content=body, headers=headers)
-            ok = 200 <= resp.status_code < 300
-            if not ok:
-                logger.warning(
-                    "webhook delivery failed: url=%s status=%s body=%s",
-                    url,
-                    resp.status_code,
-                    resp.text[:200],
-                )
-            return ok
-    except httpx.TransportError as exc:
+        resp = await _get_http_client().post(url, content=body, headers=headers)
+        ok = 200 <= resp.status_code < 300
+        if not ok:
+            logger.warning(
+                "webhook delivery failed: url=%s status=%s body=%s",
+                url,
+                resp.status_code,
+                resp.text[:200],
+            )
+        return ok, resp.status_code, resp.text[:200]
+    except (httpx.TransportError, httpx.TimeoutException) as exc:
         logger.warning("webhook delivery transport error: url=%s error=%s", url, exc)
-        return False
+        return False, None, None
 
 
 async def deliver_event(event: dict) -> None:
@@ -124,18 +149,18 @@ async def deliver_event(event: dict) -> None:
         sub = dict(row)
         if not _matches_filter(event, sub):
             continue
-        ok = await _deliver_one(sub, event)
+        ok, status_code, body_text = await _deliver_one(sub, event)
         if ok:
             await pool.execute(
                 """
                 UPDATE webhook_subscriptions
                 SET last_triggered = NOW(),
-                    last_status = 200,
-                    last_body = NULL,
+                    last_status = $2,
+                    last_body = $3,
                     failure_count = 0
                 WHERE webhook_id = $1
                 """,
-                sub["webhook_id"],
+                sub["webhook_id"], status_code, body_text,
             )
         else:
             await pool.execute(
@@ -178,7 +203,7 @@ async def create_subscription(
         """
         INSERT INTO webhook_subscriptions
             (tenant_id, url, secret, agent_id, event_types)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5::jsonb)
         RETURNING webhook_id, url, secret, agent_id, event_types, active,
                   created_at, last_triggered, last_status, last_body,
                   failure_count
@@ -232,7 +257,7 @@ async def update_subscription(
         params.append(agent_id)
         idx += 1
     if event_types is not None:
-        sets.append(f"event_types = ${idx}")
+        sets.append(f"event_types = ${idx}::jsonb")
         params.append(json.dumps(event_types))
         idx += 1
     if active is not None:
