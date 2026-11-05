@@ -76,6 +76,7 @@ _JWT_PLACEHOLDERS=(
   "dev-refresh-secret-change-in-production"
   "change-this-to-a-random-32-char-string"
   "change-this-to-another-random-32-char-string"
+  "your-random-32-char-secret"
 )
 
 _jwt_is_placeholder() {
@@ -96,7 +97,9 @@ _check_jwt_var() {
   if [ -z "$val" ]; then
     return
   fi
-  if _jwt_is_placeholder "$val"; then
+  # Compare without surrounding whitespace or a CR from a CRLF file, as the API does.
+  val="$(printf '%s' "$val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  if [ -z "$val" ] || _jwt_is_placeholder "$val"; then
     if [ "$PRODUCTION_MODE" -eq 1 ]; then
       fail "$var_name is still a published placeholder (API refuses to start in production)"
     else

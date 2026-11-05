@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Display/API release line — keep in sync with zizkadb-sdk (see scripts/check-doc-drift.sh).
-API_VERSION = "0.5.0"
+API_VERSION = "0.6.0"
 
 
 def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:
@@ -46,7 +46,10 @@ def warn_if_production_cors_wildcard(cors_allowed_origins: list[str]) -> None:
 
 
 _DEFAULT_DEV_KEYS = frozenset({"zizkadb_dev_local", "agdb_dev_local"})
-# Values published in .env.example, Compose defaults, and auth.py dev fallbacks.
+# Values published in .env.example, Compose defaults, auth.py dev fallbacks and
+# the dashboard docs. Keep in sync with scripts/validate-selfhost-config.sh and
+# scripts/init-secrets.sh; core/tests/test_production_startup_guards.py checks
+# all three against the repo.
 _DEFAULT_JWT_SECRETS = frozenset(
     {
         "",
@@ -56,6 +59,7 @@ _DEFAULT_JWT_SECRETS = frozenset(
         "dev-refresh-secret-change-in-production",
         "change-this-to-a-random-32-char-string",
         "change-this-to-another-random-32-char-string",
+        "your-random-32-char-secret",
     }
 )
 # Self-host dashboard admin token: the login rate limit keys on client IP, which
@@ -86,7 +90,12 @@ def validate_production_startup(
             "dev/default DEV_API_KEY. Unset DEV_API_KEY or set a unique secret in "
             "infra/.env. For local development set ENV=development."
         )
-    if jwt_secret in _DEFAULT_JWT_SECRETS or jwt_refresh_secret in _DEFAULT_JWT_SECRETS:
+    # Compare without surrounding whitespace, so a padded sample or one with a CR
+    # from a CRLF-edited .env is still refused.
+    if (
+        jwt_secret.strip() in _DEFAULT_JWT_SECRETS
+        or jwt_refresh_secret.strip() in _DEFAULT_JWT_SECRETS
+    ):
         raise RuntimeError(
             "Refusing to start in production mode (ENV is not 'development') with a "
             "published or default JWT secret. Set strong JWT_SECRET and "

@@ -1,6 +1,6 @@
 # zizkadb-sdk
 
-**PyPI:** [zizkadb-sdk 0.5.0](https://pypi.org/project/zizkadb-sdk/0.5.0/)
+**PyPI:** [zizkadb-sdk 0.6.0](https://pypi.org/project/zizkadb-sdk/0.6.0/)
 
 Python SDK for [ZizkaDB](https://github.com/ZIZKA-AI-SL/ZizkaDB) — **Why did your agent do that?** Call `db.why(event_id)` or `zizkadb why <id>` after logging with `parent_id`.
 
@@ -79,7 +79,7 @@ Self-hosted ZizkaDB is single-agent: log everything under one agent name and use
 | `iter_events(agent)` | Every event, cursor-paged |
 | `export_events(agent)` / `import_events(lines)` | Portable NDJSON copy and import |
 
-Needs a server from release 0.5.0. Full guide: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md#beyond-log-and-why).
+Needs a server from release 0.6.0. Full guide: [CONNECT.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/CONNECT.md#beyond-log-and-why).
 
 ## Errors
 

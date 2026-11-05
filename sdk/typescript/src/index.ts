@@ -33,6 +33,7 @@ import type {
   CausalChain,
   ChainHead,
   ChainVerification,
+  LogForkOptions,
   LogOptions,
   LogToolOptions,
   LogToolResultOptions,
@@ -42,7 +43,7 @@ import type {
   SearchOptions,
 } from './types'
 import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
-import { LineageContext, resolveLogLineage, recordLogResult } from './context'
+import { LineageContext, resolveLogLineage, recordLogResult, getLineageState } from './context'
 import { readEnv } from './env'
 import packageJson from '../package.json'
 
@@ -77,6 +78,29 @@ function logHintsEnabled(baseUrl: string): boolean {
 function emitLogHint(baseUrl: string, eventId: string): void {
   if (logHintsEnabled(baseUrl)) {
     console.error(`  → zizkadb why ${eventId}`)
+  }
+}
+
+interface EventWriteResponse {
+  event_id: string
+  timestamp: string
+  sequence_no: number
+  checksum: string
+  index_status?: string
+  indexed?: boolean
+  chain_hash?: string | null
+  duplicate?: boolean
+}
+
+function parseLogResult(response: EventWriteResponse): LogResult {
+  return {
+    eventId: response.event_id,
+    timestamp: new Date(response.timestamp),
+    sequenceNo: response.sequence_no,
+    checksum: response.checksum,
+    indexStatus: response.index_status ?? (response.indexed ? 'indexed' : 'failed'),
+    ...(response.chain_hash ? { chainHash: response.chain_hash } : {}),
+    ...(response.duplicate ? { duplicate: true } : {}),
   }
 }
 
@@ -294,25 +318,8 @@ export class ZizkaDB {
       ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
       ...(options.supersedes != null ? { supersedes: options.supersedes } : {}),
       ...(options.importance != null ? { importance: options.importance } : {}),
-    }) as {
-      event_id: string
-      timestamp: string
-      sequence_no: number
-      checksum: string
-      index_status?: string
-      indexed?: boolean
-      chain_hash?: string | null
-      duplicate?: boolean
-    }
-    const result: LogResult = {
-      eventId: res.event_id,
-      timestamp: new Date(res.timestamp),
-      sequenceNo: res.sequence_no,
-      checksum: res.checksum,
-      indexStatus: res.index_status ?? (res.indexed ? 'indexed' : 'failed'),
-      ...(res.chain_hash ? { chainHash: res.chain_hash } : {}),
-      ...(res.duplicate ? { duplicate: true } : {}),
-    }
+    }) as EventWriteResponse
+    const result = parseLogResult(res)
     recordLogResult(options.agent, result.eventId)
     emitLogHint(this.baseUrl, result.eventId)
     return result
@@ -489,6 +496,62 @@ export class ZizkaDB {
           : { status: r.status as number, error: r.error }),
       })),
     }
+  }
+
+  /**
+   * Log parallel branches from the same parent (e.g. parallel tool calls).
+   * Every event in `events` shares the same `parentId` — the lineage context's
+   * `lastEventId`, or null if there is none. Branches do NOT chain off each
+   * other: the parent is resolved once and passed explicitly to every branch.
+   *
+   * Requests are sent sequentially (not concurrently), matching the Python SDK.
+   *
+   * After logging, the lineage context's `lastEventId` is advanced to the
+   * last result's event id — unless an active `ctx.fork()` has set
+   * `forkParentId`, in which case `lastEventId` is left untouched to preserve
+   * the fork/endFork contract. Python's `log_fork()` behaves the same way.
+   *
+   * Example:
+   *   await db.logFork({
+   *     agent: 'bot',
+   *     events: [
+   *       { event: 'tool_call', data: { tool: 'search', args: { q: 'a' } } },
+   *       { event: 'tool_call', data: { tool: 'search', args: { q: 'b' } } },
+   *     ],
+   *   })
+   */
+  async logFork(options: LogForkOptions): Promise<LogResult[]> {
+    const state = getLineageState()
+    const { agent } = options
+    // Resolve the fork parent once: the context's lastEventId, or null.
+    const forkParent = state && state.agent === agent ? state.lastEventId : null
+    const sessionId = options.sessionId ?? (state?.agent === agent ? state.sessionId : null)
+
+    const results: LogResult[] = []
+    for (const { event, data, metadata, importance } of options.events) {
+      // Bypass resolveLogLineage so branches never inherit each other as
+      // parents: parent_id is passed explicitly (may be null) and stored as-is.
+      const res = await this.post('/v1/events', {
+        agent,
+        event,
+        data,
+        parent_id: forkParent,
+        session_id: sessionId,
+        ...(metadata ? { metadata } : {}),
+        ...(importance !== undefined ? { importance } : {}),
+      }) as EventWriteResponse
+      const result = parseLogResult(res)
+      results.push(result)
+      emitLogHint(this.baseUrl, result.eventId)
+    }
+
+    // Advance lastEventId only when not inside ctx.fork() (forkParentId set).
+    // Python's log_fork() does the same: recordLogResult() skips updating while
+    // forkParentId is set, and we honor that here too.
+    if (state && state.agent === agent && results.length > 0 && state.forkParentId === null) {
+      state.lastEventId = results[results.length - 1].eventId
+    }
+    return results
   }
 
   // ─────────────────────────────────────────

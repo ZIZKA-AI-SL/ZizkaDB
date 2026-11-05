@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Self-hosted secrets
+
+- Production startup and `scripts/validate-selfhost-config.sh --production` also refuse the sample `JWT_SECRET` that the Self-Host docs page used to show. Both now ignore surrounding whitespace when they compare, so a sample with extra spaces or a trailing CR is refused too.
+- The Self-Host docs page now runs `scripts/init-secrets.sh`, like the README and the wiki, and no longer sets the dev API key that production refuses. `init-secrets.sh` now replaces every JWT value that production refuses, not only the `.env.example` placeholders.
+- A server that uses one of the newly refused values must set a new `JWT_SECRET` before upgrading. Users then sign in again, any saved BYOK embedding key must be re-entered, and unsubscribe links in emails already sent stop working.
+- New tests fail if a committed file shows a JWT secret that production would accept, or if the API, `validate-selfhost-config.sh` and `init-secrets.sh` disagree on the refused values.
+- Builds on #227 by @jonathanMLDev.
+
+### TypeScript SDK
+
+- Added `logFork()`, which records sequentially submitted parallel lineage branches from one shared parent. It accepts an explicit agent, preserves branch metadata and importance, respects same-agent tracking sessions, and emits the standard causal-trace hint for every logged branch.
+
 ### MCP Registry
 
 - `zizkadb-mcp` 0.1.12 is set up for the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.ZIZKA-AI-SL/zizkadb-mcp`: `mcp/server.json` describes the PyPI package and its environment variables, and the README carries the `mcp-name` line the registry checks. The new manual workflow `publish-mcp-registry.yml` publishes it through GitHub OIDC once 0.1.12 is on PyPI. No code change. 0.1.12 fixes the name's case: the registry matches the namespace case-sensitively against the GitHub org (`ZIZKA-AI-SL`), so the lowercase name was refused with a 403.
@@ -22,7 +34,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Signed images with SBOM and provenance.** Release images are signed with Sigstore cosign (keyless, bound to the publish workflow) and carry an SPDX SBOM and SLSA provenance. How to verify: `docs/security/release-verification.md`. Applies from the next release; 0.5.0 and older images are unsigned.
 - **Merge gates.** New *Dependency review* check blocks PRs that add vulnerable (moderate+) or malicious packages, or licences incompatible with AGPL. New *DCO* check requires `Signed-off-by` on every commit (`git commit -s`).
-- **Least-privilege workflows.** Every workflow grants only the permissions each job needs. The contributors workflow now opens a pull request instead of pushing to `main`.
+- **Least-privilege workflows.** Every workflow grants only the permissions each job needs. The contributors workflow no longer pushes to `main`: it pushes a `bot/contributors` branch and leaves a link for a maintainer to open the pull request.
 - **Policies and docs.** SECURITY.md states the support period (each minor line until the next minor release), advisories, a VEX document and SCA/SAST remediation thresholds. New `MAINTAINERS.md` (access, roles, granting access), `docs/security/` (threat model, release verification, secrets policy), and CONTRIBUTING sections on DCO, when tests run, and dependency selection.
 
 ### Dependencies
