@@ -155,7 +155,8 @@ async def _api(method: str, path: str, body: dict | None = None) -> dict:
             # Connection refused, DNS failure, timeout, etc. Return a
             # graceful error dict instead of propagating an unhandled
             # exception that crashes the MCP tool.
-            return {"error": str(exc), "status": 0}
+            error_text = str(exc) or f"Connection error contacting {_HOST}"
+            return {"error": error_text, "status": 0}
 
     if not r.is_success:
         error_text = r.text or f"HTTP {r.status_code}"
