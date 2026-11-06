@@ -195,6 +195,7 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
     errors = _encodable(jsonable_encoder(exc.errors()))
     return JSONResponse(status_code=422, content={"detail": errors})
 
+
 @app.get("/swagger", include_in_schema=False)
 async def swagger_ui():
     """
