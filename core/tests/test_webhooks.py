@@ -3,16 +3,11 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import HttpUrl
+from uuid import UUID
 
 from api import webhooks as webhooks_api
 from api.deps import require_dashboard_session
-from services.webhooks import (
-    create_subscription,
-    delete_subscription,
-    get_subscription,
-    list_subscriptions,
-    update_subscription,
-)
 
 DASHBOARD_TENANT = {"tenant_id": "t-1", "user_id": "u-1"}
 
@@ -64,7 +59,7 @@ async def test_list_subscriptions(monkeypatch):
     )
     _patch_pool(monkeypatch, pool)
 
-    rows = await list_subscriptions("t-1")
+    rows = await webhooks_api.list_subscriptions("t-1")
 
     assert len(rows) == 1
     assert rows[0]["webhook_id"] == "00000000-0000-0000-0000-000000000001"
@@ -96,7 +91,7 @@ async def test_create_subscription(monkeypatch):
     )
     _patch_pool(monkeypatch, pool)
 
-    row = await create_subscription(
+    row = await webhooks_api.create_subscription(
         tenant_id="t-1",
         url="https://example.com/webhook",
         secret="secret123",
@@ -118,7 +113,7 @@ async def test_create_subscription_unsafe_url(monkeypatch):
     _patch_pool(monkeypatch, pool)
 
     with pytest.raises(ValueError, match="Unsafe webhook URL"):
-        await create_subscription(
+        await webhooks_api.create_subscription(
             tenant_id="t-1",
             url="http://169.254.169.254/metadata",
             secret=None,
@@ -148,7 +143,7 @@ async def test_get_subscription(monkeypatch):
     )
     _patch_pool(monkeypatch, pool)
 
-    result = await get_subscription(
+    result = await webhooks_api.get_subscription(
         "00000000-0000-0000-0000-000000000001", "t-1"
     )
 
@@ -164,7 +159,7 @@ async def test_get_subscription_not_found(monkeypatch):
     pool.fetchrow = AsyncMock(return_value=None)
     _patch_pool(monkeypatch, pool)
 
-    result = await get_subscription(
+    result = await webhooks_api.get_subscription(
         "00000000-0000-0000-0000-000000000001", "t-1"
     )
 
@@ -192,7 +187,7 @@ async def test_update_subscription(monkeypatch):
     )
     _patch_pool(monkeypatch, pool)
 
-    result = await update_subscription(
+    result = await webhooks_api.update_subscription(
         webhook_id="00000000-0000-0000-0000-000000000001",
         tenant_id="t-1",
         url="https://example.com/webhook2",
@@ -217,7 +212,7 @@ async def test_delete_subscription(monkeypatch):
     pool.execute = AsyncMock(return_value="DELETE 1")
     _patch_pool(monkeypatch, pool)
 
-    result = await delete_subscription(
+    result = await webhooks_api.delete_subscription(
         webhook_id="00000000-0000-0000-0000-000000000001",
         tenant_id="t-1",
     )
@@ -231,7 +226,7 @@ async def test_delete_subscription_not_found(monkeypatch):
     pool.execute = AsyncMock(return_value="DELETE 0")
     _patch_pool(monkeypatch, pool)
 
-    result = await delete_subscription(
+    result = await webhooks_api.delete_subscription(
         webhook_id="00000000-0000-0000-0000-000000000001",
         tenant_id="t-1",
     )
@@ -240,46 +235,43 @@ async def test_delete_subscription_not_found(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_webhook_test_endpoint_success(monkeypatch):
+async def test_list_webhooks_api(monkeypatch):
     pool, conn = _make_pool_conn()
-    pool.fetchrow = AsyncMock(
-        return_value={
-            "webhook_id": "00000000-0000-0000-0000-000000000001",
-            "tenant_id": "t-1",
-            "url": "https://example.com/webhook",
-            "secret": "secret123",
-            "agent_id": None,
-            "event_types": ["tool_call"],
-            "active": True,
-            "created_at": "2026-01-01T00:00:00Z",
-            "last_triggered": None,
-            "last_status": None,
-            "last_body": None,
-            "failure_count": 0,
-        }
+    pool.fetch = AsyncMock(
+        return_value=[
+            {
+                "webhook_id": "00000000-0000-0000-0000-000000000001",
+                "tenant_id": "t-1",
+                "url": "https://example.com/webhook",
+                "secret": "secret123",
+                "agent_id": None,
+                "event_types": ["tool_call"],
+                "active": True,
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_triggered": None,
+                "last_status": None,
+                "last_body": None,
+                "failure_count": 0,
+            }
+        ]
     )
-    pool.execute = AsyncMock(return_value="UPDATE 1")
+    _patch_pool(monkeypatch, pool)
 
-    # Patch both get_pool locations (services.webhooks and api.webhooks)
-    monkeypatch.setattr("services.webhooks.get_pool", lambda: pool)
-    monkeypatch.setattr("api.webhooks.get_pool", lambda: pool)
+    result = await webhooks_api.list_webhooks(DASHBOARD_TENANT)
 
-    # Mock _deliver_one to return success
-    async def fake_deliver_one(sub, event):
-        return True, 200, '{"status": "ok"}'
-
-    monkeypatch.setattr("api.webhooks._deliver_one", fake_deliver_one)
-
-    result = await webhooks_api.test_webhook(
-        webhook_id="00000000-0000-0000-0000-000000000001",
-        session=DASHBOARD_TENANT,
-    )
-
-    assert result == {"delivered": True, "webhook_id": "00000000-0000-0000-0000-000000000001"}
+    assert len(result) == 1
+    w = result[0]
+    from uuid import UUID
+    assert w.webhook_id == UUID("00000000-0000-0000-0000-000000000001")
+    assert w.url == "https://example.com/webhook"
+    assert "secret" not in w.model_fields  # secret not returned on list
+    assert w.agent_id is None
+    assert w.event_types == ["tool_call"]
+    assert w.active is True
 
 
 @pytest.mark.asyncio
-async def test_webhook_test_endpoint_failure(monkeypatch):
+async def test_create_webhook_api(monkeypatch):
     pool, conn = _make_pool_conn()
     pool.fetchrow = AsyncMock(
         return_value={
@@ -297,19 +289,102 @@ async def test_webhook_test_endpoint_failure(monkeypatch):
             "failure_count": 0,
         }
     )
-    pool.execute = AsyncMock(return_value="UPDATE 1")
+    _patch_pool(monkeypatch, pool)
 
-    monkeypatch.setattr("services.webhooks.get_pool", lambda: pool)
-    monkeypatch.setattr("api.webhooks.get_pool", lambda: pool)
-
-    async def fake_deliver_one(sub, event):
-        return False, None, None
-
-    monkeypatch.setattr("api.webhooks._deliver_one", fake_deliver_one)
-
-    result = await webhooks_api.test_webhook(
-        webhook_id="00000000-0000-0000-0000-000000000001",
+    result = await webhooks_api.create_webhook(
+        body=webhooks_api.CreateWebhookBody(url=HttpUrl("https://example.com/webhook")),
         session=DASHBOARD_TENANT,
     )
 
-    assert result == {"delivered": False, "webhook_id": "00000000-0000-0000-0000-000000000001"}
+    assert result.webhook_id == UUID("00000000-0000-0000-0000-000000000001")
+    assert result.secret == "secret123"  # secret returned on create
+    assert result.url == "https://example.com/webhook"
+
+
+@pytest.mark.asyncio
+async def test_get_webhook_api(monkeypatch):
+    pool, conn = _make_pool_conn()
+    pool.fetchrow = AsyncMock(
+        return_value={
+            "webhook_id": "00000000-0000-0000-0000-000000000001",
+            "tenant_id": "t-1",
+            "url": "https://example.com/webhook",
+            "secret": "secret123",
+            "agent_id": None,
+            "event_types": ["tool_call"],
+            "active": True,
+            "created_at": "2026-01-01T00:00:00Z",
+            "last_triggered": None,
+            "last_status": None,
+            "last_body": None,
+            "failure_count": 0,
+        }
+    )
+    _patch_pool(monkeypatch, pool)
+
+    result = await webhooks_api.get_webhook(
+        webhook_id=UUID("00000000-0000-0000-0000-000000000001"),
+        session=DASHBOARD_TENANT,
+    )
+
+    assert result.webhook_id == UUID("00000000-0000-0000-0000-000000000001")
+    assert "secret" not in result.model_fields  # secret NOT returned on get
+
+
+@pytest.mark.asyncio
+async def test_update_webhook_api(monkeypatch):
+    pool, conn = _make_pool_conn()
+    pool.fetchrow = AsyncMock(
+        return_value={
+            "webhook_id": "00000000-0000-0000-0000-000000000001",
+            "tenant_id": "t-1",
+            "url": "https://example.com/webhook2",
+            "secret": None,
+            "agent_id": "my-agent",
+            "event_types": ["tool_call"],
+            "active": True,
+            "created_at": "2026-01-01T00:00:00Z",
+            "last_triggered": None,
+            "last_status": None,
+            "last_body": None,
+            "failure_count": 0,
+        }
+    )
+    _patch_pool(monkeypatch, pool)
+
+    result = await webhooks_api.update_webhook(
+        webhook_id=UUID("00000000-0000-0000-0000-000000000001"),
+        body=webhooks_api.UpdateWebhookBody(url="https://example.com/webhook2", agent_id="my-agent"),
+        session=DASHBOARD_TENANT,
+    )
+
+    assert result.webhook_id == UUID("00000000-0000-0000-0000-000000000001")
+    assert result.url == "https://example.com/webhook2"
+    assert result.agent_id == "my-agent"
+
+
+@pytest.mark.asyncio
+async def test_delete_webhook_api(monkeypatch):
+    pool, conn = _make_pool_conn()
+    pool.execute = AsyncMock(return_value="DELETE 1")
+    _patch_pool(monkeypatch, pool)
+
+    result = await webhooks_api.delete_webhook(
+        webhook_id=UUID("00000000-0000-0000-0000-000000000001"),
+        session=DASHBOARD_TENANT,
+    )
+
+    assert result == {"deleted": True, "webhook_id": "00000000-0000-0000-0000-000000000001"}
+
+
+@pytest.mark.asyncio
+async def test_delete_webhook_api_not_found(monkeypatch):
+    pool, conn = _make_pool_conn()
+    pool.execute = AsyncMock(return_value="DELETE 0")
+    _patch_pool(monkeypatch, pool)
+
+    with pytest.raises(Exception, match="Webhook subscription not found"):
+        await webhooks_api.delete_webhook(
+            webhook_id=UUID("00000000-0000-0000-0000-000000000001"),
+            session=DASHBOARD_TENANT,
+        )

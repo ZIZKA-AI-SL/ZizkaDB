@@ -28,8 +28,8 @@ Authoritative list: `main.py` (`app.include_router`). There is **no** `admin.py`
 | `api/demo_requests.py` | `/v1/demo-requests` | Public demo request form (landing newsletter / book demo) |
 | `api/community.py` | `/v1/community` | Public community board |
 | `api/marketing_subscriptions.py` | `/v1/marketing-subscriptions` | Email signup |
-| `api/metrics.py` | `/metrics` | Prometheus metrics; off unless `METRICS_TOKEN` is set (bearer) |
 | `api/webhooks.py` | `/v1/webhooks` | Webhook subscriptions and event delivery |
+| `api/metrics.py` | `/metrics` | Prometheus metrics; off unless `METRICS_TOKEN` is set (bearer) |
 
 Swagger UI: `http://localhost:8000/swagger`
 

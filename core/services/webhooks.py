@@ -5,8 +5,7 @@ signature headers and retry-with-backoff for transient failures.
 
 Delivery is fire-and-forget from the event write path: ``deliver_event()``
 schedules delivery via ``asyncio.create_task()`` and returns immediately,
-never blocking the SDK caller on external network calls. A background task
-picks up queued deliveries and retries with exponential backoff.
+never blocking the SDK caller on external network calls.
 
 Configuration env vars:
   WEBHOOK_DELIVERY_TIMEOUT_SEC  — per-request timeout, default 10s
@@ -52,6 +51,60 @@ WEBHOOK_DELIVERY_TIMEOUT_SEC = _parse_float("WEBHOOK_DELIVERY_TIMEOUT_SEC", 10.0
 WEBHOOK_MAX_RETRIES = _parse_int("WEBHOOK_MAX_RETRIES", 3)
 WEBHOOK_RETRY_BASE_SEC = _parse_float("WEBHOOK_RETRY_BASE_SEC", 1.0)
 
+# Hosts that must never be contacted by webhook deliveries.
+_BLOCKED_HOSTS = frozenset({"localhost", "localhost.localdomain"})
+
+# IP networks that must never be contacted by webhook deliveries.
+_BLOCKED_IP_NETS = frozenset(
+    {
+        ipaddress.ip_network("127.0.0.0/8"),
+        ipaddress.ip_network("::1/128"),
+        ipaddress.ip_network("169.254.0.0/16"),
+        ipaddress.ip_network("fe80::/10"),
+        ipaddress.ip_network("224.0.0.0/4"),
+        ipaddress.ip_network("ff00::/8"),
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("100.64.0.0/10"),
+    }
+)
+
+
+def _is_safe_url(url: str) -> bool:
+    """Return True if the URL is safe for webhook delivery.
+
+    Rejects non-https schemes (unless in dev mode), loopback, private,
+    link-local, multicast, and reserved addresses. Resolves the hostname at
+    check time so DNS rebinding cannot bypass the guard.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme != "https" and not is_dev_mode():
+        return False
+
+    host = parsed.hostname
+    if not host:
+        return False
+
+    if host.lower() in _BLOCKED_HOSTS:
+        return False
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+        for res in infos:
+            addr = res[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+                if any(ip in net for net in _BLOCKED_IP_NETS):
+                    return False
+            except (OSError, ValueError):
+                return False
+    except (OSError, ValueError):
+        return False
+
+    return True
+
 # Shared HTTP client for webhook deliveries — created lazily on first use
 # to avoid one connection per delivery (which exhausts file descriptors under
 # load and defeats HTTP keep-alive).
@@ -63,14 +116,6 @@ def _get_http_client() -> httpx.AsyncClient:
     if _http_client is None:
         _http_client = httpx.AsyncClient(timeout=WEBHOOK_DELIVERY_TIMEOUT_SEC)
     return _http_client
-
-
-async def _close_http_client() -> None:
-    """Close the shared HTTP client. Called on application shutdown."""
-    global _http_client
-    if _http_client is not None:
-        await _http_client.aclose()
-        _http_client = None
 
 
 def _sign(secret: str | None, body: bytes) -> str | None:
@@ -107,76 +152,6 @@ def _matches_filter(event: dict, sub: dict) -> bool:
     return True
 
 
-# Hosts that must never be contacted by the webhook proxy. Covers loopback,
-# link-local, multicast, reserved, and RFC-1918 private ranges.
-_BLOCKED_HOSTS = frozenset(
-    {
-        "localhost",
-        "localhost.localdomain",
-    }
-)
-
-# IP networks that must never be contacted by the webhook proxy.
-_BLOCKED_IP_NETS = frozenset(
-    {
-        # Loopback
-        ipaddress.ip_network("127.0.0.0/8"),
-        ipaddress.ip_network("::1/128"),
-        # Link-local
-        ipaddress.ip_network("169.254.0.0/16"),
-        ipaddress.ip_network("fe80::/10"),
-        # Multicast
-        ipaddress.ip_network("224.0.0.0/4"),
-        ipaddress.ip_network("ff00::/8"),
-        # Private (RFC 1918)
-        ipaddress.ip_network("10.0.0.0/8"),
-        ipaddress.ip_network("172.16.0.0/12"),
-        ipaddress.ip_network("192.168.0.0/16"),
-        # Carrier-grade NAT
-        ipaddress.ip_network("100.64.0.0/10"),
-    }
-)
-
-
-def _is_safe_url(url: str) -> bool:
-    """Return True if the URL is safe to fetch.
-
-    Rejects:
-    - Non-https schemes (unless ENV=development)
-    - Loopback, link-local, multicast, private, and reserved hostnames
-    - Hostnames that resolve to blocked IP addresses
-    """
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    if scheme != "https" and not is_dev_mode():
-        return False
-
-    host = parsed.hostname
-    if not host:
-        return False
-
-    # Block localhost and well-known hostnames
-    if host.lower() in _BLOCKED_HOSTS:
-        return False
-
-    # Resolve IP and check against blocked ranges
-    try:
-        infos = socket.getaddrinfo(host, None)
-        for res in infos:
-            addr = res[4][0]
-            try:
-                ip = ipaddress.ip_address(addr)
-                if any(ip in net for net in _BLOCKED_IP_NETS):
-                    return False
-                # Private networks (RFC 1918) are already in _BLOCKED_IP_NETS
-            except (OSError, ValueError):
-                return False
-    except (OSError, ValueError):
-        return False
-
-    return True
-
-
 async def _deliver_one(sub: dict, event: dict) -> tuple[bool, int | None, str | None]:
     """Deliver a single event to a single webhook subscription.
 
@@ -192,11 +167,15 @@ async def _deliver_one(sub: dict, event: dict) -> tuple[bool, int | None, str | 
     sig = _sign(secret, body)
     if sig:
         headers["X-ZizkaDB-Signature"] = f"sha256={sig}"
-        headers["X-ZizkaDB-Event-Id"] = str(event.get("event_id", ""))
+    headers["X-ZizkaDB-Event-Id"] = str(event.get("event_id", ""))
+
+    # SSRF guard: validate the URL at delivery time as well as on create,
+    # so DNS rebinding cannot bypass the check.
+    if not _is_safe_url(url):
+        logger.warning("webhook delivery blocked: unsafe url=%s", url)
+        return False, None, None
 
     try:
-        # follow_redirects=False prevents SSRF via redirect chains to internal
-        # hosts that passed the initial URL check.
         resp = await _get_http_client().post(
             url, content=body, headers=headers, follow_redirects=False
         )
@@ -217,9 +196,10 @@ async def _deliver_one(sub: dict, event: dict) -> tuple[bool, int | None, str | 
 async def deliver_event(event: dict) -> None:
     """Deliver an event to all matching active webhook subscriptions.
 
-    Fire-and-forget: schedules delivery via asyncio.create_task() and returns
-    immediately, never blocking the SDK caller on external network calls.
-    Delivery failures are logged and retried on the next sweep.
+    Fire-and-forget: schedules delivery via ``asyncio.create_task()`` and
+    returns immediately, never blocking the SDK caller on external network
+    calls. Delivery failures are logged and retried on the next sweep;
+    they never cause the event write to fail.
     """
     pool = get_pool()
     rows = await pool.fetch(
@@ -238,60 +218,34 @@ async def deliver_event(event: dict) -> None:
             continue
         # Schedule delivery as a background task so it never blocks the
         # event write path.
-        asyncio.create_task(_deliver_one_with_retry(sub, event))
+        asyncio.create_task(_deliver_and_record(sub, event))
 
 
-async def _deliver_one_with_retry(sub: dict, event: dict) -> None:
-    """Deliver a single event to a single webhook subscription with retry.
-
-    Retries up to WEBHOOK_MAX_RETRIES times with exponential backoff.
-    Failures are logged but never raise.
-    """
-    url = sub["url"]
-    if not _is_safe_url(url):
-        logger.warning(
-            "webhook delivery blocked: url=%s (unsafe URL)", url
-        )
-        return
-
-    for attempt in range(WEBHOOK_MAX_RETRIES):
-        ok, status_code, body_text = await _deliver_one(sub, event)
-        if ok:
-            await _record_delivery(sub["webhook_id"], status_code, body_text, 0)
-            return
-        # Retry with backoff
-        if attempt < WEBHOOK_MAX_RETRIES - 1:
-            delay = WEBHOOK_RETRY_BASE_SEC * (2 ** attempt)
-            await asyncio.sleep(delay)
-
-    # All retries failed — record the failure
-    await _record_delivery(
-        sub["webhook_id"],
-        None,
-        None,
-        sub.get("failure_count", 0) + 1,
-    )
-
-
-async def _record_delivery(
-    webhook_id: str,
-    status_code: int | None,
-    body_text: str | None,
-    failure_count: int,
-) -> None:
-    """Record the result of a webhook delivery attempt."""
+async def _deliver_and_record(sub: dict, event: dict) -> None:
+    """Deliver a single event and record the result in the database."""
+    ok, status_code, body_text = await _deliver_one(sub, event)
     pool = get_pool()
-    await pool.execute(
-        """
-        UPDATE webhook_subscriptions
-        SET last_triggered = NOW(),
-            last_status = $2,
-            last_body = $3,
-            failure_count = $4
-        WHERE webhook_id = $1
-        """,
-        webhook_id, status_code, body_text, failure_count,
-    )
+    if ok:
+        await pool.execute(
+            """
+            UPDATE webhook_subscriptions
+            SET last_triggered = NOW(),
+                last_status = $2,
+                last_body = $3,
+                failure_count = 0
+            WHERE webhook_id = $1
+            """,
+            sub["webhook_id"], status_code, body_text,
+        )
+    else:
+        await pool.execute(
+            """
+            UPDATE webhook_subscriptions
+            SET failure_count = failure_count + 1
+            WHERE webhook_id = $1
+            """,
+            sub["webhook_id"],
+        )
 
 
 async def list_subscriptions(tenant_id: str) -> list[dict]:

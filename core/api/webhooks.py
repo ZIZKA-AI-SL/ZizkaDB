@@ -17,6 +17,7 @@ dashboard-only action, never callable with a scoped API key.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from uuid import UUID
@@ -28,11 +29,11 @@ from api.deps import require_dashboard_session
 from db.connection import get_pool
 from services.exceptions import not_found
 from services.webhooks import (
-    list_subscriptions,
     create_subscription,
-    get_subscription,
-    update_subscription,
     delete_subscription,
+    get_subscription,
+    list_subscriptions,
+    update_subscription,
     _deliver_one,
 )
 
@@ -73,7 +74,6 @@ class UpdateWebhookBody(BaseModel):
 class WebhookResponse(BaseModel):
     webhook_id: UUID
     url: str
-    # secret is never returned to the client (only set at creation time)
     agent_id: str | None = None
     event_types: list[str]
     active: bool
@@ -90,15 +90,13 @@ class CreateWebhookResponse(WebhookResponse):
 
 
 def _row_to_response(row: dict) -> dict:
-    """Convert a database row to a plain dict for WebhookResponse construction.
+    """Convert a database row to a dict matching WebhookResponse fields.
 
     asyncpg returns UUID as uuid.UUID, datetime as datetime, and JSONB as
-    a Python list/dict. We convert all of these to the types expected by
-    the response model.
+    a Python list/dict. We convert JSONB strings to lists for pydantic.
     """
     event_types = row.get("event_types")
     if isinstance(event_types, str):
-        import json
         event_types = json.loads(event_types)
     elif event_types is None:
         event_types = []
@@ -121,7 +119,10 @@ def _row_to_response(row: dict) -> dict:
 async def list_webhooks(
     session: dict = Depends(require_dashboard_session),
 ) -> list[WebhookResponse]:
-    """List all webhook subscriptions for the current tenant."""
+    """List all webhook subscriptions for the current tenant.
+
+    The secret is never returned on list (only on create).
+    """
     rows = await list_subscriptions(session["tenant_id"])
     return [WebhookResponse(**_row_to_response(r)) for r in rows]
 
@@ -131,7 +132,10 @@ async def create_webhook(
     body: CreateWebhookBody,
     session: dict = Depends(require_dashboard_session),
 ) -> CreateWebhookResponse:
-    """Create a new webhook subscription. Returns the secret once on create."""
+    """Create a new webhook subscription.
+
+    The secret is returned once on creation and never again.
+    """
     row = await create_subscription(
         tenant_id=session["tenant_id"],
         url=str(body.url),
@@ -149,8 +153,11 @@ async def get_webhook(
     webhook_id: UUID = Path(...),
     session: dict = Depends(require_dashboard_session),
 ) -> WebhookResponse:
-    """Get a single webhook subscription by ID."""
-    row = await get_subscription(webhook_id, session["tenant_id"])
+    """Get a single webhook subscription by ID.
+
+    A non-UUID webhook_id returns 422 (not 500).
+    """
+    row = await get_subscription(str(webhook_id), session["tenant_id"])
     if not row:
         raise not_found("Webhook subscription not found")
     return WebhookResponse(**_row_to_response(row))
@@ -162,9 +169,13 @@ async def update_webhook(
     body: UpdateWebhookBody = ...,
     session: dict = Depends(require_dashboard_session),
 ) -> WebhookResponse:
-    """Update a webhook subscription."""
+    """Update a webhook subscription.
+
+    Passing ``secret`` or ``agent_id`` as null clears the value.
+    ``failure_count`` is reset on every PATCH.
+    """
     row = await update_subscription(
-        webhook_id,
+        str(webhook_id),
         session["tenant_id"],
         url=str(body.url) if body.url is not None else None,
         secret=body.secret,
@@ -183,7 +194,7 @@ async def delete_webhook(
     session: dict = Depends(require_dashboard_session),
 ) -> dict:
     """Delete a webhook subscription."""
-    deleted = await delete_subscription(webhook_id, session["tenant_id"])
+    deleted = await delete_subscription(str(webhook_id), session["tenant_id"])
     if not deleted:
         raise not_found("Webhook subscription not found")
     return {"deleted": True, "webhook_id": str(webhook_id)}
@@ -195,7 +206,7 @@ async def test_webhook(
     session: dict = Depends(require_dashboard_session),
 ) -> dict:
     """Send a test ping to a webhook subscription. Returns delivery status."""
-    row = await get_subscription(webhook_id, session["tenant_id"])
+    row = await get_subscription(str(webhook_id), session["tenant_id"])
     if not row:
         raise not_found("Webhook subscription not found")
 
@@ -232,7 +243,7 @@ async def test_webhook(
                 failure_count = 0
             WHERE webhook_id = $1
             """,
-            webhook_id, status_code, body_text,
+            str(webhook_id), status_code, body_text,
         )
         return {"delivered": True, "webhook_id": str(webhook_id)}
     else:
@@ -242,6 +253,6 @@ async def test_webhook(
             SET failure_count = failure_count + 1
             WHERE webhook_id = $1
             """,
-            webhook_id,
+            str(webhook_id),
         )
         return {"delivered": False, "webhook_id": str(webhook_id)}
