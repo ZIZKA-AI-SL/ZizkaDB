@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pytest
+import httpx
 import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -89,7 +90,22 @@ class TestApiHelper:
         assert result["status"] == 401
 
     @pytest.mark.asyncio
-    async def test_non_json_body_returns_error_dict(self, monkeypatch):
+    async def test_timeout_returns_error_dict(self, monkeypatch):
+        """A timeout must return an error dict, not crash the tool."""
+        monkeypatch.setattr("zizkadb_mcp.server._KEY", "zizkadb_dev_local")
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectTimeout(""))
+
+        with patch("zizkadb_mcp.server.httpx.AsyncClient", return_value=mock_client):
+            from zizkadb_mcp.server import _api
+            result = await _api("GET", "/events")
+        assert "error" in result
+        assert result["status"] == 0
+        assert "error contacting" in result["error"].lower()
+
+
         """A 2xx response with a non-JSON body must not crash the tool."""
         monkeypatch.setattr("zizkadb_mcp.server._KEY", "zizkadb_dev_local")
         mock_resp = MagicMock()

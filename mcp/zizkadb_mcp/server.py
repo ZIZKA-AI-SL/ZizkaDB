@@ -142,14 +142,21 @@ async def _api(method: str, path: str, body: dict | None = None) -> dict:
 
     async with httpx.AsyncClient(timeout=15) as client:
         url = f"{_HOST}/v1{path}"
-        if method == "GET":
-            r = await client.get(url, headers=headers)
-        elif method == "POST":
-            r = await client.post(url, headers=headers, json=body or {})
-        elif method == "DELETE":
-            r = await client.request("DELETE", url, headers=headers, json=body or {})
-        else:
-            raise ValueError(f"Unsupported method: {method}")
+        try:
+            if method == "GET":
+                r = await client.get(url, headers=headers)
+            elif method == "POST":
+                r = await client.post(url, headers=headers, json=body or {})
+            elif method == "DELETE":
+                r = await client.request("DELETE", url, headers=headers, json=body or {})
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+        except httpx.HTTPError as exc:
+            # Connection refused, DNS failure, timeout, etc. Return a
+            # graceful error dict instead of propagating an unhandled
+            # exception that crashes the MCP tool.
+            error_text = str(exc) or f"Connection error contacting {_HOST}"
+            return {"error": error_text, "status": 0}
 
     if not r.is_success:
         error_text = r.text or f"HTTP {r.status_code}"
