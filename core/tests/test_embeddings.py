@@ -119,3 +119,94 @@ async def test_generate_embedding_uses_sha256_cache_key(monkeypatch):
 
     assert expected_hash in get_key
     assert get_key == setex_key
+
+# ── raise_errors: the embed worker learns why there is no embedding ────────
+
+
+def _config(**overrides):
+    values = dict(
+        tenant_id="tenant1",
+        provider="openai",
+        model="text-embedding-3-small",
+        use_platform_key=True,
+        api_key="sk-test",
+    )
+    values.update(overrides)
+    return TenantEmbeddingConfig(**values)
+
+
+@pytest.fixture
+def no_cache(monkeypatch):
+    redis = AsyncMock()
+    redis.get.return_value = None
+    monkeypatch.setattr("services.embeddings.get_redis", lambda: redis)
+    return redis
+
+
+@pytest.mark.parametrize(
+    "config,provider_result,reason",
+    [
+        (_config(api_key=None), None, "no API key for embedding provider openai"),
+        (_config(provider="nope"), None, "unsupported embedding provider nope"),
+        (_config(), [], "embedding provider openai returned no embedding"),
+        (_config(), [0.1] * 3, "embedding has 3 dimensions, expected 1536"),
+    ],
+)
+async def test_raise_errors_says_why_there_is_no_embedding(
+    monkeypatch, no_cache, config, provider_result, reason
+):
+    from services.embeddings import EmbeddingUnavailable
+
+    monkeypatch.setattr(
+        "services.embeddings._openai_embedding", AsyncMock(return_value=provider_result)
+    )
+    with pytest.raises(EmbeddingUnavailable, match=f"^{reason}$"):
+        await generate_embedding_with_config("hello", config, raise_errors=True)
+    # Without raise_errors the same failure is still None, as callers expect.
+    assert await generate_embedding_with_config("hello", config) is None
+
+
+async def test_raise_errors_chains_the_provider_exception(monkeypatch, no_cache):
+    import httpx
+
+    from services.embeddings import EmbeddingUnavailable
+
+    async def openai_401(text, cfg):
+        request = httpx.Request("POST", "https://api.openai.com/v1/embeddings")
+        httpx.Response(401, request=request).raise_for_status()
+
+    monkeypatch.setattr("services.embeddings._openai_embedding", openai_401)
+    with pytest.raises(EmbeddingUnavailable) as caught:
+        await generate_embedding_with_config("hello", _config(), raise_errors=True)
+    assert str(caught.value).startswith("HTTPStatusError: Client error '401 Unauthorized'")
+    assert isinstance(caught.value.__cause__, httpx.HTTPStatusError)
+    assert await generate_embedding_with_config("hello", _config()) is None
+
+
+async def test_raise_errors_still_returns_an_embedding(monkeypatch, no_cache):
+    monkeypatch.setattr(
+        "services.embeddings._openai_embedding", AsyncMock(return_value=[0.1] * 1536)
+    )
+    assert await generate_embedding_with_config("hello", _config(), raise_errors=True) == [0.1] * 1536
+
+
+async def test_raise_errors_without_a_message_has_no_trailing_colon(monkeypatch, no_cache):
+    from services.embeddings import EmbeddingUnavailable
+
+    async def timeout(text, cfg):
+        raise TimeoutError()
+
+    monkeypatch.setattr("services.embeddings._openai_embedding", timeout)
+    with pytest.raises(EmbeddingUnavailable, match="^TimeoutError$"):
+        await generate_embedding_with_config("hello", _config(), raise_errors=True)
+
+
+async def test_the_provider_error_is_logged_masked(monkeypatch, no_cache, caplog):
+    async def leaky(text, cfg):
+        raise RuntimeError("upstream api-key: abc123secret")
+
+    monkeypatch.setattr("services.embeddings._openai_embedding", leaky)
+    with caplog.at_level("WARNING", logger="services.embeddings"):
+        await generate_embedding_with_config("hello", _config())
+    assert "abc123secret" not in caplog.text
+    assert "api-key: [redacted]" in caplog.text

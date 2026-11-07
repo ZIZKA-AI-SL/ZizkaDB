@@ -187,7 +187,7 @@ async def test_embedding_failure_does_not_fail_request(
     )
 
     async def fail(*args, **kwargs):
-        raise RuntimeError("embedding failed")
+        raise RuntimeError("embedding failed: Authorization: Bearer abc123secretvalue")
 
     monkeypatch.setattr(
         "services.event_write.generate_embedding",
@@ -205,6 +205,11 @@ async def test_embedding_failure_does_not_fail_request(
     assert result["indexed"] is False
     assert result["index_status"] == "failed"
     mock_qdrant.upsert.assert_not_called()
+    # The reason is stored masked (index_last_error), never the raw message.
+    failed = [c for c in mock_pool.execute.await_args_list if "index_status = 'failed'" in c.args[0]]
+    assert len(failed) == 1
+    assert "index_last_error = $2" in failed[0].args[0]
+    assert failed[0].args[2] == "RuntimeError: embedding failed: Authorization: [redacted]"
 
 
 @pytest.mark.asyncio

@@ -114,6 +114,7 @@ CREATE TABLE events (
     index_status    VARCHAR(16) NOT NULL DEFAULT 'skipped',
     index_attempts  INTEGER NOT NULL DEFAULT 0,
     index_retry_at  TIMESTAMPTZ,
+    index_last_error TEXT,                              -- why the latest embedding attempt failed (workers/embed_worker.py)
     idempotency_key VARCHAR(255),                       -- retried writes return the first event
     chain_hash      VARCHAR(64),                        -- per-agent hash chain (services/audit_chain.py)
 

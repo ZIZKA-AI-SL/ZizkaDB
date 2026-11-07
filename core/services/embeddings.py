@@ -5,6 +5,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from db.connection import get_redis
+from services.error_text import safe_error_text
 from services.embedding_config import (
     EMBEDDING_MODELS,
     TenantEmbeddingConfig,
@@ -33,15 +34,40 @@ def _cache_key_for(provider: str, model: str, text: str) -> str:
     return f"emb:{provider}:{model}:{text_hash}"
 
 
-async def generate_embedding(text: str, tenant_id: str) -> list[float] | None:
+class EmbeddingUnavailable(RuntimeError):
+    """No embedding could be made. Raised instead of returning None when the
+    caller passes ``raise_errors=True``; the message says why (the embed worker
+    keeps it in ``events.index_last_error``)."""
+
+
+async def generate_embedding(
+    text: str,
+    tenant_id: str,
+    *,
+    raise_errors: bool = False,
+) -> list[float] | None:
     config = await get_tenant_embedding_config(tenant_id)
-    return await generate_embedding_with_config(text, config)
+    return await generate_embedding_with_config(text, config, raise_errors=raise_errors)
 
 
 async def generate_embedding_with_config(
     text: str,
     config: TenantEmbeddingConfig,
+    *,
+    raise_errors: bool = False,
 ) -> list[float] | None:
+    """The embedding of ``text``, or None when none can be made (logged).
+
+    With ``raise_errors`` the failure raises ``EmbeddingUnavailable`` instead,
+    chained to the provider's exception if there was one. The default (None)
+    is what search, memory and the write path rely on.
+    """
+
+    def unavailable(reason: str, cause: BaseException | None = None) -> None:
+        if raise_errors:
+            raise EmbeddingUnavailable(reason) from cause
+        return None
+
     if (
         config.provider in API_KEY_REQUIRED_PROVIDERS
         and not config.api_key
@@ -51,7 +77,7 @@ async def generate_embedding_with_config(
             config.tenant_id,
             config.use_platform_key,
         )
-        return None
+        return unavailable(f"no API key for embedding provider {config.provider}")
 
     cache_key = _cache_key_for(config.provider, config.model, text)
 
@@ -71,13 +97,17 @@ async def generate_embedding_with_config(
             config.provider,
         )
 
-        return None
+        return unavailable(f"unsupported embedding provider {config.provider}")
 
     try:
         embedding = await provider(text, config)
 
         if not embedding:
-            return None
+            hint = (
+                " (not configured, or the model has too many dimensions; the log says which)"
+                if config.provider == "local" else ""
+            )
+            return unavailable(f"embedding provider {config.provider} returned no embedding{hint}")
 
         if len(embedding) != VECTOR_SIZE:
             logger.warning(
@@ -86,7 +116,9 @@ async def generate_embedding_with_config(
                 VECTOR_SIZE,
                 config.tenant_id,
             )
-            return None
+            return unavailable(
+                f"embedding has {len(embedding)} dimensions, expected {VECTOR_SIZE}"
+            )
 
         try:
             redis = get_redis()
@@ -100,13 +132,15 @@ async def generate_embedding_with_config(
 
         return embedding
 
+    except EmbeddingUnavailable:
+        raise  # raised above with raise_errors; already explained and logged
     except Exception as e:
         logger.warning(
             "Embedding generation failed for tenant %s: %s",
             config.tenant_id,
-            e,
+            safe_error_text(e),  # provider errors can carry credentials
         )
-        return None
+        return unavailable(f"{type(e).__name__}: {e}" if str(e) else type(e).__name__, e)
 
 
 async def _openai_embedding(

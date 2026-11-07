@@ -57,6 +57,8 @@ class _FakeConn:
             row = pool.table.get(args[-1])
             if row is not None:
                 row["index_status"] = "indexed"
+                if "index_last_error = NULL" in query:
+                    row["index_last_error"] = None
         return "OK"
 
     async def fetchval(self, query, *args):
@@ -69,6 +71,7 @@ class _FakePool:
     def __init__(self, rows):
         self.table = {r["event_id"]: dict(r) for r in rows}
         self.log = []
+        self.embed_calls = []
         self.conn = _FakeConn(self)
 
     async def fetch(self, query, *args):
@@ -89,6 +92,8 @@ class _FakePool:
                 return None
             row["index_attempts"] = row.get("index_attempts", 0) + 1
             row["index_status"] = "dead" if row["index_attempts"] >= args[1] else "failed"
+            if "index_last_error = $5" in query:
+                row["index_last_error"] = args[4]
             return row["index_status"]
         return None
 
@@ -132,13 +137,19 @@ def _setup(monkeypatch, rows, embedding_side_effect=None, embedding_result=None)
     # the exact module object the from-import will resolve.
     import importlib
 
+    # The worker imports services.event_write lazily, and that module binds
+    # db.connection.get_pool at import. Import it before patching, or a first
+    # import here binds the fake pool for the rest of the run (the real-Postgres
+    # worker tests then write through it).
+    importlib.import_module("services.event_write")
     db_connection = importlib.import_module("db.connection")
     monkeypatch.setattr(db_connection, "get_pool", lambda: pool, raising=False)
     monkeypatch.setattr(db_connection, "get_qdrant", lambda: qdrant, raising=False)
     monkeypatch.setattr(db_connection, "init_db", AsyncMock(), raising=False)
     monkeypatch.setattr(db_connection, "close_db", AsyncMock(), raising=False)
 
-    async def fake_generate_embedding(text, tenant_id):
+    async def fake_generate_embedding(text, tenant_id, **kwargs):
+        pool.embed_calls.append(kwargs)
         if embedding_side_effect is not None:
             embedding_side_effect(pool)
         if isinstance(embedding_result, Exception):
@@ -238,3 +249,41 @@ async def test_batch_query_skips_events_not_yet_due(monkeypatch):
     await embed_worker.process_pending_batch()
 
     assert "index_retry_at IS NULL OR index_retry_at <= NOW()" in seen["query"]
+
+
+# ── index_last_error: why the latest attempt failed ────────────────────────
+
+
+async def test_worker_keeps_the_failure_reason(monkeypatch):
+    row = _row()
+    pool, _ = _setup(monkeypatch, [row], embedding_result=RuntimeError("provider down"))
+    await embed_worker.process_pending_batch()
+    assert pool.table[row["event_id"]]["index_last_error"] == "RuntimeError: provider down"
+
+
+async def test_indexing_clears_the_failure_reason(monkeypatch):
+    row = _row("failed")
+    row["index_last_error"] = "RuntimeError: provider down"
+    pool, _ = _setup(monkeypatch, [row])
+    assert await embed_worker.process_pending_batch() == 1
+    assert pool.table[row["event_id"]]["index_last_error"] is None
+
+
+async def test_worker_asks_the_embedding_service_for_the_error(monkeypatch):
+    """Without raise_errors the service returns None and the stored reason
+    could only say "no embedding returned"."""
+    row = _row()
+    pool, _ = _setup(monkeypatch, [row])
+    await embed_worker.process_pending_batch()
+    assert pool.embed_calls == [{"raise_errors": True}]
+
+
+async def test_stored_reason_is_masked(monkeypatch):
+    row = _row()
+    pool, _ = _setup(
+        monkeypatch, [row], embedding_result=RuntimeError("upstream said api-key: abc123secret")
+    )
+    await embed_worker.process_pending_batch()
+    assert pool.table[row["event_id"]]["index_last_error"] == (
+        "RuntimeError: upstream said api-key: [redacted]"
+    )
