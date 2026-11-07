@@ -278,11 +278,11 @@ def test_log_url_encodes_agent_name(monkeypatch):
     finally:
         asyncio.run(_close(db))
 
-    raw_path = captured["raw_path"].decode()
+    raw_path = captured["raw_path"]
     # Agent name must be URL-encoded: spaces become %20, ? becomes %3F
-    assert b"/v1/agents/support%20bot%3Fv2" in raw_path, f"Expected encoded agent name, got: {raw_path}"
+    assert "/v1/agents/support%20bot%3Fv2" in raw_path, f"Expected encoded agent name, got: {raw_path}"
     # The raw path must NOT contain the raw agent name with special chars
-    assert b"support bot?v2" not in raw_path, f"Raw agent name should not appear in URL path: {raw_path}"
+    assert "support bot?v2" not in raw_path, f"Raw agent name should not appear in URL path: {raw_path}"
 
 
 # ── Named tool / API helpers ─────────────────────────────────────────────────
