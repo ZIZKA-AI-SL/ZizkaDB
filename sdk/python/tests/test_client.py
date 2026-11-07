@@ -260,6 +260,31 @@ def test_log_sends_null_for_omitted_parent_and_session(monkeypatch):
     assert body["session_id"] is None
 
 
+def test_log_url_encodes_agent_name(monkeypatch):
+    """URL-encode agent name in path so special chars don't break the route."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["raw_path"] = request.url.raw_path
+        captured["body"] = request.read().decode()
+        return httpx.Response(
+            200,
+            json={"event_id": "evt-1", "timestamp": "2026-01-01T00:00:00Z", "sequence_no": 1, "checksum": "x"},
+        )
+
+    db = _client(monkeypatch, handler)
+    try:
+        asyncio.run(db.log(agent="support bot?v2", event="e", data={}))
+    finally:
+        asyncio.run(_close(db))
+
+    raw_path = captured["raw_path"].decode()
+    # Agent name must be URL-encoded: spaces become %20, ? becomes %3F
+    assert b"/v1/agents/support%20bot%3Fv2" in raw_path, f"Expected encoded agent name, got: {raw_path}"
+    # The raw path must NOT contain the raw agent name with special chars
+    assert b"support bot?v2" not in raw_path, f"Raw agent name should not appear in URL path: {raw_path}"
+
+
 # ── Named tool / API helpers ─────────────────────────────────────────────────
 
 def _capture_events(monkeypatch):
