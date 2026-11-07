@@ -823,7 +823,7 @@ class ZizkaDB:
         if window:
             params["window"] = window
         return await self._get(
-            f"/v1/agents/{agent}/baseline",
+            f"/v1/agents/{quote(agent, safe='')}/baseline",
             params,
         )
 
@@ -838,7 +838,7 @@ class ZizkaDB:
         params: dict[str, Any] = {"from": from_, "to": to}
         if granularity:
             params["granularity"] = granularity
-        return await self._get(f"/v1/agents/{agent}/token-usage", params)
+        return await self._get(f"/v1/agents/{quote(agent, safe='')}/token-usage", params)
 
     async def token_optimization(
         self,
@@ -855,7 +855,7 @@ class ZizkaDB:
             params["to"] = to
         if granularity:
             params["granularity"] = granularity
-        return await self._get(f"/v1/agents/{agent}/token-optimization", params)
+        return await self._get(f"/v1/agents/{quote(agent, safe='')}/token-optimization", params)
 
     async def suggestions(
         self,
@@ -872,7 +872,7 @@ class ZizkaDB:
             params["to"] = to
         if refresh:
             params["refresh"] = "true"
-        return await self._get(f"/v1/agents/{agent}/suggestions", params)
+        return await self._get(f"/v1/agents/{quote(agent, safe='')}/suggestions", params)
 
     async def report(
         self,
@@ -885,7 +885,7 @@ class ZizkaDB:
         params: dict[str, Any] = {"from": from_, "to": to}
         if granularity:
             params["granularity"] = granularity
-        return await self._get(f"/v1/agents/{agent}/report", params)
+        return await self._get(f"/v1/agents/{quote(agent, safe='')}/report", params)
 
     async def behavior_change(
         self,
@@ -900,7 +900,7 @@ class ZizkaDB:
             params["from_ts"] = from_ts
         if to_ts:
             params["to_ts"] = to_ts
-        return await self._get(f"/v1/agents/{agent}/behavior-change", params)
+        return await self._get(f"/v1/agents/{quote(agent, safe='')}/behavior-change", params)
 
     # ─────────────────────────────────────────
     # HTTP HELPERS

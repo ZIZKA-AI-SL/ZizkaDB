@@ -299,3 +299,18 @@ CREATE TABLE IF NOT EXISTS sdk_update_subscriptions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sdk_update_subscriptions_email
     ON sdk_update_subscriptions (LOWER(email));
+
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    webhook_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    url             TEXT NOT NULL,
+    secret          TEXT,
+    agent_id        TEXT,
+    event_types     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    active          BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_triggered  TIMESTAMPTZ,
+    last_status     INT,
+    last_body       TEXT,
+    failure_count   INT NOT NULL DEFAULT 0
+);

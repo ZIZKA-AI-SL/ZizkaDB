@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Webhooks
+
+- New `webhook_subscriptions` table (`core/db/schema.sql`, idempotent DDL in `init_db()`): one row per subscriber, tenant-scoped, with optional agent/event-type filters and HMAC-SHA256 signing.
+- New `/v1/webhooks` routes (`core/api/webhooks.py`): list, create (returns secret once), get, patch, delete, and test. All require a dashboard session.
+- Webhook delivery is fire-and-forget from `write_event()` via `asyncio.create_task()`, with retry and exponential backoff (`WEBHOOK_MAX_RETRIES`, `WEBHOOK_RETRY_BASE_SEC`). Delivery failures never block event writes.
+- SSRF protection: subscriber URLs are validated at create and delivery time — only `https` (unless `ENV=development`), no loopback/private/link-local/multicast hosts, redirects disabled.
+- Dashboard types added to `dashboard/lib/api.ts`; endpoint map and data model documented in `DASHBOARD_KNOWLEDGE_BASE.md` §17.3 and §21; outbound-request behavior noted in `docs/telemetry.md`.
+
 ## [0.6.0] - 2026-11-07
 
 > **Upgrading a self-hosted server? Check `JWT_SECRET` first.** 0.6.0 refuses to start in production if `JWT_SECRET` is one of the sample values the docs used to show. Run `scripts/init-secrets.sh` (or set a new random `JWT_SECRET`) **before** upgrading. After the change, users sign in again, saved BYOK embedding keys must be re-entered, and unsubscribe links in emails already sent stop working. Details under "Self-hosted secrets" below.
