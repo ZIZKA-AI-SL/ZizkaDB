@@ -559,7 +559,7 @@ export class ZizkaDB {
   // ─────────────────────────────────────────
 
   async why(eventId: string, depth = 10): Promise<CausalChain> {
-    const res = await this.get(`/v1/events/${eventId}/why`, {
+    const res = await this.get(`/v1/events/${encodeURIComponent(eventId)}/why`, {
       depth: String(depth),
     }) as {
       event_id: string
@@ -756,7 +756,7 @@ export class ZizkaDB {
     newEventTypes: string[]
     summary: string
   }> {
-    const res = await this.get(`/v1/memory/diff/${sessionId}`, {}) as Record<string, unknown>
+    const res = await this.get(`/v1/memory/diff/${encodeURIComponent(sessionId)}`, {}) as Record<string, unknown>
     return {
       sessionId: res.session_id as string,
       agent: res.agent as string,
@@ -843,7 +843,7 @@ export class ZizkaDB {
       recent_window: String(options.recentWindow ?? 50),
     }
     if (options.window) params.window = options.window
-    const res = await this.get(`/v1/agents/${options.agent}/baseline`, params)
+    const res = await this.get(`/v1/agents/${encodeURIComponent(options.agent)}/baseline`, params)
     return res as Record<string, unknown>
   }
 
@@ -855,7 +855,7 @@ export class ZizkaDB {
   }): Promise<Record<string, unknown>> {
     const params: Record<string, string> = { from: options.from, to: options.to }
     if (options.granularity) params.granularity = options.granularity
-    const res = await this.get(`/v1/agents/${options.agent}/token-usage`, params)
+    const res = await this.get(`/v1/agents/${encodeURIComponent(options.agent)}/token-usage`, params)
     return res as Record<string, unknown>
   }
 
@@ -869,7 +869,7 @@ export class ZizkaDB {
     if (options.from) params.from = options.from
     if (options.to) params.to = options.to
     if (options.granularity) params.granularity = options.granularity
-    const res = await this.get(`/v1/agents/${options.agent}/token-optimization`, params)
+    const res = await this.get(`/v1/agents/${encodeURIComponent(options.agent)}/token-optimization`, params)
     return res as Record<string, unknown>
   }
 
@@ -883,7 +883,7 @@ export class ZizkaDB {
     if (options.from) params.from = options.from
     if (options.to) params.to = options.to
     if (options.refresh) params.refresh = 'true'
-    const res = await this.get(`/v1/agents/${options.agent}/suggestions`, params)
+    const res = await this.get(`/v1/agents/${encodeURIComponent(options.agent)}/suggestions`, params)
     return res as Record<string, unknown>
   }
 
@@ -895,7 +895,7 @@ export class ZizkaDB {
   }): Promise<Record<string, unknown>> {
     const params: Record<string, string> = { from: options.from, to: options.to }
     if (options.granularity) params.granularity = options.granularity
-    const res = await this.get(`/v1/agents/${options.agent}/report`, params)
+    const res = await this.get(`/v1/agents/${encodeURIComponent(options.agent)}/report`, params)
     return res as Record<string, unknown>
   }
 
@@ -908,7 +908,7 @@ export class ZizkaDB {
     const params: Record<string, string> = { window: options.window ?? '7d' }
     if (options.fromTs) params.from_ts = options.fromTs
     if (options.toTs) params.to_ts = options.toTs
-    const res = await this.get(`/v1/agents/${options.agent}/behavior-change`, params)
+    const res = await this.get(`/v1/agents/${encodeURIComponent(options.agent)}/behavior-change`, params)
     return res as Record<string, unknown>
   }
 
