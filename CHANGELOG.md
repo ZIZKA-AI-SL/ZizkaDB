@@ -6,6 +6,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-07
+
+> **Upgrading a self-hosted server? Check `JWT_SECRET` first.** 0.6.0 refuses to start in production if `JWT_SECRET` is one of the sample values the docs used to show. Run `scripts/init-secrets.sh` (or set a new random `JWT_SECRET`) **before** upgrading. After the change, users sign in again, saved BYOK embedding keys must be re-entered, and unsubscribe links in emails already sent stop working. Details under "Self-hosted secrets" below.
+
+Released packages: `zizkadb-sdk` 0.6.0 (PyPI and npm), `zizkadb-mcp` 0.1.13, server images `v0.6.0`. The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.6.0.
+
+### API
+
+- A request body with a lone UTF-16 surrogate (for example `"\ud800"` in `agent`) now returns **422** with the rejected field, instead of a 500. The validation handler escapes such characters before building the error response; ordinary 422 responses are unchanged (#301, #390 by @xh123637).
+
+### Python SDK
+
+- Event and session IDs are URL-encoded in request paths (`why()`, memory diff), so IDs with `/`, `?` or `#` reach the right endpoint (#373 by @VarunGore36). Works with a 0.5.0 server.
+
+### MCP server (0.1.13)
+
+- Network failures (connection refused, DNS failure, timeout) return `{"error": ..., "status": 0}` instead of crashing the tool; a timeout with no message reports `Connection error contacting <host>` (#388 by @VarunGore36).
+- Non-JSON responses (for example an HTML error page from a proxy) return an error dict with the first 200 characters, an error status with an empty body reports `HTTP <status>`, and `get_context` surfaces API errors instead of an empty context (#374 by @VarunGore36).
+
+### Dashboard
+
+- Upgraded to Next.js 16 (#397).
+
 ### Self-hosted secrets
 
 - Production startup and `scripts/validate-selfhost-config.sh --production` also refuse the sample `JWT_SECRET` that the Self-Host docs page used to show. Both now ignore surrounding whitespace when they compare, so a sample with extra spaces or a trailing CR is refused too.
@@ -473,7 +496,8 @@ Production-hardening sprint merged to `main` (via stacked PRs #125–#139), incl
 
 See [GitHub releases](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) for tagged artifacts.
 
-[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/V0.5.0...v0.6.0
 [0.2.8]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.1.0...v0.2.6

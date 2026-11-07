@@ -105,7 +105,8 @@ class TestApiHelper:
         assert result["status"] == 0
         assert "error contacting" in result["error"].lower()
 
-
+    @pytest.mark.asyncio
+    async def test_non_json_body_returns_error_dict(self, monkeypatch):
         """A 2xx response with a non-JSON body must not crash the tool."""
         monkeypatch.setattr("zizkadb_mcp.server._KEY", "zizkadb_dev_local")
         mock_resp = MagicMock()
