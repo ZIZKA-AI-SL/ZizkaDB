@@ -87,5 +87,5 @@ def test_analytics_methods_url_encode_agent_name(monkeypatch):
         asyncio.run(db._client.aclose())
 
     raw_path = seen["raw_path"]
-    assert "/v1/agents/support%20bot%3Fv2/token-usage" in raw_path, f"Expected encoded agent name, got: {raw_path}"
-    assert "support bot?v2" not in raw_path, f"Raw agent name should not appear in URL path: {raw_path}"
+    assert b"/v1/agents/support%20bot%3Fv2/token-usage" in raw_path, f"Expected encoded agent name, got: {raw_path}"
+    assert b"support bot?v2" not in raw_path, f"Raw agent name should not appear in URL path: {raw_path}"
