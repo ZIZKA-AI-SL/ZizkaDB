@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -161,6 +163,38 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/openapi.json",
 )
+
+
+def _encodable(value):
+    """Return *value* with every string made safe to encode as UTF-8.
+
+    A JSON body can carry lone UTF-16 surrogates (e.g. ``\\ud800``), which
+    pydantic rejects — but the offending value is echoed back in the error
+    detail, and encoding that response as UTF-8 raises UnicodeEncodeError.
+    ``backslashreplace`` renders such characters as literal ``\\ud800``
+    escapes, so the 422 body can always be encoded.
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(value, dict):
+        return {_encodable(k): _encodable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_encodable(v) for v in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(request: Request, exc: RequestValidationError):
+    """422 for invalid requests — never a 500 from an unencodable body.
+
+    FastAPI's default handler echoes the rejected ``input`` in the error
+    detail; when that input contains lone surrogates the response itself
+    fails to encode and the client sees a 500 for what is a client error.
+    Sanitise the errors before building the response (issue #301).
+    """
+    errors = _encodable(jsonable_encoder(exc.errors()))
+    return JSONResponse(status_code=422, content={"detail": errors})
+
 
 @app.get("/swagger", include_in_schema=False)
 async def swagger_ui():
