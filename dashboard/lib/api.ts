@@ -906,3 +906,92 @@ export async function grantRetentionTrial(token: string): Promise<{
 export async function deleteManagedAccount(token: string): Promise<{ message: string }> {
   return apiFetch('/v1/account', token, { method: 'DELETE' })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhooks — outbound event delivery subscriptions (see core/api/webhooks.py)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WebhookSubscription {
+  webhook_id: string
+  url: string
+  secret: string | null
+  agent_id: string | null
+  event_types: string[]
+  active: boolean
+  created_at: string
+  last_triggered: string | null
+  last_status: number | null
+  last_body: string | null
+  failure_count: number
+}
+
+export interface CreateWebhookBody {
+  url: string
+  secret?: string | null
+  agent_id?: string | null
+  event_types?: string[] | null
+  active?: boolean
+}
+
+export interface CreateWebhookResponse extends WebhookSubscription {
+  secret: string | null
+}
+
+export interface UpdateWebhookBody {
+  url?: string
+  secret?: string | null
+  agent_id?: string | null
+  event_types?: string[] | null
+  active?: boolean
+}
+
+export async function getWebhooks(token: string): Promise<WebhookSubscription[]> {
+  return apiFetch<WebhookSubscription[]>('/v1/webhooks', token)
+}
+
+export async function createWebhook(
+  token: string,
+  body: CreateWebhookBody,
+): Promise<CreateWebhookResponse> {
+  return apiFetch<CreateWebhookResponse>('/v1/webhooks', token, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getWebhook(token: string, webhookId: string): Promise<WebhookSubscription> {
+  return apiFetch<WebhookSubscription>(`/v1/webhooks/${encodeURIComponent(webhookId)}`, token)
+}
+
+export async function updateWebhook(
+  token: string,
+  webhookId: string,
+  body: UpdateWebhookBody,
+): Promise<WebhookSubscription> {
+  return apiFetch<WebhookSubscription>(`/v1/webhooks/${encodeURIComponent(webhookId)}`, token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteWebhook(
+  token: string,
+  webhookId: string,
+): Promise<{ deleted: boolean; webhook_id: string }> {
+  return apiFetch<{ deleted: boolean; webhook_id: string }>(
+    `/v1/webhooks/${encodeURIComponent(webhookId)}`,
+    token,
+    { method: 'DELETE' },
+  )
+}
+
+export async function testWebhook(
+  token: string,
+  webhookId: string,
+): Promise<{ delivered: boolean; webhook_id: string }> {
+  return apiFetch<{ delivered: boolean; webhook_id: string }>(
+    `/v1/webhooks/${encodeURIComponent(webhookId)}/test`,
+    token,
+    { method: 'POST' },
+  )
+}

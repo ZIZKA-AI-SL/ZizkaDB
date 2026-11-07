@@ -21,13 +21,12 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, Field, HttpUrl
-from typing import Any
 
 from api.deps import require_dashboard_session
 from db.connection import get_pool
-from services.exceptions import not_found, bad_request, conflict
+from services.exceptions import not_found
 from services.webhooks import (
     list_subscriptions,
     create_subscription,
@@ -40,20 +39,6 @@ from services.webhooks import (
 router = APIRouter()
 
 log = logging.getLogger(__name__)
-
-
-class WebhookSubscription(BaseModel):
-    webhook_id: UUID
-    url: str
-    secret: str | None = None
-    agent_id: str | None = None
-    event_types: list[str]
-    active: bool
-    created_at: datetime
-    last_triggered: datetime | None = None
-    last_status: int | None = None
-    last_body: str | None = None
-    failure_count: int
 
 
 class CreateWebhookBody(BaseModel):
@@ -99,8 +84,13 @@ class WebhookResponse(BaseModel):
     failure_count: int
 
 
-def _row_to_response(row: dict) -> WebhookResponse:
-    """Convert a database row to a WebhookResponse, handling type conversions.
+class CreateWebhookResponse(WebhookResponse):
+    """Response for webhook creation — includes the secret once."""
+    secret: str | None = None
+
+
+def _row_to_response(row: dict) -> dict:
+    """Convert a database row to a plain dict for WebhookResponse construction.
 
     asyncpg returns UUID as uuid.UUID, datetime as datetime, and JSONB as
     a Python list/dict. We convert all of these to the types expected by
@@ -113,18 +103,18 @@ def _row_to_response(row: dict) -> WebhookResponse:
     elif event_types is None:
         event_types = []
 
-    return WebhookResponse(
-        webhook_id=row["webhook_id"],
-        url=row["url"],
-        agent_id=row["agent_id"],
-        event_types=event_types,
-        active=row["active"],
-        created_at=row["created_at"],
-        last_triggered=row["last_triggered"],
-        last_status=row["last_status"],
-        last_body=row["last_body"],
-        failure_count=row["failure_count"],
-    )
+    return {
+        "webhook_id": row["webhook_id"],
+        "url": row["url"],
+        "agent_id": row["agent_id"],
+        "event_types": event_types,
+        "active": row["active"],
+        "created_at": row["created_at"],
+        "last_triggered": row["last_triggered"],
+        "last_status": row["last_status"],
+        "last_body": row["last_body"],
+        "failure_count": row["failure_count"],
+    }
 
 
 @router.get("")
@@ -140,8 +130,8 @@ async def list_webhooks(
 async def create_webhook(
     body: CreateWebhookBody,
     session: dict = Depends(require_dashboard_session),
-) -> WebhookResponse:
-    """Create a new webhook subscription."""
+) -> CreateWebhookResponse:
+    """Create a new webhook subscription. Returns the secret once on create."""
     row = await create_subscription(
         tenant_id=session["tenant_id"],
         url=str(body.url),
@@ -149,7 +139,9 @@ async def create_webhook(
         agent_id=body.agent_id,
         event_types=body.event_types,
     )
-    return WebhookResponse(**_row_to_response(row))
+    response = CreateWebhookResponse(**_row_to_response(row))
+    response.secret = row.get("secret")
+    return response
 
 
 @router.get("/{webhook_id}")

@@ -9,7 +9,7 @@ The FastAPI backend. Handles all event ingestion, causal chain queries, semantic
 - **Qdrant** (vector semantic search — collection `agent_events`, 1536-dim cosine)
 - **Redis 7** (embedding cache, 24 h TTL)
 
-## Routers (14 total; all at `/v1/` except `/metrics`)
+## Routers (15 total; all at `/v1/` except `/metrics`)
 
 Authoritative list: `main.py` (`app.include_router`). There is **no** `admin.py` or `stats.py` router in this OSS tree.
 
@@ -29,6 +29,7 @@ Authoritative list: `main.py` (`app.include_router`). There is **no** `admin.py`
 | `api/community.py` | `/v1/community` | Public community board |
 | `api/marketing_subscriptions.py` | `/v1/marketing-subscriptions` | Email signup |
 | `api/metrics.py` | `/metrics` | Prometheus metrics; off unless `METRICS_TOKEN` is set (bearer) |
+| `api/webhooks.py` | `/v1/webhooks` | Webhook subscriptions and event delivery |
 
 Swagger UI: `http://localhost:8000/swagger`
 

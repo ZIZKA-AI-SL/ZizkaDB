@@ -14,7 +14,9 @@ This page lists every network call ZizkaDB makes on its own, outside of the requ
 
 ## Server
 
-The API and the single-container image make no outbound calls of their own.
+The API and the single-container image make no outbound calls of their own, **except** for webhook deliveries configured by the user:
+
+- **Webhook delivery:** when a tenant creates a webhook subscription (POST `/v1/webhooks`), the API POSTs matching events to the subscriber's URL. URLs are validated at creation time: only `https` (unless `ENV=development`), no loopback/private/link-local/multicast addresses, and redirects are disabled (`follow_redirects=False`). Delivery is fire-and-forget and never blocks event writes.
 
 - **Next.js telemetry:** the dashboard's server runs with `NEXT_TELEMETRY_DISABLED=1`.
 - **Qdrant:** when Qdrant is configured, the API connects to it at startup, lists its collections and logs its version. Qdrant runs on your own network, and the single-container image does not use it.

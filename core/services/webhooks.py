@@ -23,6 +23,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 from typing import Any
 from urllib.parse import urlparse
 
@@ -165,7 +166,7 @@ def _is_safe_url(url: str) -> bool:
             addr = res[4][0]
             try:
                 ip = ipaddress.ip_address(addr)
-                if ip in _BLOCKED_IP_NETS:
+                if any(ip in net for net in _BLOCKED_IP_NETS):
                     return False
                 # Private networks (RFC 1918) are already in _BLOCKED_IP_NETS
             except (OSError, ValueError):
@@ -174,9 +175,6 @@ def _is_safe_url(url: str) -> bool:
         return False
 
     return True
-
-
-import socket  # noqa: E402  (imported after _is_safe_url for readability)
 
 
 async def _deliver_one(sub: dict, event: dict) -> tuple[bool, int | None, str | None]:
@@ -197,7 +195,11 @@ async def _deliver_one(sub: dict, event: dict) -> tuple[bool, int | None, str | 
         headers["X-ZizkaDB-Event-Id"] = str(event.get("event_id", ""))
 
     try:
-        resp = await _get_http_client().post(url, content=body, headers=headers)
+        # follow_redirects=False prevents SSRF via redirect chains to internal
+        # hosts that passed the initial URL check.
+        resp = await _get_http_client().post(
+            url, content=body, headers=headers, follow_redirects=False
+        )
         ok = 200 <= resp.status_code < 300
         if not ok:
             logger.warning(
@@ -316,7 +318,13 @@ async def create_subscription(
     agent_id: str | None,
     event_types: list[str] | None,
 ) -> dict:
-    """Create a webhook subscription. Returns the inserted row."""
+    """Create a webhook subscription. Returns the inserted row.
+
+    Validates the URL for SSRF safety at creation time as well as delivery
+    time, so a malicious user can't register a dangerous webhook URL.
+    """
+    if not _is_safe_url(url):
+        raise ValueError(f"Unsafe webhook URL: {url}")
     pool = get_pool()
     row = await pool.fetchrow(
         """

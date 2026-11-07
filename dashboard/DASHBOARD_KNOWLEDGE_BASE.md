@@ -657,6 +657,18 @@ range validated like `/report`. Provider failure → 503 (never 500). Never inve
 | `grantRetentionTrial` | POST `/v1/account/retention-trial` | `account.py:43` |
 | `deleteManagedAccount` | DELETE `/v1/account` | `account.py:54` |
 
+**Webhooks (`core/api/webhooks.py`, prefix `/v1/webhooks`):** dashboard-session-only; every query scoped by `tenant_id`; HMAC-SHA256 signing on delivery; SSRF-protected outbound HTTPS URLs only.
+| Dashboard fn | Method · Path | Backend |
+|---|---|---|
+| `getWebhooks` | GET `/v1/webhooks` | `webhooks.py:list_webhooks` |
+| `createWebhook` | POST `/v1/webhooks` (returns `secret` once) | `webhooks.py:create_webhook` |
+| `getWebhook` | GET `/v1/webhooks/{id}` | `webhooks.py:get_webhook` |
+| `updateWebhook` | PATCH `/v1/webhooks/{id}` | `webhooks.py:update_webhook` |
+| `deleteWebhook` | DELETE `/v1/webhooks/{id}` | `webhooks.py:delete_webhook` |
+| `testWebhook` | POST `/v1/webhooks/{id}/test` | `webhooks.py:test_webhook` |
+
+Delivery is fire-and-forget via `asyncio.create_task()` from `write_event()` (`event_write.py`); retries with exponential backoff (`WEBHOOK_MAX_RETRIES`, `WEBHOOK_RETRY_BASE_SEC`). The secret is stored hashed-adjacent (plaintext in DB, returned once on create, never again).
+
 **Admin (`core/api/admin.py`, prefix `/v1/admin`):** *Not shipped in OSS repo* — historical endpoint list retained for managed-cloud parity reference only.
 
 **Community (`lib/community.ts` → `core/api/community.py`, prefix `/v1/community`):** `listCommunityPosts`/`getCommunityPost` (GET `/posts`, `/posts/{id}` — `:78`,`:119`) · `createCommunityPost` (POST `/posts` `:169`) · `createCommunityReply` (POST `/posts/{id}/replies` `:198`) · `uploadCommunityImage` (POST `/upload` `:238`) · `mediaUrl` (GET `/media/{file}` `:261`). Unauthenticated; uses a honeypot field (`website`) for spam control.
@@ -1015,8 +1027,9 @@ Schema sources: `core/db/schema.sql` (base DDL, Docker init) + named migrations 
 | `community_replies` | `reply_id` (PK), `post_id` (FK cascade), `author_name`, `body` | Replies; bumps parent `reply_count` |
 | `demo_requests` | `request_id` (PK), `first_name`, `last_name`, `email`, `company_name`, `website`, `position`, `source`, `ip_address` | Landing Book demo submissions |
 | `sdk_telemetry` | `install_id` (PK), `sdk`, `sdk_version`, `runtime`, `os`, `mode` (`cloud`/`self-hosted`), `ping_count` | Anonymous SDK install pings (runtime-only table, not in `schema.sql`) |
+| `webhook_subscriptions` | `webhook_id` (PK), `tenant_id` (FK → tenants), `url`, `secret`, `agent_id` (nullable filter), `event_types` (JSONB), `active`, `created_at`, `last_triggered`, `last_status`, `last_body`, `failure_count` | Outbound webhook subscription registry; one row per subscriber, cascade from tenants |
 
-**Cascade:** `agents`, `api_keys`, `events`, `usage_daily` cascade from `tenants`. Account deletion explicitly deletes `users`, `auth_otps`, `tenants` and purges Qdrant vectors.
+**Cascade:** `agents`, `api_keys`, `events`, `usage_daily`, `webhook_subscriptions` cascade from `tenants`. Account deletion explicitly deletes `users`, `auth_otps`, `tenants` and purges Qdrant vectors.
 
 ### 21.2 Billing storage (all on `users`)
 
