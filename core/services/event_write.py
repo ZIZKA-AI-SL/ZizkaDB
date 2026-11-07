@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -202,8 +203,8 @@ async def write_event(
     # Fire-and-forget webhook delivery: never block the write on external
     # network calls. Delivery failures are logged and retried on the next
     # sweep; they never cause the event write to fail.
-    try:
-        await deliver_event(
+    asyncio.create_task(
+        deliver_event(
             {
                 "event_id": str(row["event_id"]),
                 "agent": agent,
@@ -217,9 +218,7 @@ async def write_event(
                 "tenant_id": tenant_id,
             }
         )
-    except Exception:
-        # Webhook delivery must never break an event write.
-        logger.warning("Webhook delivery failed for event %s", row["event_id"], exc_info=True)
+    )
 
     return result
 
