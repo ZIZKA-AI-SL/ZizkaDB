@@ -18,7 +18,7 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/16048/baseline)](https://www.bestpractices.dev/projects/16048)
 [![Audited by AddonAudit](https://addonaudit.com/badges/audited.svg)](https://addonaudit.com/addon/io-github-zizka-ai-sl-zizkadb-mcp/)
 [![Release](https://img.shields.io/github/v/release/ZIZKA-AI-SL/ZizkaDB?color=f97316&label=release)](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases)
-[![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK)](https://pypi.org/project/zizkadb-sdk/)
+[![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK&logo=python&logoColor=white)](https://pypi.org/project/zizkadb-sdk/)
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/ZIZKA-AI-SL/ZizkaDB?style=flat)](https://github.com/ZIZKA-AI-SL/ZizkaDB/stargazers)
 [![PyPI downloads](https://img.shields.io/pepy/dt/zizkadb-sdk?label=PyPI%20downloads)](https://pepy.tech/projects/zizkadb-sdk)
