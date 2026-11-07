@@ -9,12 +9,12 @@
     "subfolder": "mcp"
   },
   "websiteUrl": "https://db.zizka.ai",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "zizkadb-mcp",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "transport": {
         "type": "stdio"
       },
