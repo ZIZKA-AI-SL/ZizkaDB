@@ -163,17 +163,6 @@ describe('log()', () => {
     expect(body.session_id).toBe('sess-abc')
   })
 
-  it('URL-encodes agent name in path', async () => {
-    mockFetch(201, { event_id: 'evt-003', timestamp: '2026-06-01T00:00:00Z', sequence_no: 3, checksum: 'ghi' })
-
-    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
-    await db.log({ agent: 'support bot?v2', event: 'e', data: {} })
-
-    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect(url).toContain('/v1/agents/support%20bot%3Fv2')
-    expect(url).not.toContain('support bot?v2')
-  })
-
   it('URL-encodes agent name in token-usage path', async () => {
     mockFetch(200, {
       agent: 'support bot?v2',
