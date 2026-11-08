@@ -7,6 +7,13 @@ field. Pydantic rejects the value (``string_unicode``), but the default
 422 body — and encoding that body as UTF-8 raises ``UnicodeEncodeError``,
 so the client saw a 500 for a client error. ``main.py`` registers a
 handler that escapes such characters before building the response.
+
+The ``data``/``metadata`` cases below cover issue #408 (follow-up to
+#390, requested by the maintainer): a lone surrogate inside ``data`` or
+``metadata`` must be a 400 naming the field, not a 500 from the
+``::jsonb`` cast. ``validate_event_payload()`` already walks both
+recursively (``_check_value``, added in #229); these tests lock that
+behaviour in at the HTTP level.
 """
 
 from fastapi.testclient import TestClient
@@ -65,3 +72,59 @@ def test_plain_validation_error_keeps_input_echo():
     assert detail[0]["type"] == "missing"
     assert detail[0]["loc"] == ["body", "data"]
     assert detail[0]["input"] == {"agent": "a", "event": "e"}
+
+
+# --- issue #408 (follow-up to #390): lone surrogates in data/metadata ---
+# Unlike agent/event (plain str fields, rejected by Pydantic with 422),
+# dict values pass Pydantic through, so validate_event_payload() must
+# reject them with a 400 naming the field before anything is written.
+
+
+def test_lone_surrogate_in_data_value_returns_400():
+    resp = _post(b'{"agent": "a", "event": "e", "data": {"note": "\\ud800x"}}')
+    assert resp.status_code == 400
+    # The body itself must be encodable: decoding strictly must not raise.
+    resp.content.decode("utf-8")
+    assert resp.json()["detail"] == "data.note contains an unpaired UTF-16 surrogate"
+
+
+def test_lone_surrogate_nested_in_data_returns_400():
+    resp = _post(b'{"agent": "a", "event": "e", "data": {"a": {"b": ["\\ud800"]}}}')
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "data.a.b[0] contains an unpaired UTF-16 surrogate"
+
+
+def test_lone_surrogate_in_data_key_returns_400():
+    resp = _post(b'{"agent": "a", "event": "e", "data": {"\\ud800k": "v"}}')
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "data key contains an unpaired UTF-16 surrogate"
+
+
+def test_lone_surrogate_in_metadata_returns_400():
+    resp = _post(b'{"agent": "a", "event": "e", "data": {}, "metadata": {"m": "\\udcff"}}')
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "metadata.m contains an unpaired UTF-16 surrogate"
+
+
+def test_lone_surrogate_in_batch_data_returns_per_item_400():
+    body = (
+        b'{"events": [{"agent": "a", "event": "e", "data": {"note": "\\ud800x"}}, '
+        b'{"agent": "a", "event": "e", "data": {}, "metadata": {"m": "\\udcff"}}]}'
+    )
+    resp = client.post("/v1/events/batch", content=body, headers=_HEADERS)
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["written"] == 0
+    assert payload["failed"] == 2
+    assert payload["results"][0] == {
+        "index": 0,
+        "ok": False,
+        "status": 400,
+        "error": "data.note contains an unpaired UTF-16 surrogate",
+    }
+    assert payload["results"][1] == {
+        "index": 1,
+        "ok": False,
+        "status": 400,
+        "error": "metadata.m contains an unpaired UTF-16 surrogate",
+    }
