@@ -162,6 +162,21 @@ describe('log()', () => {
     expect(body.parent_id).toBe('evt-001')
     expect(body.session_id).toBe('sess-abc')
   })
+
+  it('URL-encodes agent name in token-usage path', async () => {
+    mockFetch(200, {
+      agent: 'support bot?v2',
+      status: 'ok',
+      drift: { score: 0.08, verdict: 'minor_drift' },
+    })
+
+    const db = new ZizkaDB({ apiKey: 'zizkadb_live_test' })
+    await db.tokenUsage({ agent: 'support bot?v2', from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' })
+
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/v1/agents/support%20bot%3Fv2/token-usage')
+    expect(url).not.toContain('support bot?v2')
+  })
 })
 
 // ─────────────────────────────────────────
