@@ -15,6 +15,7 @@ from api.deps import (
     get_tenant,
     is_unbound_api_key,
     require_dashboard_session,
+    require_scope,
 )
 from db.connection import get_pool, get_redis, get_qdrant, QDRANT_COLLECTION
 from services.rate_limiter import (
@@ -140,13 +141,14 @@ class CreateAgentBody(BaseModel):
 
 class CreateAgentKeyBody(BaseModel):
     name: str | None = None
-    # read_only keys can query, search and verify but never write or delete.
-    scope: Literal["read_write", "read_only"] = "read_write"
+    # Comma-separated scope list (e.g. "events:read,events:write"). Legacy
+    # values "read_write", "read_only", "admin" are accepted.
+    scope: str | None = Field(default="read_write", max_length=255)
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.get("")
-async def list_agents(tenant: dict = Depends(get_tenant)):
+async def list_agents(tenant: dict = Depends(require_scope("agents:read"))):
     # A key not yet bound to an agent owns no agents — never list the tenant.
     if is_unbound_api_key(tenant):
         return []
@@ -492,7 +494,7 @@ async def revoke_agent_api_key(
 
 
 @router.get("/{agent_id}/stats")
-async def agent_stats(agent_id: str, tenant: dict = Depends(get_tenant)):
+async def agent_stats(agent_id: str, tenant: dict = Depends(require_scope("agents:read"))):
     agent_id = _validate_agent_id(agent_id)
     await assert_agent_allowed(tenant, agent_id)
     pool = get_pool()
@@ -541,7 +543,7 @@ async def agent_report(
     from_: str = Query(..., alias="from", description="ISO-8601 start of the report window"),
     to: str = Query(..., description="ISO-8601 end of the report window (exclusive)"),
     granularity: str | None = Query(default=None, pattern=r"^(day|week)$"),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("agents:read")),
 ):
     """Single consolidated, date-ranged report for one agent.
 
@@ -572,7 +574,7 @@ async def agent_token_usage(
     from_: str = Query(..., alias="from", description="ISO-8601 start of the report window"),
     to: str = Query(..., description="ISO-8601 end of the report window (exclusive)"),
     granularity: str | None = Query(default=None, pattern=r"^(hour|day|week)$"),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("agents:read")),
 ):
     """Token usage / cost report for one agent, aggregated from real events.
 
@@ -619,7 +621,7 @@ async def agent_token_optimization(
     from_: str | None = Query(default=None, alias="from", description="ISO-8601 window start"),
     to: str | None = Query(default=None, description="ISO-8601 window end (exclusive)"),
     granularity: str | None = Query(default=None, pattern=r"^(day|week)$"),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("agents:read")),
 ):
     """Deterministic, non-AI Token Optimization suggestions for one agent.
 
@@ -659,7 +661,7 @@ async def agent_suggestions(
     from_: str | None = Query(default=None, alias="from", description="ISO-8601 window start"),
     to: str | None = Query(default=None, description="ISO-8601 window end (exclusive)"),
     refresh: bool = Query(default=False, description="Bypass the cache and regenerate"),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("agents:read")),
 ):
     """AI-generated, evidence-grounded improvement suggestions for one agent.
 
@@ -716,7 +718,7 @@ async def agent_suggestions(
 async def list_sessions(
     agent_id: str,
     limit: int = Query(default=20, ge=1, le=100),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("agents:read")),
 ):
     agent_id = _validate_agent_id(agent_id)
     await assert_agent_allowed(tenant, agent_id)
@@ -898,7 +900,7 @@ async def agent_baseline(
     agent_id: str,
     recent_window: int = Query(default=50, ge=5, le=500),
     window: str | None = Query(default=None, pattern=r"^(24h|7d|30d)$"),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("agents:read")),
 ):
     """
     Behavioral baseline for an agent.
@@ -1114,7 +1116,7 @@ async def agent_behavior_change(
     window: str = Query(default="7d", pattern=r"^(24h|7d|30d|custom)$"),
     from_ts: str | None = Query(default=None),
     to_ts:   str | None = Query(default=None),
-    tenant:  dict = Depends(get_tenant),
+    tenant:  dict = Depends(require_scope("agents:read")),
 ):
     """
     Time-windowed behavior change for an agent.

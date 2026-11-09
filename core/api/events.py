@@ -7,7 +7,13 @@ from uuid import UUID
 from datetime import datetime
 import json
 
-from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key, get_writer_tenant
+from api.deps import (
+    get_tenant,
+    assert_agent_allowed,
+    is_unbound_api_key,
+    get_writer_tenant,
+    require_scope,
+)
 from db.connection import get_pool
 from services.checksum import CHECKSUM_COLUMNS, fetch_legacy_cutoff, verify_stored_checksum
 from services.audit_chain import verify_chain
@@ -293,7 +299,7 @@ async def query_events(
     session_id: str | None = None,
     cursor: str | None = None,
     response: Response = None,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     """Newest first. For deep paging use ``cursor`` (from the ``X-Next-Cursor``
     response header) instead of ``offset``: it stays fast on any page."""
@@ -372,7 +378,7 @@ def _truncate_chain_to_agent(rows: list, agent_id: str) -> list:
 async def why(
     event_id: str,
     depth: int = Query(default=10, le=50),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
@@ -465,7 +471,7 @@ IMPACT_MAX_NODES = 500
 async def impact(
     event_id: str,
     depth: int = Query(default=10, ge=0, le=50),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     pool = get_pool()
     tenant_id = tenant["tenant_id"]
@@ -616,7 +622,7 @@ _STATE_AT_SQL = """
 async def time_travel(
     agent: str,
     timestamp: datetime,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     await assert_agent_allowed(tenant, agent)
     pool = get_pool()
@@ -666,7 +672,7 @@ async def verify_event_chain(
     agent: str,
     after_seq: int | None = Query(default=None, ge=0),
     anchor: str | None = Query(default=None, min_length=64, max_length=64),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     """Check the agent's hash chain: no event removed, inserted, reordered or changed.
 
@@ -697,7 +703,7 @@ async def verify_events(
     before: datetime | None = None,
     after: datetime | None = None,
     before_seq: int | None = Query(default=None, ge=1),
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     """Recompute each event's checksum and compare with the stored value.
 
@@ -768,7 +774,7 @@ async def verify_events(
 @router.get("/{event_id}/verify")
 async def verify_event(
     event_id: str,
-    tenant: dict = Depends(get_tenant),
+    tenant: dict = Depends(require_scope("events:read")),
 ):
     try:
         event_uuid = UUID(event_id)

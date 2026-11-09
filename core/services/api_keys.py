@@ -15,6 +15,79 @@ from services.auth import generate_api_key
 from services.billing import fetch_effective_plan
 from services.entitlements import api_key_limit_for_plan, limits_enforced
 
+# Scope model: comma-separated string in the ``scope`` column.
+#
+# Scope values:
+#   events:read   GET /v1/events, /why, /impact, /at, /chain, /verify, /export
+#   events:write  POST /v1/events, /batch, /import
+#   events:delete DELETE /v1/events/forget
+#   agents:read   GET /v1/agents/{id}/stats, report, token-usage, etc.
+#   agents:write  POST /v1/agents/{id}/test-event
+#   agents:manage DELETE /v1/agents/{id}, PUT /v1/agents/{id}/retention,
+#                 POST/DELETE /v1/agents/{id}/api-keys
+#   webhooks:read GET /v1/webhooks
+#   webhooks:write POST/PATCH/DELETE /v1/webhooks
+#   webhooks:manage POST /v1/webhooks/{id}/test
+#   admin         everything (implies all other scopes)
+#
+# Legacy values (still accepted):
+#   read_write = events:read,events:write
+#   read_only  = events:read
+#   admin      = everything
+_SCOPE_ALIASES = {
+    "read_write": {"events:read", "events:write"},
+    "read_only":  {"events:read"},
+    "admin": {
+        "events:read", "events:write", "events:delete",
+        "agents:read", "agents:write", "agents:manage",
+        "webhooks:read", "webhooks:write", "webhooks:manage",
+    },
+}
+
+
+def normalize_scope(scope: str | None) -> str | None:
+    """Normalize a scope string to canonical comma-separated form.
+
+    Legacy single-word values (``read_write``, ``read_only``, ``admin``)
+    are expanded to their full scope sets and re-joined. Unknown values
+    are passed through unchanged.
+    """
+    if not scope:
+        return scope
+    scopes = _expand_scopes(scope)
+    return ",".join(sorted(scopes))
+
+
+def _expand_scopes(scope_str: str | None) -> set[str]:
+    """Expand a stored scope string into a set of individual scope names."""
+    if not scope_str:
+        return set()
+    scopes: set[str] = set()
+    for part in scope_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        scopes.update(_SCOPE_ALIASES.get(part, {part}))
+    return scopes
+
+
+def validate_scope(scope: str | None) -> str | None:
+    """Validate and normalize a scope string for storage.
+
+    Rejects empty strings and values that are only whitespace.
+    Returns the normalized form (legacy values expanded to canonical).
+    """
+    if scope is None:
+        return None
+    scope = scope.strip()
+    if not scope:
+        return None
+    # Validate each part resolves to something (known alias or unknown
+    # scope name passed through). We don't reject unknown names because
+    # future scope values may be recognized by newer server versions.
+    _expand_scopes(scope)
+    return normalize_scope(scope)
+
 log = logging.getLogger(__name__)
 
 
@@ -110,9 +183,11 @@ async def create_api_key_record(
 ) -> dict:
     """``db`` is a pool or a transaction connection (used by the create guard).
 
-    ``scope``: ``read_write`` or ``read_only`` (refused by every write route).
+    ``scope``: comma-separated scope list (e.g. ``events:read,events:write``).
+    Legacy values ``read_write``, ``read_only``, ``admin`` are expanded.
     ``expires_in_days``: the key stops working after that many days.
     """
+    scope = validate_scope(scope)
     raw_key, key_hash, prefix = generate_api_key()
     row = await db.fetchrow(
         """

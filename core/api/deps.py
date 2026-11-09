@@ -3,6 +3,7 @@ from fastapi import Depends, Security
 from services.exceptions import forbidden, unauthorized
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from services.auth import verify_api_key, decode_access_token
+from services.api_keys import _expand_scopes
 from services.runtime_env import is_dev_mode
 
 bearer = HTTPBearer()
@@ -193,8 +194,56 @@ READ_ONLY_KEY_MESSAGE = (
 )
 
 
+def require_scope(*required_scopes: str):
+    """FastAPI dependency: refuse unless the API key has all required scopes.
+
+    JWT dashboard sessions and dev keys always pass. API-key tenants are
+    checked against their stored ``scope`` string. Use this on routes that
+    need finer-grained control than read_only/read_write.
+
+    Scope values (stored as comma-separated string in the ``scope`` column):
+      events:read   GET /v1/events, /why, /impact, /at, /chain, /verify, /export
+      events:write  POST /v1/events, /batch, /import
+      events:delete DELETE /v1/events/forget
+      agents:read   GET /v1/agents/{id}/stats, report, token-usage, etc.
+      agents:write  POST /v1/agents/{id}/test-event
+      agents:manage DELETE /v1/agents/{id}, PUT /v1/agents/{id}/retention,
+                    POST/DELETE /v1/agents/{id}/api-keys
+      webhooks:read GET /v1/webhooks
+      webhooks:write POST/PATCH/DELETE /v1/webhooks
+      webhooks:manage POST /v1/webhooks/{id}/test
+      admin         everything (implies all other scopes)
+
+    Legacy values (still accepted):
+      read_write = events:read,events:write
+      read_only  = events:read
+      admin      = everything
+    """
+    async def _checker(tenant: dict = Depends(get_tenant)) -> dict:
+        # JWT dashboard sessions and dev keys bypass scope checks.
+        if not tenant.get("key_id"):
+            return tenant
+        scopes = _expand_scopes(tenant.get("scope"))
+        missing = set(required_scopes) - scopes
+        if missing:
+            needed = ", ".join(sorted(missing))
+            raise forbidden(
+                detail=(
+                    "This API key lacks the required scope(s): "
+                    + needed
+                    + ". Create a key with those scopes or use one that already has them."
+                )
+            )
+        return tenant
+    return _checker
+
+
 async def get_writer_tenant(tenant: dict = Depends(get_tenant)) -> dict:
     """get_tenant for routes that write or delete: refuses read-only API keys."""
-    if tenant.get("scope") == "read_only":
+    # JWT dashboard sessions and dev keys (no key_id) bypass scope checks.
+    if not tenant.get("key_id"):
+        return tenant
+    scopes = _expand_scopes(tenant.get("scope"))
+    if "events:write" not in scopes and "admin" not in scopes:
         raise forbidden(detail=READ_ONLY_KEY_MESSAGE)
     return tenant
