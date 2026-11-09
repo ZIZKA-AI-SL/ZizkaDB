@@ -128,3 +128,146 @@ def test_lone_surrogate_in_batch_data_returns_per_item_400():
         "status": 400,
         "error": "metadata.m contains an unpaired UTF-16 surrogate",
     }
+
+
+# --- POST /v1/agents metadata (follow-up to #409, per maintainer invite) ---
+# create_agent() inserts body.metadata with a ``::jsonb`` cast and no
+# validation, so a lone surrogate in agent metadata used to 500 at the
+# cast. The same _check_value() the event path uses must reject it with
+# a 400 naming the field, before any row is touched.
+
+from unittest.mock import patch
+
+from api.deps import require_dashboard_session
+
+_TENANT_ID = "11111111-1111-1111-1111-111111111111"
+_USER_ID = "22222222-2222-2222-2222-222222222222"
+_SESSION = {"tenant_id": _TENANT_ID, "user_id": _USER_ID}
+
+
+def _override_dashboard_session():
+    return _SESSION
+
+
+def _post_agent(body: bytes):
+    return client.post("/v1/agents", content=body, headers=_HEADERS)
+
+
+class _FakeTx:
+    """Async context manager yielding the same fake connection."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeAgentConn:
+    """Stand-in for a pooled connection: create_agent only needs the
+    existence check (None = new agent) and the INSERT."""
+
+    async def fetchrow(self, *args, **kwargs):
+        return None
+
+    async def fetchval(self, *args, **kwargs):
+        return None
+
+    async def execute(self, *args, **kwargs):
+        return "INSERT 0 1"
+
+    def transaction(self):
+        return _FakeTx(self)
+
+
+class _FakePool:
+    def acquire(self):
+        return _FakeTx(_FakeAgentConn())
+
+
+class TestCreateAgentMetadataSurrogates:
+    def setup_method(self):
+        app.dependency_overrides[require_dashboard_session] = (
+            _override_dashboard_session
+        )
+
+    def teardown_method(self):
+        app.dependency_overrides.pop(require_dashboard_session, None)
+
+    def test_lone_surrogate_in_agent_metadata_value_returns_400(self):
+        resp = _post_agent(
+            b'{"agent_id": "agent-a", "metadata": {"note": "\\ud800x"}}'
+        )
+        assert resp.status_code == 400
+        resp.content.decode("utf-8")
+        assert (
+            resp.json()["detail"]
+            == "metadata.note contains an unpaired UTF-16 surrogate"
+        )
+
+    def test_lone_surrogate_nested_in_agent_metadata_returns_400(self):
+        resp = _post_agent(
+            b'{"agent_id": "agent-a", "metadata": {"a": {"b": ["\\ud800"]}}}'
+        )
+        assert resp.status_code == 400
+        assert (
+            resp.json()["detail"]
+            == "metadata.a.b[0] contains an unpaired UTF-16 surrogate"
+        )
+
+    def test_lone_surrogate_in_agent_metadata_key_returns_400(self):
+        resp = _post_agent(
+            b'{"agent_id": "agent-a", "metadata": {"\\ud800k": "v"}}'
+        )
+        assert resp.status_code == 400
+        assert (
+            resp.json()["detail"]
+            == "metadata key contains an unpaired UTF-16 surrogate"
+        )
+
+    @patch("api.agents.get_pool")
+    @patch("api.agents.create_api_key_record")
+    def test_valid_agent_metadata_creates_agent(
+        self, mock_create_key, mock_get_pool
+    ):
+        mock_get_pool.return_value = _FakePool()
+        mock_create_key.return_value = {
+            "key_id": "33333333-3333-3333-3333-333333333333",
+            "key": "zk_testkey",
+            "prefix": "zk_",
+            "name": "agent-a production",
+            "agent_id": "agent-a",
+            "scope": "read_write",
+            "expires_at": None,
+            "warning": "Save this key — it will not be shown again.",
+        }
+        resp = _post_agent(
+            b'{"agent_id": "agent-a", "metadata": {"team": "core", "level": 2}}'
+        )
+        assert resp.status_code == 201
+        assert resp.json()["agent"] == "agent-a"
+        assert resp.json()["api_key"]["key"] == "zk_testkey"
+
+    @patch("api.agents.get_pool")
+    @patch("api.agents.create_api_key_record")
+    def test_agent_without_metadata_creates_agent(
+        self, mock_create_key, mock_get_pool
+    ):
+        # Control: metadata omitted (None) must still pass validation.
+        mock_get_pool.return_value = _FakePool()
+        mock_create_key.return_value = {
+            "key_id": "33333333-3333-3333-3333-333333333333",
+            "key": "zk_testkey",
+            "prefix": "zk_",
+            "name": "agent-b production",
+            "agent_id": "agent-b",
+            "scope": "read_write",
+            "expires_at": None,
+            "warning": "Save this key — it will not be shown again.",
+        }
+        resp = _post_agent(b'{"agent_id": "agent-b"}')
+        assert resp.status_code == 201
+        assert resp.json()["agent"] == "agent-b"
