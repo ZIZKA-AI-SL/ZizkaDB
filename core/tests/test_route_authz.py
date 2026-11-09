@@ -289,17 +289,17 @@ def _calls_assert_agent_allowed(func) -> bool:
 
 def test_report_route_requires_tenant_and_agent_scope():
     src = inspect.getsource(agents_api.agent_report)
-    assert "Depends(get_tenant)" in src
+    assert "Depends(require_scope(\"agents:read\"))" in src
     assert _calls_assert_agent_allowed(agents_api.agent_report)
 
 
 def test_token_usage_route_requires_tenant_and_agent_scope():
     src = inspect.getsource(agents_api.agent_token_usage)
-    assert "Depends(get_tenant)" in src
+    assert "Depends(require_scope(\"agents:read\"))" in src
     assert _calls_assert_agent_allowed(agents_api.agent_token_usage)
 
 
 def test_token_optimization_route_requires_tenant_and_agent_scope():
     src = inspect.getsource(agents_api.agent_token_optimization)
-    assert "Depends(get_tenant)" in src
+    assert "Depends(require_scope(\"agents:read\"))" in src
     assert _calls_assert_agent_allowed(agents_api.agent_token_optimization)

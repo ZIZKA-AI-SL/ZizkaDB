@@ -657,9 +657,10 @@ async def _run_migrations():
         ALTER TABLE events DROP CONSTRAINT IF EXISTS events_parent_event_id_fkey;
     """)
 
-    # API key scope (read_write / read_only) and optional expiry.
+    # API key scope (read_write / read_only / comma-separated scope list) and optional expiry.
     await _pg_pool.execute("""
-        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'read_write';
+        ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope VARCHAR(255) NOT NULL DEFAULT 'read_write';
+        ALTER TABLE api_keys ALTER COLUMN scope TYPE VARCHAR(255);
         ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
     """)
 

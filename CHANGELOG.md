@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### API Key Scopes
+
+- New `scope` field on webhook subscriptions (`core/api/webhooks.py`): create a webhook with `scope` to restrict its permissions. Legacy values `read_write` (events:read,events:write), `read_only` (events:read), and `admin` (everything) are accepted alongside new scoped values (`events:read`, `events:write`, `events:delete`, `agents:read`, `agents:write`, `agents:manage`, `webhooks:read`, `webhooks:write`, `webhooks:manage`).
+- New `scope` field on `POST /v1/auth/api-keys` and `POST /v1/agents/{id}/api-keys` to create keys with fine-grained permissions.
+- Write routes (`POST /v1/events`, `/batch`, `/import`, `DELETE /v1/memory/forget`) now require `events:write` or `events:delete` scope; read routes (`GET /v1/events`, `/why`, `/impact`, etc.) require `events:read`.
+- The `scope` column in `api_keys` is now `VARCHAR(255)` to accommodate comma-separated scope lists; existing `read_write`/`read_only` values continue to work.
+
 ## [0.6.0] - 2026-11-07
 
 > **Upgrading a self-hosted server? Check `JWT_SECRET` first.** 0.6.0 refuses to start in production if `JWT_SECRET` is one of the sample values the docs used to show. Run `scripts/init-secrets.sh` (or set a new random `JWT_SECRET`) **before** upgrading. After the change, users sign in again, saved BYOK embedding keys must be re-entered, and unsubscribe links in emails already sent stop working. Details under "Self-hosted secrets" below.

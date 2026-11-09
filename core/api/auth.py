@@ -109,6 +109,10 @@ class CreateAPIKeyBody(BaseModel):
     # Unassigned keys are always read-write (a read-only key must belong to an
     # agent: POST /v1/agents/{id}/api-keys); they may still expire.
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+    # Comma-separated scope list (e.g. "events:read,events:write"). Legacy
+    # values "read_write", "read_only", "admin" are accepted. Defaults to
+    # read_write (events:read,events:write).
+    scope: str | None = Field(default="read_write", max_length=255)
 
 
 @router.post("/request-otp")
@@ -219,6 +223,7 @@ async def create_api_key(
                 tenant_id=tenant_id,
                 name=body.name,
                 agent_id=None,
+                scope=body.scope,
                 expires_in_days=body.expires_in_days,
             )
 
