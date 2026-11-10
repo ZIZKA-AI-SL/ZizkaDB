@@ -21,8 +21,17 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 [![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK&logo=python&logoColor=white)](https://pypi.org/project/zizkadb-sdk/)
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/ZIZKA-AI-SL/ZizkaDB?style=flat)](https://github.com/ZIZKA-AI-SL/ZizkaDB/stargazers)
-[![PyPI downloads](https://img.shields.io/pepy/dt/zizkadb-sdk?label=PyPI%20downloads)](https://pepy.tech/projects/zizkadb-sdk)
-[![npm downloads](https://img.shields.io/npm/d18m/zizkadb-sdk?label=npm%20downloads)](https://www.npmjs.com/package/zizkadb-sdk)
+
+<details>
+<summary><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads.json" alt="Total downloads, all packages (click for the breakdown)" /></summary>
+
+[![zizkadb-sdk (PyPI)](https://img.shields.io/pepy/dt/zizkadb-sdk?label=zizkadb-sdk%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-sdk)
+[![zizkadb-mcp (PyPI)](https://img.shields.io/pepy/dt/zizkadb-mcp?label=zizkadb-mcp%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-mcp)
+[![zizkadb-langchain (PyPI)](https://img.shields.io/pepy/dt/zizkadb-langchain?label=zizkadb-langchain%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-langchain)
+[![zizkadb-crewai (PyPI)](https://img.shields.io/pepy/dt/zizkadb-crewai?label=zizkadb-crewai%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-crewai)
+[![zizkadb-sdk (npm)](https://img.shields.io/npm/d18m/zizkadb-sdk?label=zizkadb-sdk%20%28npm%29)](https://www.npmjs.com/package/zizkadb-sdk)
+
+</details>
 
 <a href="https://postyourstartup.co/startup/zizkadb-1?ref=award" target="_blank"><img src="https://postyourstartup.co/api/badge/zizkadb-1/award?theme=light&week=32" alt="#1 Product of the Week on PostYourStartup" width="212" height="55" /></a>
 

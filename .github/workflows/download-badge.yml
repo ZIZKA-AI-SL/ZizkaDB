@@ -1,0 +1,41 @@
+name: Download badge
+
+# Refreshes the total behind the README "downloads" badge: the sum of all
+# PyPI packages (pepy) and the npm SDK. The JSON lives on the `badges`
+# branch, so this job never pushes to the protected main branch.
+
+on:
+  schedule:
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: download-badge
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compute the total
+        run: python3 scripts/update_download_badge.py "$RUNNER_TEMP/downloads.json"
+      - name: Push to the badges branch if changed
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git fetch --depth=1 origin badges; then
+            git checkout -B badges FETCH_HEAD
+          else
+            git checkout --orphan badges
+            git rm -rfq .
+          fi
+          cp "$RUNNER_TEMP/downloads.json" downloads.json
+          git add downloads.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update download badge"
+          git push origin badges
