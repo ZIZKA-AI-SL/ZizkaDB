@@ -22,7 +22,7 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/ZIZKA-AI-SL/ZizkaDB?style=flat)](https://github.com/ZIZKA-AI-SL/ZizkaDB/stargazers)
 
-<a href="#downloads"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads.json" alt="Total downloads, all packages (see the per-package breakdown)" /></a>
+<a href="#downloads"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads.json&style=for-the-badge" height="36" alt="Total downloads, all packages (see the per-package breakdown)" /></a>
 
 <a href="https://postyourstartup.co/startup/zizkadb-1?ref=award" target="_blank"><img src="https://postyourstartup.co/api/badge/zizkadb-1/award?theme=light&week=32" alt="#1 Product of the Week on PostYourStartup" width="212" height="55" /></a>
 
