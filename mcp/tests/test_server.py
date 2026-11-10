@@ -386,3 +386,37 @@ class TestVerifyChainAndSearchMode:
             await search_memory(query="q")
 
         assert bodies[0]["mode"] == "keyword" and "mode" not in bodies[1]
+
+
+class TestTelemetryEnv:
+    """The install ping says where it runs, so CI runs are not counted."""
+
+    _CI = (
+        "CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI",
+        "TRAVIS", "BUILDKITE", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION",
+        "BITBUCKET_BUILD_NUMBER", "CODEBUILD_BUILD_ID", "DRONE", "APPVEYOR", "SEMAPHORE",
+        "KUBERNETES_SERVICE_HOST",
+    )
+
+    def _clear(self, monkeypatch):
+        for name in self._CI:
+            monkeypatch.delenv(name, raising=False)
+
+    def test_ci(self, monkeypatch):
+        from zizkadb_mcp import server
+        self._clear(monkeypatch)
+        monkeypatch.setenv("GITLAB_CI", "true")
+        assert server._detect_env() == "ci"
+
+    def test_container(self, monkeypatch):
+        from zizkadb_mcp import server
+        self._clear(monkeypatch)
+        monkeypatch.setattr(server.os.path, "exists", lambda p: p == "/run/.containerenv")
+        assert server._detect_env() == "container"
+
+    def test_machine_when_ci_is_false(self, monkeypatch):
+        from zizkadb_mcp import server
+        self._clear(monkeypatch)
+        monkeypatch.setenv("CI", "0")
+        monkeypatch.setattr(server.os.path, "exists", lambda p: False)
+        assert server._detect_env() == "machine"

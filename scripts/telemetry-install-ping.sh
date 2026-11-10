@@ -35,8 +35,25 @@ else
 fi
 
 OS="$(uname -s 2>/dev/null || echo unknown)"
-PAYLOAD="$(printf '{"install_id":"%s","sdk":"%s","sdk_version":"%s","python":null,"os":"%s","mode":"self-hosted"}' \
-  "$INSTALL_ID" "$SDK" "$SDK_VERSION" "$OS")"
+
+# Where this runs, so CI runs are not counted as installs (same CI variables
+# as the SDKs).
+ENV_KIND=machine
+for v in CI CONTINUOUS_INTEGRATION GITHUB_ACTIONS GITLAB_CI CIRCLECI TRAVIS BUILDKITE \
+         JENKINS_URL TF_BUILD TEAMCITY_VERSION BITBUCKET_BUILD_NUMBER CODEBUILD_BUILD_ID \
+         DRONE APPVEYOR SEMAPHORE; do
+  val="$(printenv "$v" 2>/dev/null || true)"
+  case "$val" in
+    ""|false|0|no|off|FALSE|NO|OFF) ;;
+    *) ENV_KIND=ci; break ;;
+  esac
+done
+if [ "$ENV_KIND" = machine ] && { [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; }; then
+  ENV_KIND=container
+fi
+
+PAYLOAD="$(printf '{"install_id":"%s","sdk":"%s","sdk_version":"%s","python":null,"os":"%s","mode":"self-hosted","env":"%s"}' \
+  "$INSTALL_ID" "$SDK" "$SDK_VERSION" "$OS" "$ENV_KIND")"
 
 curl -sf -X POST "$TELEMETRY_URL" \
   -H "Content-Type: application/json" \

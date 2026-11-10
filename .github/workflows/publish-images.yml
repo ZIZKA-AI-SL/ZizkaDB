@@ -14,6 +14,8 @@ on:
 permissions: {}
 
 env:
+  # Test runs are not installs: no telemetry ping.
+  ZIZKADB_TELEMETRY: "false"
   REGISTRY: ghcr.io
   API_IMAGE: ghcr.io/zizka-ai-sl/zizkadb-api
   DASHBOARD_IMAGE: ghcr.io/zizka-ai-sl/zizkadb-dashboard

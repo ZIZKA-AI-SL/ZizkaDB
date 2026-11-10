@@ -7,7 +7,7 @@
  * Uses the package's existing Vitest test runner.
  */
 
-import { afterAll, afterEach, beforeEach, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 // Save the original fetch so we can restore it after all tests finish.
 const _originalFetch = globalThis.fetch
@@ -15,7 +15,7 @@ const _originalFetch = globalThis.fetch
 // Disable telemetry before loading the SDK.
 process.env.ZIZKADB_TELEMETRY = 'false'
 
-import { AgentScopeError, AuthError, ZizkaDB, ZizkaDBError } from '../src/index.ts'
+import { AgentScopeError, AuthError, ZizkaDB, ZizkaDBError, detectEnv } from '../src/index.ts'
 
 // The client reads ZIZKADB_HOST / AGENTDB_HOST when no host is passed; a
 // developer's exported values must not change which server a test talks to.
@@ -295,4 +295,35 @@ it('a blank ZIZKADB_HOST falls through to AGENTDB_HOST', async () => {
   process.env.AGENTDB_HOST = 'https://legacy.example.com'
   const url = await firstRequestUrl({ apiKey: 'zizkadb_live_x' })
   expect(url.startsWith('https://legacy.example.com/v1/')).toBe(true)
+})
+
+describe('detectEnv (telemetry environment)', () => {
+  const CI_VARS = [
+    'CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'GITLAB_CI', 'CIRCLECI',
+    'TRAVIS', 'BUILDKITE', 'JENKINS_URL', 'TF_BUILD', 'TEAMCITY_VERSION',
+    'BITBUCKET_BUILD_NUMBER', 'CODEBUILD_BUILD_ID', 'DRONE', 'APPVEYOR', 'SEMAPHORE',
+  ]
+  let saved = {}
+  beforeEach(() => {
+    saved = Object.fromEntries(CI_VARS.map((k) => [k, process.env[k]]))
+    for (const k of CI_VARS) delete process.env[k]
+  })
+  afterEach(() => {
+    for (const k of CI_VARS) {
+      if (saved[k] === undefined) delete process.env[k]
+      else process.env[k] = saved[k]
+    }
+  })
+
+  it('reports ci when a CI service variable is set', () => {
+    process.env.GITHUB_ACTIONS = 'true'
+    expect(detectEnv()).toBe('ci')
+  })
+
+  it('does not report ci for CI=false or with no CI variables', () => {
+    process.env.CI = 'false'
+    expect(detectEnv()).not.toBe('ci')
+    delete process.env.CI
+    expect(['machine', 'container']).toContain(detectEnv())
+  })
 })

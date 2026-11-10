@@ -94,6 +94,29 @@ def _get_install_id() -> str:
         return _machine_stable_uuid()
 
 
+# Variables set by CI services; same list as the Python SDK.
+_CI_VARS = (
+    "CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI",
+    "TRAVIS", "BUILDKITE", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION",
+    "BITBUCKET_BUILD_NUMBER", "CODEBUILD_BUILD_ID", "DRONE", "APPVEYOR", "SEMAPHORE",
+)
+
+
+def _detect_env() -> str:
+    """Where this process runs: "ci", "container" or "machine"."""
+    for name in _CI_VARS:
+        value = os.getenv(name, "").strip().lower()
+        if value and value not in ("false", "0", "no", "off"):
+            return "ci"
+    if (
+        os.path.exists("/.dockerenv")
+        or os.path.exists("/run/.containerenv")
+        or os.getenv("KUBERNETES_SERVICE_HOST")
+    ):
+        return "container"
+    return "machine"
+
+
 def _telemetry_ping_on_install() -> None:
     """One anonymous install ping per MCP server process (not per tool call)."""
     global _telemetry_sent
@@ -114,6 +137,7 @@ def _telemetry_ping_on_install() -> None:
                 "python":      f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
                 "os":          platform.system(),
                 "mode":        mode,
+                "env":         _detect_env(),
             }).encode()
             req = urllib.request.Request(
                 "https://db.zizka.ai/v1/telemetry",

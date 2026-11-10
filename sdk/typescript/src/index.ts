@@ -115,6 +115,32 @@ function _isLocalSelfHost(): boolean {
   )
 }
 
+// Variables set by CI services; same list as the Python SDK.
+const CI_VARS = [
+  'CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'GITLAB_CI', 'CIRCLECI',
+  'TRAVIS', 'BUILDKITE', 'JENKINS_URL', 'TF_BUILD', 'TEAMCITY_VERSION',
+  'BITBUCKET_BUILD_NUMBER', 'CODEBUILD_BUILD_ID', 'DRONE', 'APPVEYOR', 'SEMAPHORE',
+]
+
+/** Where this process runs: 'ci', 'container' or 'machine'. */
+export function detectEnv(): 'ci' | 'container' | 'machine' {
+  for (const name of CI_VARS) {
+    const value = (readEnv(name) ?? '').trim()
+    if (value && !/^(false|0|no|off)$/i.test(value)) return 'ci'
+  }
+  try {
+    const { existsSync } = require('fs') as typeof import('fs')
+    if (
+      existsSync('/.dockerenv') ||
+      existsSync('/run/.containerenv') ||
+      readEnv('KUBERNETES_SERVICE_HOST')
+    ) return 'container'
+  } catch {
+    // not Node (browser, edge runtime): no filesystem to check
+  }
+  return 'machine'
+}
+
 function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
   if (_telemetrySent) return
   if (
@@ -130,6 +156,7 @@ function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
     node:        (typeof process !== 'undefined' && process.version) || 'unknown',
     os:          typeof process !== 'undefined' ? process.platform : 'unknown',
     mode,
+    env:         detectEnv(),
   }
 
   // Fire and forget — never awaited, never throws

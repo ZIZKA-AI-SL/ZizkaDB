@@ -2,6 +2,9 @@
 # Golden path E2E — requires API at localhost:8000 (docker compose up).
 set -euo pipefail
 
+# Test runs are not installs: no telemetry ping unless asked for.
+export ZIZKADB_TELEMETRY="${ZIZKADB_TELEMETRY:-false}"
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export ZIZKADB_HOST="${ZIZKADB_HOST:-http://localhost:8000}"
 export ZIZKADB_TELEMETRY=false

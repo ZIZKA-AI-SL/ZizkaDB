@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Test runs are not installs: no telemetry ping.
+  ZIZKADB_TELEMETRY: "false"
+
 jobs:
   integration:
     name: core-integration
