@@ -39,7 +39,7 @@ from services.api_keys import (
     list_api_keys_for_agent,
     revoke_api_key_record,
 )
-from services.event_write import write_event
+from services.event_write import _check_value, write_event
 from services.runtime_env import is_dev_mode
 
 router = APIRouter()
@@ -201,6 +201,10 @@ async def create_agent(
     of leaving an agent with no key.
     """
     agent_id = _validate_agent_id(body.agent_id)
+    # Reject values Postgres cannot store (lone surrogates, NUL, NaN/Inf)
+    # before the INSERT's ::jsonb cast turns them into a 500. Same check
+    # the event write path applies to data/metadata (#408); None passes.
+    _check_value(body.metadata, "metadata")
     pool = get_pool()
     tenant_id = session["tenant_id"]
 
