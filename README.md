@@ -22,16 +22,7 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/ZIZKA-AI-SL/ZizkaDB?style=flat)](https://github.com/ZIZKA-AI-SL/ZizkaDB/stargazers)
 
-<details>
-<summary><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads.json" alt="Total downloads, all packages (click for the breakdown)" /></summary>
-
-[![zizkadb-sdk (PyPI)](https://img.shields.io/pepy/dt/zizkadb-sdk?label=zizkadb-sdk%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-sdk)
-[![zizkadb-mcp (PyPI)](https://img.shields.io/pepy/dt/zizkadb-mcp?label=zizkadb-mcp%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-mcp)
-[![zizkadb-langchain (PyPI)](https://img.shields.io/pepy/dt/zizkadb-langchain?label=zizkadb-langchain%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-langchain)
-[![zizkadb-crewai (PyPI)](https://img.shields.io/pepy/dt/zizkadb-crewai?label=zizkadb-crewai%20%28PyPI%29)](https://pepy.tech/projects/zizkadb-crewai)
-[![zizkadb-sdk (npm)](https://img.shields.io/npm/d18m/zizkadb-sdk?label=zizkadb-sdk%20%28npm%29)](https://www.npmjs.com/package/zizkadb-sdk)
-
-</details>
+<a href="#downloads"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads.json" alt="Total downloads, all packages (see the per-package breakdown)" /></a>
 
 <a href="https://postyourstartup.co/startup/zizkadb-1?ref=award" target="_blank"><img src="https://postyourstartup.co/api/badge/zizkadb-1/award?theme=light&week=32" alt="#1 Product of the Week on PostYourStartup" width="212" height="55" /></a>
 
@@ -74,6 +65,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 - [Use with your AI assistant (MCP)](#use-with-your-ai-assistant-mcp)
 - [ZizkaDB vs Langfuse, LangSmith and Mem0](#zizkadb-vs-langfuse-langsmith-and-mem0-causality-not-just-traces-or-recall)
 - [Cloud, FAQ and docs](#more)
+- [Downloads](#downloads)
 - [Contributors](#contributors)
 
 ---
@@ -453,6 +445,18 @@ The stack isn't running. Start it with the curl command above or `bash scripts/s
 | AI-assisted development | [AGENTS.md](AGENTS.md) |
 
 </details>
+
+## Downloads
+
+All-time downloads of every ZizkaDB package. The total badge at the top is the sum of these, refreshed daily.
+
+| Package | Registry | Downloads | Source |
+| --- | --- | --- | --- |
+| `zizkadb-sdk` (Python SDK) | PyPI | [![zizkadb-sdk](https://img.shields.io/pepy/dt/zizkadb-sdk?label=downloads)](https://pepy.tech/projects/zizkadb-sdk) | [pepy.tech](https://pepy.tech/projects/zizkadb-sdk) · [pypi.org](https://pypi.org/project/zizkadb-sdk/) |
+| `zizkadb-mcp` (MCP server) | PyPI | [![zizkadb-mcp](https://img.shields.io/pepy/dt/zizkadb-mcp?label=downloads)](https://pepy.tech/projects/zizkadb-mcp) | [pepy.tech](https://pepy.tech/projects/zizkadb-mcp) · [pypi.org](https://pypi.org/project/zizkadb-mcp/) |
+| `zizkadb-langchain` | PyPI | [![zizkadb-langchain](https://img.shields.io/pepy/dt/zizkadb-langchain?label=downloads)](https://pepy.tech/projects/zizkadb-langchain) | [pepy.tech](https://pepy.tech/projects/zizkadb-langchain) · [pypi.org](https://pypi.org/project/zizkadb-langchain/) |
+| `zizkadb-crewai` | PyPI | [![zizkadb-crewai](https://img.shields.io/pepy/dt/zizkadb-crewai?label=downloads)](https://pepy.tech/projects/zizkadb-crewai) | [pepy.tech](https://pepy.tech/projects/zizkadb-crewai) · [pypi.org](https://pypi.org/project/zizkadb-crewai/) |
+| `zizkadb-sdk` (TypeScript SDK) | npm | [![zizkadb-sdk npm](https://img.shields.io/npm/d18m/zizkadb-sdk?label=downloads)](https://npm-stat.com/charts.html?package=zizkadb-sdk) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-sdk) · [npmjs.com](https://www.npmjs.com/package/zizkadb-sdk) |
 
 ---
 
