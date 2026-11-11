@@ -10,6 +10,10 @@
   "contracts": {
     "tools": ["zizkadb_why", "zizkadb_search"]
   },
+  "toolMetadata": {
+    "zizkadb_why": { "optional": true },
+    "zizkadb_search": { "optional": true }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

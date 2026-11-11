@@ -74,10 +74,16 @@ Recording happens in the running gateway, which is where OpenClaw runs chat chan
 
 ## Tools for the agent (optional)
 
-The plugin also adds two tools, off until you allow them in the agent's tool policy:
+The plugin also adds two tools, off until you allow them:
 
 - `zizkadb_why`: the causal chain behind an event.
-- `zizkadb_search`: search this agent's past events.
+- `zizkadb_search`: search past events.
+
+```json5
+{ tools: { alsoAllow: ["zizkadb_why", "zizkadb_search"] } }
+```
+
+**Each tool sees only the conversation it runs in.** The scope comes from OpenClaw's trusted tool context (the conversation's session key), never from the model's arguments, so one user of a shared bot cannot read another user's records: search asks the server for this conversation's events only, `zizkadb_why` answers "not found" for an event of another conversation and leaves out ancestors from other conversations, and without a conversation the tools are not offered at all. Results are labelled as untrusted historical data, so text someone typed earlier is returned as data, not as instructions. For agent-wide audits use the ZizkaDB dashboard or the SDK with your own key.
 
 ## Trace a turn
 
