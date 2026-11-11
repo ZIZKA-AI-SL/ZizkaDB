@@ -1,5 +1,6 @@
 from .client import ZizkaDB
 from .context import LineageContext
+from .instrumentation import Instrumentation, instrument
 from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
 
 try:
@@ -12,6 +13,8 @@ except Exception:
 __all__ = [
     "ZizkaDB",
     "LineageContext",
+    "instrument",
+    "Instrumentation",
     "ZizkaDBError",
     "AuthError",
     "NotFoundError",

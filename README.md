@@ -272,6 +272,17 @@ const tool = await db.log({ agent: 'my-bot', event: 'tool_call', data: { tool: '
 
 </details>
 
+**Or record every LLM call with one line** (Python; OpenAI, Anthropic, LiteLLM, and OpenAI-compatible servers such as Ollama and vLLM):
+
+```python
+import zizkadb
+from zizkadb import ZizkaDB
+
+zizkadb.instrument(ZizkaDB(host="http://localhost:8000"), agent="my-bot")
+# Use OpenAI, Anthropic or LiteLLM as usual: every call, tool call and tool
+# result is recorded with its cause, plus token usage. No db.log() needed.
+```
+
 From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.md)**
 
 ---

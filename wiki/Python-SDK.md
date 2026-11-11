@@ -57,6 +57,7 @@ zizkadb init my-agent --template mcp-cursor
 | `forget(filter_key, filter_value)` | GDPR delete |
 | `baseline(agent)` | Behavioral drift signal |
 | `agents()` | List agents |
+| `zizkadb.instrument(db, agent)` | Record every OpenAI / Anthropic / LiteLLM call, tool call and tool result with causal links and token usage, no `log()` calls needed |
 
 ## Errors
 

@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Python SDK
+
+- **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.
+
 ## [0.6.0] - 2026-11-07
 
 > **Upgrading a self-hosted server? Check `JWT_SECRET` first.** 0.6.0 refuses to start in production if `JWT_SECRET` is one of the sample values the docs used to show. Run `scripts/init-secrets.sh` (or set a new random `JWT_SECRET`) **before** upgrading. After the change, users sign in again, saved BYOK embedding keys must be re-entered, and unsubscribe links in emails already sent stop working. Details under "Self-hosted secrets" below.

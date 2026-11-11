@@ -61,6 +61,26 @@ async with db:
     chain.print()
 ```
 
+## Auto-capture LLM calls (one line)
+
+```python
+import zizkadb
+from zizkadb import ZizkaDB
+
+db = ZizkaDB("zizkadb_live_xxxx")
+zizkadb.instrument(db, agent="my-bot")
+```
+
+Then call OpenAI, Anthropic or LiteLLM as usual (sync or async). Each call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
+
+`user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
+
+- Tool results are linked to the tool call that asked for them (OpenAI `role="tool"`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
+- Inside `async with db.track(agent="my-bot")` the events share that session.
+- `capture_content=False` stores only models, tool names, token usage and the links, no prompt or output text. Text is otherwise clipped to 4,000 characters.
+- OpenAI-compatible servers (Ollama, vLLM, LM Studio) are covered through the `openai` client. Streaming calls are recorded without their output.
+- A failed write is logged as a warning; your LLM call is never affected. `inst.uninstrument()` restores the original methods.
+
 ## Multi-agent apps (ZizkaDB Cloud)
 
 An API key works for one agent name. Running several agents — and agent-to-agent messaging between them — is a [ZizkaDB Cloud](https://db.zizka.ai) feature; create each agent and its key in the dashboard.

@@ -46,6 +46,7 @@ asyncio.run(main())
 | `db.token_optimization(agent, ...)` | Token optimization recommendations | No |
 | `db.forget(key, value)` | GDPR delete — remove events matching a value | No |
 | `db.agents()` | List all agents in the project | No |
+| `zizkadb.instrument(db, agent, providers?, capture_content?)` | Auto-capture OpenAI / Anthropic / LiteLLM calls as linked events (`zizkadb/instrumentation.py`); returns a handle with `.uninstrument()` | No |
 
 ---
 
