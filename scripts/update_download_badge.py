@@ -8,16 +8,22 @@ same sources as the per-package badges under it in the README:
   - npm:  api.npmjs.org (what img.shields.io/npm/d18m shows)
   - ClawHub: clawhub.ai/api/v1/packages (what the README's ClawHub badge shows)
 
-So the total always equals the sum of the badges it expands to. If any
+It also writes one badge JSON per package next to the total
+(downloads-<registry>-<package>.json). The README's per-package badges read
+those files instead of asking pepy and npm live through shields.io, which
+fails with "rate limited by upstream service" or "package not found or too
+new". So the total always equals the sum of the badges it expands to. If any
 source fails, the script exits non-zero and writes nothing, so a bad run
 never replaces a good total with a low one. The one exception: npm answers
 "not found" for a package until its first download stats exist (a day or
 so after the first release), which counts as 0.
 
-Usage: python scripts/update_download_badge.py <output.json>
+Usage: python scripts/update_download_badge.py <output-dir>/downloads.json
 """
 
 import json
+import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -66,6 +72,21 @@ def short(n: int) -> str:
     return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
 
 
+def badge(n: int, color: str = "blue") -> dict:
+    return {"schemaVersion": 1, "label": "downloads", "message": short(n), "color": color}
+
+
+def slug(name: str) -> str:
+    """npm/zizkadb-sdk -> npm-zizkadb-sdk, clawhub/@zizka-ai/zizkadb -> clawhub-zizka-ai-zizkadb."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def write(path: str, data: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f)
+        f.write("\n")
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -76,15 +97,10 @@ def main() -> None:
     for name, n in counts.items():
         print(f"{name}: {n}")
     print(f"total: {total}")
-    badge = {
-        "schemaVersion": 1,
-        "label": "downloads",
-        "message": short(total),
-        "color": "blue",
-    }
-    with open(sys.argv[1], "w") as f:
-        json.dump(badge, f)
-        f.write("\n")
+    out_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
+    for name, n in counts.items():
+        write(os.path.join(out_dir, f"downloads-{slug(name)}.json"), badge(n, "green"))
+    write(sys.argv[1], badge(total))
 
 
 if __name__ == "__main__":
