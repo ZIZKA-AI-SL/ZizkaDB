@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Python SDK
 
+- **`zizkadb.instrument()` covers the OpenAI Responses API** (`client.responses.create`, sync and async): string or item-list `input`, `function_call` outputs as `tool_call` events, `function_call_output` items as `tool_result` events linked to their call, and `token_usage` including cached and reasoning tokens.
+
 - **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.
 
 ## [0.6.0] - 2026-11-07

@@ -28,7 +28,8 @@ Inside ``db.track(agent=...)`` events also share that session and follow its
 lineage. Logging never breaks your LLM call: a failed write is logged as a
 warning and the provider's response is returned as is.
 
-Supported: ``openai`` (sync and async chat completions, which also covers
+Supported: ``openai`` (sync and async chat completions and the Responses API,
+``client.responses.create``; chat completions also cover
 OpenAI-compatible servers such as Ollama, vLLM and LM Studio), ``anthropic``
 (sync and async messages) and ``litellm`` (``completion``/``acompletion``
 called as ``litellm.completion``). Streaming calls are recorded without their
@@ -66,6 +67,8 @@ _TARGETS: dict[str, list[tuple[str, str | None, str, str, str]]] = {
     "openai": [
         ("openai.resources.chat.completions", "Completions", "create", "sync", "openai"),
         ("openai.resources.chat.completions", "AsyncCompletions", "create", "async", "openai"),
+        ("openai.resources.responses", "Responses", "create", "sync", "openai_responses"),
+        ("openai.resources.responses", "AsyncResponses", "create", "async", "openai_responses"),
     ],
     "anthropic": [
         ("anthropic.resources.messages", "Messages", "create", "sync", "anthropic"),
@@ -91,6 +94,10 @@ def _clip(value: Any, limit: int = _TEXT_LIMIT) -> Any:
     return value
 
 
+# Text content block types: chat/Anthropic "text", Responses API input/output.
+_TEXT_BLOCKS = frozenset({"text", "input_text", "output_text"})
+
+
 def _text_of(content: Any) -> str | None:
     """Plain text of a message content (string or list of content blocks)."""
     if content is None:
@@ -99,7 +106,7 @@ def _text_of(content: Any) -> str | None:
         return content
     parts = []
     for block in content if isinstance(content, list) else []:
-        if _get(block, "type") == "text" and _get(block, "text"):
+        if _get(block, "type") in _TEXT_BLOCKS and _get(block, "text"):
             parts.append(_get(block, "text"))
     return "\n".join(parts) if parts else None
 
@@ -141,6 +148,31 @@ def _tool_results(messages: Any) -> list[tuple[str, Any]]:
                 if _get(block, "type") == "tool_result" and _get(block, "tool_use_id"):
                     out.append((_get(block, "tool_use_id"), _clip(_text_of(_get(block, "content")) or _get(block, "content"))))
     return out
+
+
+def _responses_items(kwargs: dict[str, Any]) -> list[Any]:
+    """Responses API ``input`` as a list of items (a bare string is one user message)."""
+    raw = kwargs.get("input")
+    if isinstance(raw, str):
+        return [{"role": "user", "content": raw}]
+    return raw if isinstance(raw, list) else []
+
+
+def _request_view(shape: str, kwargs: dict[str, Any]) -> tuple[str | None, list[tuple[str, Any]]]:
+    """(new user text, tool results) carried by a request, for any API shape."""
+    if shape != "openai_responses":
+        messages = kwargs.get("messages")
+        return _new_user_text(messages), _tool_results(messages)
+    items = _responses_items(kwargs)
+    results = [
+        (_get(i, "call_id"), _clip(_get(i, "output")))
+        for i in items
+        if _get(i, "type") == "function_call_output" and _get(i, "call_id")
+    ]
+    user_text = None
+    if items and _get(items[-1], "role") == "user":
+        user_text = _text_of(_get(items[-1], "content"))
+    return user_text, results
 
 
 # ── response parsing ────────────────────────────────────────────────────────
@@ -193,8 +225,34 @@ def _parse_anthropic(resp: Any, model: str | None) -> _Parsed:
     return _Parsed(_get(resp, "model") or model, "\n".join(texts) if texts else None, calls, token_usage)
 
 
+def _parse_openai_responses(resp: Any, model: str | None) -> _Parsed:
+    texts, calls = [], []
+    for item in _get(resp, "output") or []:
+        kind = _get(item, "type")
+        if kind == "message":
+            text = _text_of(_get(item, "content"))
+            if text:
+                texts.append(text)
+        elif kind == "function_call":
+            calls.append({"id": _get(item, "call_id"), "name": _get(item, "name"), "arguments": _parse_args(_get(item, "arguments"))})
+    usage = _get(resp, "usage")
+    token_usage = None
+    if usage is not None:
+        in_details = _get(usage, "input_tokens_details")
+        out_details = _get(usage, "output_tokens_details")
+        token_usage = {
+            "model": _get(resp, "model") or model,
+            "input_tokens": _get(usage, "input_tokens", 0) or 0,
+            "output_tokens": _get(usage, "output_tokens", 0) or 0,
+            "cached_tokens": (_get(in_details, "cached_tokens", 0) or 0) if in_details is not None else 0,
+            "reasoning_tokens": (_get(out_details, "reasoning_tokens", 0) or 0) if out_details is not None else 0,
+        }
+    return _Parsed(_get(resp, "model") or model, "\n".join(texts) if texts else None, calls, token_usage)
+
+
 _PARSERS: dict[str, Callable[[Any, str | None], _Parsed]] = {
     "openai": _parse_openai,
+    "openai_responses": _parse_openai_responses,
     "anthropic": _parse_anthropic,
 }
 
@@ -285,15 +343,14 @@ class Instrumentation:
     def _content(self, value: Any) -> Any:
         return _clip(value) if self.capture_content else None
 
-    def _before(self, kwargs: dict[str, Any]) -> list[tuple[str, dict[str, Any], str | None]]:
+    def _before(self, kwargs: dict[str, Any], shape: str = "openai") -> list[tuple[str, dict[str, Any], str | None]]:
         """Events to write before the call: tool results, then the new user message."""
-        messages = kwargs.get("messages")
+        user_text, results = _request_view(shape, kwargs)
         plan = []
-        for tool_id, result in _tool_results(messages):
+        for tool_id, result in results:
             if not self._first_result(tool_id):
                 continue
             plan.append(("tool_result", {"tool_call_id": tool_id, "result": self._content(result)}, tool_id))
-        user_text = _new_user_text(messages)
         if user_text is not None:
             plan.append(("user_message", {"text": self._content(user_text)}, None))
         return plan
@@ -327,7 +384,7 @@ class Instrumentation:
 
         def _record(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
             parent = None
-            for event, data, tool_id in inst._before(kwargs):
+            for event, data, tool_id in inst._before(kwargs, shape):
                 tool_parent = inst._tool_event(tool_id) if tool_id else None
                 eid = inst._write_sync(event, data, tool_parent)
                 parent = eid or parent
@@ -361,7 +418,7 @@ class Instrumentation:
 
         async def _record(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
             parent = None
-            for event, data, tool_id in inst._before(kwargs):
+            for event, data, tool_id in inst._before(kwargs, shape):
                 tool_parent = inst._tool_event(tool_id) if tool_id else None
                 eid = await inst._write_async(event, data, tool_parent)
                 parent = eid or parent
