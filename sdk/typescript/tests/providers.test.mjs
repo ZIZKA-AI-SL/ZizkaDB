@@ -166,3 +166,94 @@ describe('Vercel AI SDK middleware', () => {
     expect(db.events).toEqual([])
   })
 })
+
+describe('native SDKs (Mistral, Cohere, AWS Bedrock)', () => {
+  it('Mistral: complete with camelCase tool calls, then stream of {data} events', async () => {
+    const db = fakeDb()
+    const replies = [
+      { model: 'mistral-large-latest', choices: [{ message: { content: '', toolCalls: [{ id: 'm1', function: { name: 'lookup_order', arguments: { id: 42 } } }] } }], usage: { promptTokens: 30, completionTokens: 9 } },
+      { model: 'mistral-large-latest', choices: [{ message: { content: 'Ships tomorrow.' } }] },
+      { async *[Symbol.asyncIterator]() {
+        yield { data: { model: 'mistral-small', choices: [{ delta: { content: 'Bon' } }] } }
+        yield { data: { model: 'mistral-small', choices: [{ delta: { content: 'jour' } }], usage: { promptTokens: 4, completionTokens: 2 } } }
+      } },
+    ]
+    class Chat { complete() { return Promise.resolve(replies.shift()) } stream() { return Promise.resolve(replies.shift()) } }
+    const mistral = { chat: new Chat() }
+    const inst = instrument(db, { agent: 'bot', clients: [mistral] })
+    await mistral.chat.complete({ model: 'mistral-large-latest', messages: [{ role: 'user', content: 'order 42?' }] })
+    await mistral.chat.complete({ model: 'mistral-large-latest', messages: [{ role: 'user', content: 'order 42?' }, { role: 'tool', toolCallId: 'm1', name: 'lookup_order', content: 'ships tomorrow' }] })
+    for await (const _ of await mistral.chat.stream({ model: 'mistral-small', messages: [{ role: 'user', content: 'salut' }] })) { /* read */ }
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_end', 'tool_call', 'tool_result', 'llm_end', 'user_message', 'llm_end'])
+    expect(db.events[1].data.token_usage).toMatchObject({ input_tokens: 30, output_tokens: 9 })
+    expect(db.events[2].data.arguments).toEqual({ id: 42 })
+    expect(db.events[3].parentId).toBe('evt-3')
+    expect(db.events[6].data).toMatchObject({ output: 'Bonjour', streamed: true })
+    expect(Object.prototype.hasOwnProperty.call(mistral.chat, 'complete')).toBe(false)
+  })
+
+  it('Cohere v2: chat tool loop and chatStream', async () => {
+    const db = fakeDb()
+    const replies = [
+      { message: { role: 'assistant', toolPlan: 'Look it up.', toolCalls: [{ id: 'c1', type: 'function', function: { name: 'lookup_order', arguments: '{"id":42}' } }] }, usage: { tokens: { inputTokens: 50, outputTokens: 12 } } },
+      { message: { role: 'assistant', content: [{ type: 'text', text: 'Ships tomorrow.' }] } },
+      { async *[Symbol.asyncIterator]() {
+        yield { type: 'content-delta', delta: { message: { content: { text: 'Hola ' } } } }
+        yield { type: 'tool-call-start', index: 0, delta: { message: { toolCalls: { id: 'c9', function: { name: 'search', arguments: '' } } } } }
+        yield { type: 'tool-call-delta', index: 0, delta: { message: { toolCalls: { function: { arguments: '{"q":"x"}' } } } } }
+        yield { type: 'message-end', delta: { usage: { tokens: { inputTokens: 5, outputTokens: 3 } } } }
+      } },
+    ]
+    const cohere = { chat: () => Promise.resolve(replies.shift()), chatStream: () => Promise.resolve(replies.shift()) }
+    const inst = instrument(db, { agent: 'bot', clients: [cohere] })
+    await cohere.chat({ model: 'command-a', messages: [{ role: 'user', content: 'order 42?' }] })
+    await cohere.chat({ model: 'command-a', messages: [{ role: 'user', content: 'order 42?' }, { role: 'tool', toolCallId: 'c1', content: 'ships tomorrow' }] })
+    for await (const _ of await cohere.chatStream({ model: 'command-a', messages: [{ role: 'user', content: 'hola' }] })) { /* read */ }
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_end', 'tool_call', 'tool_result', 'llm_end', 'user_message', 'llm_end', 'tool_call'])
+    expect(db.events[1].data).toMatchObject({ reasoning: 'Look it up.', token_usage: { input_tokens: 50, output_tokens: 12 } })
+    expect(db.events[3].parentId).toBe('evt-3')
+    expect(db.events[6].data.output).toBe('Hola ')
+    expect(db.events[7].data.arguments).toEqual({ q: 'x' })
+  })
+
+  it('Bedrock: Converse and ConverseStream through send(); other commands untouched', async () => {
+    const db = fakeDb()
+    class ConverseCommand { constructor(input) { this.input = input } }
+    class ConverseStreamCommand { constructor(input) { this.input = input } }
+    class ListFoundationModelsCommand { constructor(input) { this.input = input } }
+    const replies = [
+      { models: [] },
+      { output: { message: { content: [{ toolUse: { toolUseId: 'b1', name: 'lookup_order', input: { id: 42 } } }] } }, usage: { inputTokens: 40, outputTokens: 10, cacheReadInputTokens: 32 } },
+      { output: { message: { content: [{ text: 'Ships tomorrow.' }] } }, usage: { inputTokens: 60, outputTokens: 4 } },
+      { $metadata: {}, stream: { async *[Symbol.asyncIterator]() {
+        yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Streaming ' } } }
+        yield { contentBlockStart: { contentBlockIndex: 1, start: { toolUse: { toolUseId: 'b9', name: 'search' } } } }
+        yield { contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: '{"q":"refund"}' } } } }
+        yield { metadata: { usage: { inputTokens: 7, outputTokens: 5 } } }
+      } } },
+    ]
+    class BedrockRuntimeClient { send() { return Promise.resolve(replies.shift()) } }
+    const client = new BedrockRuntimeClient()
+    const inst = instrument(db, { agent: 'bot', clients: [client] })
+    await client.send(new ListFoundationModelsCommand({}))
+    const model = 'anthropic.claude-sonnet-4-5'
+    await client.send(new ConverseCommand({ modelId: model, messages: [{ role: 'user', content: [{ text: 'order 42?' }] }] }))
+    await client.send(new ConverseCommand({ modelId: model, messages: [
+      { role: 'user', content: [{ text: 'order 42?' }] },
+      { role: 'user', content: [{ toolResult: { toolUseId: 'b1', content: [{ text: 'ships tomorrow' }] } }] },
+    ] }))
+    const res = await client.send(new ConverseStreamCommand({ modelId: model, messages: [{ role: 'user', content: [{ text: 'refund?' }] }] }))
+    for await (const _ of res.stream) { /* read */ }
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_end', 'tool_call', 'tool_result', 'llm_end', 'user_message', 'llm_end', 'tool_call'])
+    expect(db.events[1].data.token_usage).toEqual({ model, input_tokens: 40, output_tokens: 10, cached_tokens: 32 })
+    expect(db.events[3].parentId).toBe('evt-3')
+    expect(db.events[6].data).toMatchObject({ output: 'Streaming ', streamed: true, token_usage: { output_tokens: 5 } })
+    expect(db.events[7].data.arguments).toEqual({ q: 'refund' })
+  })
+})

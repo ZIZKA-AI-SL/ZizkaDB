@@ -25,7 +25,7 @@ chain.print()
 
 ## Auto-capture LLM calls
 
-`instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })` records every OpenAI (chat completions and Responses API) and Anthropic call, tool call and tool result as linked events with token usage, no `log()` calls needed. `await handle.flush()` before exit; `handle.uninstrument()` to stop. Details in the [SDK README](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/sdk/typescript#auto-capture-llm-calls-one-line).
+`instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })` records every OpenAI (chat completions and Responses API), Anthropic, Mistral, Cohere and AWS Bedrock (Converse) call, tool call and tool result as linked events with token usage, no `log()` calls needed. `await handle.flush()` before exit; `handle.uninstrument()` to stop. Details in the [SDK README](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/sdk/typescript#auto-capture-llm-calls-one-line).
 
 ## Vercel AI SDK
 

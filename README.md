@@ -274,7 +274,7 @@ Or record every LLM call: `instrument(db, { agent: 'my-bot', clients: [openai, a
 
 </details>
 
-**Or record every LLM call with one line** (Python): OpenAI and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, the native `ollama` package and LiteLLM:
+**Or record every LLM call with one line** (Python): OpenAI and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, Mistral, Cohere, AWS Bedrock, the native `ollama` package, LiteLLM, and models run in-process with `llama-cpp-python` or Hugging Face `transformers`:
 
 ```python
 import zizkadb

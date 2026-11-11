@@ -55,6 +55,7 @@ Then call the clients as usual. Every call is recorded as causally linked events
 `user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
 
 - Covers OpenAI `chat.completions.create` and `responses.create`, which also means every OpenAI-compatible API: **DeepSeek, GLM (Zhipu), Kimi (Moonshot)**, Qwen, Mistral, Groq, Together, OpenRouter, and local servers (**Ollama**, vLLM, LM Studio). Anthropic `messages.create` covers Claude, including on Bedrock and Vertex. Reasoning text (`reasoning_content`) and each provider's cached-token fields are recorded.
+- Native SDKs in `clients` too: **Mistral** (`@mistralai/mistralai`: `chat.complete`, `chat.stream`), **Cohere** (`cohere-ai` `CohereClientV2`: `chat`, `chatStream`) and **AWS Bedrock** (`@aws-sdk/client-bedrock-runtime`: `send()` of `ConverseCommand` / `ConverseStreamCommand`; other commands pass through untouched).
 - Calls return the client's own promise, so `.withResponse()` and other extras keep working. Recording runs in the background and never changes the result or the error.
 - `await zdb.flush()` waits for pending writes, e.g. before a script or serverless function exits.
 - `captureContent: false` stores only models, tool names, token usage and the links.
@@ -106,7 +107,7 @@ it('answers refund questions with the policy search', async () => {
 | `token_usage` on `log()` | `token_usage={...}` kwarg merges into event `data` | **Not supported** — pass token counts inside `data` manually, or use the Python SDK |
 | `db.token_usage()` analytics | Yes | Yes (`tokenUsage()`) |
 | Auto-capture LLM calls | `zizkadb.instrument(db, agent=...)` | `instrument(db, { agent, clients })` (records `token_usage` too) |
-| Other providers | Gemini, native ollama, Zhipu SDKs, LiteLLM | Vercel AI SDK middleware (`zizkadbMiddleware`) |
+| Other providers | Gemini, native ollama, Zhipu, Mistral, Cohere, Bedrock SDKs, LiteLLM, llama-cpp, transformers | Mistral, Cohere, Bedrock SDKs; Vercel AI SDK middleware (`zizkadbMiddleware`) for everything else |
 | Session → regression test | `zizkadb test from-session` (pytest) | `npx zizkadb-sdk test from-session` (vitest) |
 
 ## Multi-agent apps (one key, many agent names)

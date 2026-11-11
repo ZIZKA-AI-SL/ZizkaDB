@@ -82,9 +82,14 @@ Then call your model as usual (sync or async). Each call is recorded as causally
 | `google-genai` (`models.generate_content`, `generate_content_stream`, chats) | Gemini |
 | `ollama` (native package: `ollama.chat`, `Client`, `AsyncClient`) | any local Ollama model |
 | `zai-sdk` / `zhipuai` | GLM through Zhipu's own SDK |
-| `litellm` | 100+ providers behind LiteLLM (Bedrock, Vertex, Cohere, Hugging Face, ...) |
+| `mistralai` (`chat.complete`, `chat.stream`, async) | Mistral |
+| `cohere` (`ClientV2.chat`, `chat_stream`, async) | Cohere Command |
+| `boto3` `bedrock-runtime` (`converse`, `converse_stream`) | every model on AWS Bedrock (Claude, Llama, Mistral, Nova, ...) |
+| `litellm` | 100+ providers behind LiteLLM (Vertex, Hugging Face, ...) |
+| `llama-cpp-python` (`Llama.create_chat_completion`) | GGUF models run in your process |
+| `transformers` (`pipeline("text-generation")`) | Hugging Face models run in your process |
 
-Reasoning models are covered too: the thinking text (`reasoning_content` from DeepSeek, GLM and Kimi; Gemini thoughts; Ollama `thinking`) lands in `llm_end` as `reasoning`, and cached and reasoning tokens are read from each provider's own usage fields. Models run in-process (Hugging Face `transformers`, `llama-cpp-python`) make no API call to capture: log those steps with `db.log()` or the LangChain / CrewAI integrations.
+Reasoning models are covered too: the thinking text (`reasoning_content` from DeepSeek, GLM and Kimi; Gemini thoughts; Ollama `thinking`) lands in `llm_end` as `reasoning`, and cached and reasoning tokens are read from each provider's own usage fields. In-process models are recorded when their library is imported before `instrument()` runs (it never imports PyTorch or llama.cpp itself, so startup stays fast). Calls below those entry points (a raw `model.generate()` on tensors) are not recorded: log them with `db.log()`.
 
 - Tool results are linked to the tool call that asked for them (OpenAI `role="tool"` or Responses API `function_call_output`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
 - Inside `async with db.track(agent="my-bot")` the events share that session.
