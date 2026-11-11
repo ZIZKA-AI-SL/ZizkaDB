@@ -90,7 +90,7 @@ class _MemoryInstrumentation(instrumentation.Instrumentation):
 @contextmanager
 def capture(
     agent: str = "test-agent",
-    providers: tuple[str, ...] = ("openai", "anthropic", "litellm"),
+    providers: tuple[str, ...] | None = None,
 ) -> Iterator[CapturedRun]:
     """Record LLM and tool activity inside the block, without a server.
 
@@ -101,7 +101,9 @@ def capture(
     if previous is not None:
         previous.uninstrument()
     run = CapturedRun()
-    inst = instrumentation._apply(_MemoryInstrumentation(run, agent), providers)
+    # every provider instrument() knows, unless the test narrows it
+    default = getattr(instrumentation, "_DEFAULT_PROVIDERS", ("openai", "anthropic", "litellm"))
+    inst = instrumentation._apply(_MemoryInstrumentation(run, agent), providers or default)
     try:
         yield run
     finally:
