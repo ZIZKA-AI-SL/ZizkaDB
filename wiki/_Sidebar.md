@@ -11,6 +11,7 @@
 - [Python SDK](Python-SDK)
 - [TypeScript SDK](TypeScript-SDK)
 - [LiveKit (voice)](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/docs/integrations/livekit.md)
+- [OpenClaw plugin](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/integrations/openclaw/README.md)
 - [MCP and Cursor](MCP-and-Cursor)
 - [REST API](REST-API)
 

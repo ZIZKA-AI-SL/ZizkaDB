@@ -15,7 +15,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 | Dashboard | Next.js 14 App Router | `dashboard/app/` |
 | Python SDK | `zizkadb-sdk` (PyPI) | `sdk/python/zizkadb/client.py` |
 | TypeScript SDK | `zizkadb-sdk` (npm) | `sdk/typescript/src/index.ts` |
-| Integrations | `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit` | `integrations/` (standalone) + LangChain/CrewAI bundled in `sdk/python/zizkadb/integrations/` |
+| Integrations | `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`, `zizkadb-langgraph`, OpenClaw plugin (`zizkadb-openclaw` npm / `@zizka-ai/zizkadb` ClawHub) | `integrations/` (standalone) + LangChain/CrewAI bundled in `sdk/python/zizkadb/integrations/` |
 | MCP server | `zizkadb-mcp` (PyPI, **MIT**) | `mcp/zizkadb_mcp/server.py` |
 | Infra | Docker Compose + single image | `infra/docker-compose.yml` (prod) + `infra/docker-compose.dev.yml` (dev overlay) · `infra/allinone/` (one container: Postgres, Redis, API, dashboard; used by the quickstart and Redu Cloud via `redu.md`) |
 | CI | GitHub Actions | `.github/workflows/ci.yml` (lint+tests+vitest) · `integration.yml` (weekly stack) · `publish-images.yml` (GHCR on `v*` tag) |
@@ -30,7 +30,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 | `dashboard/` | Next.js 14 marketing + authenticated dashboard. Source of truth: `dashboard/DASHBOARD_KNOWLEDGE_BASE.md` |
 | `sdk/python/` | Async Python client + `zizkadb init` CLI |
 | `sdk/typescript/` | TypeScript/JS HTTP client |
-| `integrations/` | Standalone LangChain, CrewAI, and LiveKit adapter packages |
+| `integrations/` | Standalone LangChain, CrewAI, LiveKit and LangGraph adapter packages, plus the OpenClaw plugin (TypeScript) |
 | `mcp/` | MCP server (MIT license — not AGPL) |
 | `infra/` | Docker Compose files, nginx, deploy scripts |
 | `scripts/` | Dev setup, release, smoke test, DB seed scripts |

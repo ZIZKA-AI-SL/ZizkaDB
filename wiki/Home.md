@@ -13,6 +13,7 @@
 | PyPI CrewAI | [zizkadb-crewai](https://pypi.org/project/zizkadb-crewai/) **0.1.5** |
 | PyPI LiveKit | [zizkadb-livekit](https://pypi.org/project/zizkadb-livekit/) **0.2.3** |
 | npm SDK | [zizkadb-sdk](https://www.npmjs.com/package/zizkadb-sdk) **0.7.0** |
+| OpenClaw plugin | [ClawHub @zizka-ai/zizkadb](https://clawhub.ai/plugins/@zizka-ai/zizkadb) · [npm zizkadb-openclaw](https://www.npmjs.com/package/zizkadb-openclaw) **0.1.0** |
 | Docs site | [db.zizka.ai/docs](https://db.zizka.ai/docs) |
 | Managed cloud (optional) | [db.zizka.ai/signup](https://db.zizka.ai/signup) |
 
@@ -82,6 +83,7 @@ Details: [[Agents and API Keys]]
 |---------|---------|-----|
 | Python SDK | `pip install zizkadb-sdk` | `from zizkadb import ZizkaDB` |
 | LiveKit (voice) | `pip install zizkadb-livekit` | `ZizkaDBLiveKitObserver` — one call → one session |
+| OpenClaw plugin | `openclaw plugins install clawhub:@zizka-ai/zizkadb` | Every OpenClaw turn recorded with its cause ([guide](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/integrations/openclaw/README.md)) |
 | MCP server | `uvx zizkadb-mcp` | Cursor, Claude Desktop |
 | TypeScript SDK | `npm install zizkadb-sdk` | Node / Next.js apps |
 

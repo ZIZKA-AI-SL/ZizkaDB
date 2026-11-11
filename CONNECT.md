@@ -1,6 +1,6 @@
 # Connect your agent (self-host / OSS)
 
-**Current releases:** `zizkadb-sdk` **0.7.0** (PyPI and npm) · `zizkadb-mcp` **0.1.14** · `zizkadb-langchain` **0.1.5** · `zizkadb-crewai` **0.1.5** · `zizkadb-langgraph` **0.1.2** · `zizkadb-livekit` **0.2.3**
+**Current releases:** `zizkadb-sdk` **0.7.0** (PyPI and npm) · `zizkadb-mcp` **0.1.14** · `zizkadb-langchain` **0.1.5** · `zizkadb-crewai` **0.1.5** · `zizkadb-langgraph` **0.1.2** · `zizkadb-livekit` **0.2.3** · OpenClaw plugin `@zizka-ai/zizkadb` (ClawHub) / `zizkadb-openclaw` (npm) **0.1.0**
 
 ## Start the stack (pick one)
 
@@ -217,6 +217,39 @@ async def entrypoint(ctx: JobContext):
 After a test call: **Activity → support-voice → Sessions** — same event types as text agents (`user_message`, `assistant_response`, `tool_call`, `session_ended`).
 
 Full sample: [examples/livekit-agent/](examples/livekit-agent/) (voice worker + local browser UI at `http://localhost:8080`) · package docs: [integrations/livekit/](integrations/livekit/)
+
+---
+
+## OpenClaw
+
+One plugin records every turn of an [OpenClaw](https://github.com/openclaw/openclaw) agent: the user message, each tool call and result, the model output with token usage and the reply, linked cause to effect. One OpenClaw conversation → one ZizkaDB session. Observe-only: it never blocks or changes a message or tool call.
+
+```bash
+openclaw plugins install clawhub:@zizka-ai/zizkadb
+# or: openclaw plugins install npm:zizkadb-openclaw --force
+```
+
+`~/.openclaw/openclaw.json`, then restart the gateway:
+
+```json5
+{
+  plugins: {
+    allow: ["zizkadb"],
+    entries: {
+      zizkadb: {
+        enabled: true,
+        hooks: { allowConversationAccess: true }, // model outputs and token usage
+        config: {
+          host: "http://localhost:8000",          // self-hosted, or apiKey: "zizkadb_live_..." for Cloud
+          agent: "openclaw",
+        },
+      },
+    },
+  },
+}
+```
+
+Then **Activity → openclaw → Sessions**. `captureContent: false` records tools, models, tokens and errors without prompts or replies. Full guide: [integrations/openclaw/](integrations/openclaw/)
 
 ---
 

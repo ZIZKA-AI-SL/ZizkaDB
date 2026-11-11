@@ -23,11 +23,12 @@ Start here if you are not sure which file to read.
 | Guide | Status |
 |-------|--------|
 | [Any agent (framework-agnostic)](integrate/any-agent.md) | **Start here** for custom stacks |
-| [Supported vs generic frameworks](integrate/frameworks.md) | LangChain, CrewAI, LiveKit, LangGraph, etc. |
+| [Supported vs generic frameworks](integrate/frameworks.md) | LangChain, CrewAI, LiveKit, LangGraph, OpenClaw, etc. |
 | [LiveKit (voice agents)](integrations/livekit.md) | `zizkadb-livekit` — one call → one session |
+| [OpenClaw](../integrations/openclaw/) | Plugin `@zizka-ai/zizkadb` — every turn recorded with its cause |
 | [LangChain](integrations/langchain.md) | Callback handler package |
 | [CrewAI](integrations/crewai.md) | Crew logger package |
-| [CONNECT.md](../CONNECT.md) | Copy-paste: Python, TS, LangChain, CrewAI, LiveKit, MCP, REST |
+| [CONNECT.md](../CONNECT.md) | Copy-paste: Python, TS, LangChain, CrewAI, LiveKit, OpenClaw, MCP, REST |
 
 ## Source of truth
 

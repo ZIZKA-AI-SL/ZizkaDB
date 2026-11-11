@@ -9,7 +9,7 @@ Key facts:
 - Integrity: checksum per event, per-agent hash chain, tombstones for deletions, secret redaction before storage.
 - Database features: idempotent and batch writes, cursor paging, retention, NDJSON export/import, read-only and expiring API keys, Prometheus metrics, backup and restore scripts.
 - Works without OpenAI: keyword search is built in; embeddings are optional (local, OpenAI or your own key).
-- Integrations: LangChain, CrewAI, LangGraph, LiveKit voice agents, MCP (Claude, Cursor), REST API.
+- Integrations: LangChain, CrewAI, LangGraph, LiveKit voice agents, OpenClaw (plugin), MCP (Claude, Cursor), REST API.
 - Self-hosted (this repo, free): one agent with one API key; data stays on your servers.
 - ZizkaDB Cloud (https://db.zizka.ai, paid): multiple agents, agent fleets and agent-to-agent message recording.
 - Made by Zizka AI (https://zizka.ai).
@@ -24,7 +24,7 @@ Key facts:
 - [Python SDK `zizkadb-sdk`](https://pypi.org/project/zizkadb-sdk/) (source: [sdk/python](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/sdk/python))
 - [TypeScript SDK `zizkadb-sdk`](https://www.npmjs.com/package/zizkadb-sdk) (source: [sdk/typescript](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/sdk/typescript))
 - [MCP server `zizkadb-mcp`](https://pypi.org/project/zizkadb-mcp/): `uvx zizkadb-mcp` (source: [mcp](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/mcp))
-- Integrations: [`zizkadb-langchain`](https://pypi.org/project/zizkadb-langchain/), [`zizkadb-crewai`](https://pypi.org/project/zizkadb-crewai/), [`zizkadb-langgraph`](https://pypi.org/project/zizkadb-langgraph/), [`zizkadb-livekit`](https://pypi.org/project/zizkadb-livekit/) (source: [integrations](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/integrations))
+- Integrations: [`zizkadb-langchain`](https://pypi.org/project/zizkadb-langchain/), [`zizkadb-crewai`](https://pypi.org/project/zizkadb-crewai/), [`zizkadb-langgraph`](https://pypi.org/project/zizkadb-langgraph/), [`zizkadb-livekit`](https://pypi.org/project/zizkadb-livekit/), OpenClaw plugin [`@zizka-ai/zizkadb`](https://clawhub.ai/plugins/@zizka-ai/zizkadb) (npm [`zizkadb-openclaw`](https://www.npmjs.com/package/zizkadb-openclaw)) (source: [integrations](https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/integrations))
 
 ## Reference
 - [REST API](https://github.com/ZIZKA-AI-SL/ZizkaDB/wiki/REST-API); live OpenAPI at http://localhost:8000/swagger
