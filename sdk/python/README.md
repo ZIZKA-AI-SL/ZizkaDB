@@ -78,7 +78,8 @@ Then call OpenAI (chat completions or the Responses API), Anthropic or LiteLLM a
 - Tool results are linked to the tool call that asked for them (OpenAI `role="tool"` or Responses API `function_call_output`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
 - Inside `async with db.track(agent="my-bot")` the events share that session.
 - `capture_content=False` stores only models, tool names, token usage and the links, no prompt or output text. Text is otherwise clipped to 4,000 characters.
-- OpenAI-compatible servers (Ollama, vLLM, LM Studio) are covered through the `openai` client. Streaming calls are recorded without their output.
+- OpenAI-compatible servers (Ollama, vLLM, LM Studio) are covered through the `openai` client.
+- **Streaming** (`stream=True`) is recorded too: you get the provider's stream unchanged, and once it ends the events carry the full output, tool calls and token usage (for OpenAI chat, usage needs `stream_options={"include_usage": True}`). A stream closed early is marked `"truncated": true`; one that fails mid-way becomes `llm_error` with the partial output. The `.stream()` helper methods are not recorded yet.
 - A failed write is logged as a warning; your LLM call is never affected. `inst.uninstrument()` restores the original methods.
 
 ## Multi-agent apps (ZizkaDB Cloud)
