@@ -1,6 +1,6 @@
 # ZizkaDB Wiki
 
-**Don't observe — audit your AI agent.** ZizkaDB is a causal database for AI agents: causal lineage, time-travel debugging, session replay, a tamper-evident audit trail, agent memory, semantic search and dashboards.
+**Don't observe — audit your AI agent.** ZizkaDB is a causal database for AI agents: causal lineage, time-travel debugging, session replay, a tamper-evident audit trail, agent memory, semantic search and dashboards. It is an agentic database built for agent auditability, and its record supports EU AI Act Article 12 logging as part of EU AI Act compliance.
 
 | Resource | Link |
 |----------|------|
@@ -27,9 +27,9 @@ When an agent misbehaves in production, scattered logs are not enough. ZizkaDB s
 | Why did the agent do that? | `why(event_id)` |
 | What did it know at 2pm Tuesday? | `at(agent, timestamp)` |
 | Find similar past failures | `search()` / `context_for()` |
-| Is this agent drifting? | Behavioral baseline + dashboard |
+| Is this agent drifting? | Agent drift measurement: `baseline(agent)` drift score + dashboard |
 
-**Not** a vector DB alone. **Not** traces alone. **Operational** data for agents.
+**Not** a vector DB alone. **Not** traces alone. An **operational database for AI agents**: every event is SHA-256 checksummed and hash-chained, so the record is cryptographic telemetry for AI agents that an agent audit can verify, and agent drift shows up as a measured score.
 
 ---
 
