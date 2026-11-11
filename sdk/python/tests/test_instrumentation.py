@@ -27,7 +27,7 @@ def _openai_response(text=None, tool_calls=None):
 @pytest.fixture
 def providers(monkeypatch):
     """Install fake openai / anthropic / litellm modules; yield their scripted replies."""
-    replies: dict[str, list] = {"openai": [], "anthropic": []}
+    replies: dict[str, list] = {"openai": [], "anthropic": [], "responses": []}
 
     class Completions:
         def create(self, **kwargs):
@@ -48,6 +48,16 @@ def providers(monkeypatch):
         async def create(self, **kwargs):
             return replies["anthropic"].pop(0)
 
+    class Responses:
+        def create(self, **kwargs):
+            return replies["responses"].pop(0)
+
+    class AsyncResponses:
+        async def create(self, **kwargs):
+            return replies["responses"].pop(0)
+
+    rs = types.ModuleType("openai.resources.responses")
+    rs.Responses, rs.AsyncResponses = Responses, AsyncResponses
     oa = types.ModuleType("openai.resources.chat.completions")
     oa.Completions, oa.AsyncCompletions = Completions, AsyncCompletions
     an = types.ModuleType("anthropic.resources.messages")
@@ -66,13 +76,14 @@ def providers(monkeypatch):
         "openai.resources": types.ModuleType("openai.resources"),
         "openai.resources.chat": types.ModuleType("openai.resources.chat"),
         "openai.resources.chat.completions": oa,
+        "openai.resources.responses": rs,
         "anthropic": types.ModuleType("anthropic"),
         "anthropic.resources": types.ModuleType("anthropic.resources"),
         "anthropic.resources.messages": an,
         "litellm": ll,
     }.items():
         monkeypatch.setitem(sys.modules, name, mod)
-    yield types.SimpleNamespace(replies=replies, openai=oa, anthropic=an, litellm=ll)
+    yield types.SimpleNamespace(replies=replies, openai=oa, responses=rs, anthropic=an, litellm=ll)
 
 
 @pytest.fixture
@@ -265,3 +276,59 @@ def test_missing_providers_are_skipped(monkeypatch, db, caplog):
     inst = zizkadb.instrument(db, agent="bot")
     inst.uninstrument()
     assert "nothing to record" in caplog.text
+
+
+def _responses_reply(text=None, calls=()):
+    output = [{"type": "function_call", "call_id": c, "name": n, "arguments": a} for c, n, a in calls]
+    if text:
+        output.append({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]})
+    return {
+        "model": "gpt-resp",
+        "output": output,
+        "usage": {
+            "input_tokens": 50, "output_tokens": 9,
+            "input_tokens_details": {"cached_tokens": 4}, "output_tokens_details": {"reasoning_tokens": 3},
+        },
+    }
+
+
+def test_responses_api_tool_loop(providers, posted, db):
+    providers.replies["responses"] += [
+        _responses_reply(calls=[("fc_1", "lookup_order", '{"id": 42}')]),
+        _responses_reply(text="Order 42 ships tomorrow."),
+    ]
+    inst = zizkadb.instrument(db, agent="bot", providers=("openai",))
+    try:
+        client = providers.responses.Responses()
+        client.create(model="gpt-resp", input="Where is order 42?")
+        client.create(
+            model="gpt-resp",
+            previous_response_id="resp_1",
+            input=[{"type": "function_call_output", "call_id": "fc_1", "output": "ships tomorrow"}],
+        )
+    finally:
+        inst.uninstrument()
+
+    assert [e["event"] for e in posted] == ["user_message", "llm_end", "tool_call", "tool_result", "llm_end"]
+    assert posted[0]["data"]["text"] == "Where is order 42?"
+    assert posted[2]["data"] == {"tool": "lookup_order", "tool_call_id": "fc_1", "arguments": {"id": 42}}
+    assert posted[3]["parent_id"] == "evt-3" and posted[3]["data"]["result"] == "ships tomorrow"
+    assert posted[4]["parent_id"] == "evt-4" and posted[4]["data"]["output"] == "Order 42 ships tomorrow."
+    assert posted[1]["data"]["token_usage"] == {
+        "model": "gpt-resp", "input_tokens": 50, "output_tokens": 9, "cached_tokens": 4, "reasoning_tokens": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_responses_api_with_message_list_input(providers, posted, db):
+    providers.replies["responses"].append(_responses_reply(text="Hi!"))
+    inst = zizkadb.instrument(db, agent="bot", providers=("openai",))
+    try:
+        await providers.responses.AsyncResponses().create(
+            model="gpt-resp",
+            input=[{"role": "user", "content": [{"type": "input_text", "text": "hello there"}]}],
+        )
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_end"]
+    assert posted[0]["data"]["text"] == "hello there" and posted[1]["data"]["output"] == "Hi!"

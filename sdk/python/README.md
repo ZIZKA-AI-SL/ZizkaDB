@@ -71,11 +71,11 @@ db = ZizkaDB("zizkadb_live_xxxx")
 zizkadb.instrument(db, agent="my-bot")
 ```
 
-Then call OpenAI, Anthropic or LiteLLM as usual (sync or async). Each call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
+Then call OpenAI (chat completions or the Responses API), Anthropic or LiteLLM as usual (sync or async). Each call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
 
 `user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
 
-- Tool results are linked to the tool call that asked for them (OpenAI `role="tool"`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
+- Tool results are linked to the tool call that asked for them (OpenAI `role="tool"` or Responses API `function_call_output`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
 - Inside `async with db.track(agent="my-bot")` the events share that session.
 - `capture_content=False` stores only models, tool names, token usage and the links, no prompt or output text. Text is otherwise clipped to 4,000 characters.
 - OpenAI-compatible servers (Ollama, vLLM, LM Studio) are covered through the `openai` client. Streaming calls are recorded without their output.
