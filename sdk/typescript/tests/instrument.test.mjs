@@ -26,6 +26,27 @@ function apiPromise(value) {
   return p
 }
 
+/** An async-iterable stream like openai's Stream, with an extra field. */
+function fakeStream(chunks, failAfter) {
+  const stream = {
+    controller: 'abort-controller',
+    returned: false,
+    [Symbol.asyncIterator]() {
+      let i = 0
+      return {
+        next: async () => {
+          if (failAfter !== undefined && i === failAfter) throw new Error('stream dropped')
+          return i < chunks.length ? { value: chunks[i++], done: false } : { value: undefined, done: true }
+        },
+        return: async () => { stream.returned = true; return { value: undefined, done: true } },
+      }
+    },
+  }
+  return stream
+}
+
+const textChunk = (content) => ({ model: 'gpt-test', choices: [{ delta: { content } }] })
+
 function openaiClient(replies) {
   return {
     chat: { completions: { create: vi.fn(() => apiPromise(replies.chat.shift())) } },
@@ -168,15 +189,111 @@ describe('instrument', () => {
     expect(db.events[1].parentId).toBe('evt-1')
   })
 
-  it('records streaming calls without their output', async () => {
+  it('records an OpenAI stream: output, tool calls and usage, chunks unchanged', async () => {
     const db = fakeDb()
-    const client = openaiClient({ chat: [{ [Symbol.asyncIterator]: async function* () {} }] })
+    const chunks = [
+      { model: 'gpt-test', choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_s1', function: { name: 'lookup_order', arguments: '{"id"' } }] } }] },
+      { model: 'gpt-test', choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: ': 42}' } }] } }] },
+      { model: 'gpt-test', choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } },
+    ]
+    const client = openaiClient({ chat: [fakeStream(chunks), fakeStream([textChunk('Order 42 '), textChunk('ships tomorrow.')])] })
     const inst = instrument(db, { agent: 'bot', clients: [client] })
-    await client.chat.completions.create({ model: 'gpt-test', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    const history = [{ role: 'user', content: 'Where is order 42?' }]
+    const stream = await client.chat.completions.create({ model: 'gpt-test', stream: true, messages: history })
+    expect(stream.controller).toBe('abort-controller')
+    const seen = []
+    for await (const c of stream) seen.push(c)
+    expect(seen).toEqual(chunks)
+    history.push({ role: 'assistant', tool_calls: [{ id: 'call_s1' }] }, { role: 'tool', tool_call_id: 'call_s1', content: 'ships tomorrow' })
+    let text = ''
+    for await (const c of await client.chat.completions.create({ model: 'gpt-test', stream: true, messages: history })) text += c.choices[0].delta.content
     await inst.flush()
     inst.uninstrument()
+
+    expect(text).toBe('Order 42 ships tomorrow.')
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_end', 'tool_call', 'tool_result', 'llm_end'])
     expect(db.events[1].data.streamed).toBe(true)
-    expect('output' in db.events[1].data).toBe(false)
+    expect(db.events[1].data.token_usage).toEqual({ model: 'gpt-test', input_tokens: 9, output_tokens: 4, cached_tokens: 0 })
+    expect(db.events[2].data.arguments).toEqual({ id: 42 })
+    expect(db.events[3].parentId).toBe('evt-3')
+    expect(db.events[4].data.output).toBe('Order 42 ships tomorrow.')
+  })
+
+  it('marks a stream stopped early as truncated and closes the source', async () => {
+    const db = fakeDb()
+    const source = fakeStream([textChunk('Hel'), textChunk('lo'), textChunk(' world')])
+    const client = openaiClient({ chat: [source] })
+    const inst = instrument(db, { agent: 'bot', clients: [client] })
+    for await (const c of await client.chat.completions.create({ model: 'gpt-test', stream: true, messages: [{ role: 'user', content: 'hi' }] })) {
+      if (c) break
+    }
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_end'])
+    expect(db.events[1].data.truncated).toBe(true)
+    expect(db.events[1].data.output).toBe('Hel')
+    expect(source.returned).toBe(true)
+  })
+
+  it('records a stream failing mid-way as llm_error with the partial output', async () => {
+    const db = fakeDb()
+    const client = openaiClient({ chat: [fakeStream([textChunk('partial '), textChunk('never')], 1)] })
+    const inst = instrument(db, { agent: 'bot', clients: [client] })
+    const stream = await client.chat.completions.create({ model: 'gpt-test', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    await expect((async () => { for await (const _ of stream) { /* read */ } })()).rejects.toThrow('stream dropped')
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_error'])
+    expect(db.events[1].data.partial_output).toBe('partial ')
+  })
+
+  it('records an Anthropic stream with a tool_use block', async () => {
+    const db = fakeDb()
+    const events = [
+      { type: 'message_start', message: { model: 'claude-test', usage: { input_tokens: 30, output_tokens: 1 } } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Checking.' } },
+      { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tu_9', name: 'search' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"q": "ref' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: 'und"}' } },
+      { type: 'message_delta', usage: { output_tokens: 17 } },
+    ]
+    const client = { messages: { create: vi.fn(() => apiPromise(fakeStream(events))) } }
+    const inst = instrument(db, { agent: 'bot', clients: [client] })
+    for await (const _ of await client.messages.create({ model: 'claude-test', stream: true, messages: [{ role: 'user', content: 'refund?' }] })) { /* read */ }
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'llm_end', 'tool_call'])
+    expect(db.events[1].data.output).toBe('Checking.')
+    expect(db.events[1].data.token_usage.output_tokens).toBe(17)
+    expect(db.events[2].data).toEqual({ tool: 'search', tool_call_id: 'tu_9', arguments: { q: 'refund' } })
+  })
+
+  it('records a Responses API stream from its completed event', async () => {
+    const db = fakeDb()
+    const completed = { model: 'gpt-resp', output: [{ type: 'message', content: [{ type: 'output_text', text: 'All done.' }] }], usage: { input_tokens: 5, output_tokens: 2 } }
+    const client = openaiClient({ responses: [fakeStream([
+      { type: 'response.output_text.delta', delta: 'All ' },
+      { type: 'response.output_text.delta', delta: 'done.' },
+      { type: 'response.completed', response: completed },
+    ])] })
+    const inst = instrument(db, { agent: 'bot', clients: [client] })
+    for await (const _ of await client.responses.create({ model: 'gpt-resp', stream: true, input: 'finish it' })) { /* read */ }
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events[1].data.output).toBe('All done.')
+    expect(db.events[1].data.token_usage.input_tokens).toBe(5)
+  })
+
+  it('an unread stream does not block later recordings', async () => {
+    const db = fakeDb()
+    const client = openaiClient({ chat: [fakeStream([textChunk('never read')]), chatReply('second')] })
+    const inst = instrument(db, { agent: 'bot', clients: [client] })
+    await client.chat.completions.create({ model: 'gpt-test', stream: true, messages: [{ role: 'user', content: 'one' }] })
+    await client.chat.completions.create({ model: 'gpt-test', messages: [{ role: 'user', content: 'two' }] })
+    await inst.flush()
+    inst.uninstrument()
+    expect(db.events.map((e) => e.event)).toEqual(['user_message', 'user_message', 'llm_end'])
+    expect(db.events[2].data.output).toBe('second')
   })
 
   it('uninstrument restores the original methods', () => {

@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Python and TypeScript SDKs
+
+- **`instrument()` records streaming calls** (`stream=True` / `stream: true`) for OpenAI chat completions, the OpenAI Responses API, Anthropic messages and LiteLLM. The caller gets the provider's stream unchanged; chunks are read as they pass, and when the stream ends `llm_end` carries the full output and token usage and each streamed tool call becomes a `tool_call` event, linked like non-streaming calls. A stream closed early is recorded with `truncated: true`; one that fails mid-way as `llm_error` with the partial output. Previously streamed calls were recorded without output or tool calls. The `.stream()` helper methods are not covered yet.
+
 ### TypeScript SDK
 
 - **`instrument(db, { agent, clients })`: one-line auto-capture**, matching the Python SDK. Records every OpenAI (`chat.completions.create`, `responses.create`) and Anthropic (`messages.create`) call on the given clients as causally linked events: `user_message` → `llm_end` (with `token_usage`) → `tool_call` → `tool_result`. The call returns the client's own promise (`.withResponse()` keeps working); recording runs in the background, never changes the result or error, and `flush()` waits for it. `captureContent: false` keeps text out.

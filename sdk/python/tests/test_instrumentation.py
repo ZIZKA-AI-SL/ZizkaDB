@@ -240,14 +240,162 @@ def test_litellm_over_openai_is_recorded_once(providers, posted, db):
     assert posted[1]["data"]["provider"] == "litellm"
 
 
-def test_streaming_is_recorded_without_output(providers, posted, db):
-    providers.replies["openai"].append(iter(["chunk"]))
+class _FakeStream:
+    """Iterable stream like openai.Stream / anthropic.Stream, with extras."""
+
+    def __init__(self, chunks, fail_after=None):
+        self._chunks = list(chunks)
+        self._fail_after = fail_after
+        self.closed = False
+        self.response = "http-response"
+
+    def __iter__(self):
+        for i, chunk in enumerate(self._chunks):
+            if self._fail_after is not None and i == self._fail_after:
+                raise ConnectionError("stream dropped")
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+class _FakeAsyncStream(_FakeStream):
+    def __aiter__(self):
+        async def gen():
+            for chunk in self._chunks:
+                yield chunk
+        return gen()
+
+
+def _oa_chunk(content=None, tool=None, usage=None, choices=True):
+    delta = {}
+    if content:
+        delta["content"] = content
+    if tool:
+        delta["tool_calls"] = [tool]
+    return {"model": "gpt-test", "choices": [{"delta": delta}] if choices else [], "usage": usage}
+
+
+OPENAI_TOOL_STREAM = [
+    _oa_chunk(tool={"index": 0, "id": "call_s1", "function": {"name": "lookup_order", "arguments": '{"id"'}}),
+    _oa_chunk(tool={"index": 0, "function": {"arguments": ": 42}"}}),
+    _oa_chunk(choices=False, usage={"prompt_tokens": 9, "completion_tokens": 4}),
+]
+
+
+def test_openai_stream_records_output_tools_and_usage(providers, posted, db):
+    providers.replies["openai"] += [
+        _FakeStream(OPENAI_TOOL_STREAM),
+        _FakeStream([_oa_chunk("Order 42 "), _oa_chunk("ships tomorrow.")]),
+    ]
     inst = zizkadb.instrument(db, agent="bot")
     try:
-        providers.openai.Completions().create(model="gpt-test", stream=True, messages=[{"role": "user", "content": "hi"}])
+        client = providers.openai.Completions()
+        history = [{"role": "user", "content": "Where is order 42?"}]
+        stream = client.create(model="gpt-test", stream=True, messages=history)
+        assert stream.response == "http-response"  # provider extras still reachable
+        chunks = list(stream)
+        assert chunks == OPENAI_TOOL_STREAM  # caller gets every chunk unchanged
+        history += [{"role": "assistant", "tool_calls": [{"id": "call_s1"}]},
+                    {"role": "tool", "tool_call_id": "call_s1", "content": "ships tomorrow"}]
+        text = "".join(c["choices"][0]["delta"].get("content", "") for c in client.create(model="gpt-test", stream=True, messages=history))
     finally:
         inst.uninstrument()
-    assert posted[1]["data"]["streamed"] is True and "output" not in posted[1]["data"]
+
+    assert text == "Order 42 ships tomorrow."
+    assert [e["event"] for e in posted] == ["user_message", "llm_end", "tool_call", "tool_result", "llm_end"]
+    assert posted[1]["data"]["streamed"] is True
+    assert posted[1]["data"]["token_usage"] == {"model": "gpt-test", "input_tokens": 9, "output_tokens": 4, "cached_tokens": 0}
+    assert posted[2]["data"]["arguments"] == {"id": 42} and posted[2]["parent_id"] == "evt-2"
+    assert posted[3]["parent_id"] == "evt-3"
+    assert posted[4]["data"]["output"] == "Order 42 ships tomorrow."
+
+
+def test_stream_closed_early_is_marked_truncated(providers, posted, db):
+    providers.replies["openai"].append(_FakeStream([_oa_chunk("Hel"), _oa_chunk("lo"), _oa_chunk(" world")]))
+    inst = zizkadb.instrument(db, agent="bot")
+    try:
+        with providers.openai.Completions().create(model="gpt-test", stream=True, messages=[{"role": "user", "content": "hi"}]) as stream:
+            next(iter(stream))
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_end"]
+    assert posted[1]["data"]["truncated"] is True and posted[1]["data"]["output"] == "Hel"
+
+
+def test_stream_failing_midway_is_an_llm_error(providers, posted, db):
+    providers.replies["openai"].append(_FakeStream([_oa_chunk("partial "), _oa_chunk("never")], fail_after=1))
+    inst = zizkadb.instrument(db, agent="bot")
+    try:
+        with pytest.raises(ConnectionError):
+            for _ in providers.openai.Completions().create(model="gpt-test", stream=True, messages=[{"role": "user", "content": "hi"}]):
+                pass
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_error"]
+    assert posted[1]["data"]["partial_output"] == "partial " and "stream dropped" in posted[1]["data"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_async_anthropic_stream_with_tool_use(providers, posted, db):
+    events = [
+        {"type": "message_start", "message": {"model": "claude-test", "usage": {"input_tokens": 30, "output_tokens": 1}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Checking."}},
+        {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "tu_9", "name": "search"}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"q": "ref'}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": 'und"}'}},
+        {"type": "message_delta", "usage": {"output_tokens": 17}},
+        {"type": "message_stop"},
+    ]
+    providers.replies["anthropic"].append(_FakeAsyncStream(events))
+    inst = zizkadb.instrument(db, agent="bot", providers=("anthropic",))
+    try:
+        stream = await providers.anthropic.AsyncMessages().create(model="claude-test", stream=True, messages=[{"role": "user", "content": "refund?"}])
+        received = [e async for e in stream]
+    finally:
+        inst.uninstrument()
+    assert received == events
+    assert [e["event"] for e in posted] == ["user_message", "llm_end", "tool_call"]
+    assert posted[1]["data"]["output"] == "Checking."
+    assert posted[1]["data"]["token_usage"] == {"model": "claude-test", "input_tokens": 30, "output_tokens": 17, "cached_tokens": 0}
+    assert posted[2]["data"] == {"tool": "search", "tool_call_id": "tu_9", "arguments": {"q": "refund"}}
+
+
+def test_responses_api_stream_uses_the_completed_response(providers, posted, db):
+    completed = _responses_reply(text="All done.")
+    events = [
+        {"type": "response.created"},
+        {"type": "response.output_text.delta", "delta": "All "},
+        {"type": "response.output_text.delta", "delta": "done."},
+        {"type": "response.completed", "response": completed},
+    ]
+    providers.replies["responses"].append(_FakeStream(events))
+    inst = zizkadb.instrument(db, agent="bot", providers=("openai",))
+    try:
+        list(providers.responses.Responses().create(model="gpt-resp", stream=True, input="finish it"))
+    finally:
+        inst.uninstrument()
+    assert posted[1]["data"]["output"] == "All done."
+    assert posted[1]["data"]["token_usage"]["reasoning_tokens"] == 3
+
+
+def test_litellm_stream_is_recorded_once(providers, posted, db):
+    providers.replies["openai"].append(_FakeStream([_oa_chunk("hi")]))
+    inst = zizkadb.instrument(db, agent="bot")
+    try:
+        list(providers.litellm.completion(model="gpt-test", stream=True, messages=[{"role": "user", "content": "hello"}]))
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_end"]
+    assert posted[1]["data"]["provider"] == "litellm" and posted[1]["data"]["output"] == "hi"
 
 
 @pytest.mark.asyncio

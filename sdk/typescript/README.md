@@ -57,7 +57,8 @@ Then call the clients as usual. Every call is recorded as causally linked events
 - Covers OpenAI `chat.completions.create` and `responses.create` (also OpenAI-compatible servers: Ollama, vLLM, LM Studio) and Anthropic `messages.create`.
 - Calls return the client's own promise, so `.withResponse()` and other extras keep working. Recording runs in the background and never changes the result or the error.
 - `await zdb.flush()` waits for pending writes, e.g. before a script or serverless function exits.
-- `captureContent: false` stores only models, tool names, token usage and the links. Streaming calls are recorded without their output.
+- `captureContent: false` stores only models, tool names, token usage and the links.
+- **Streaming** (`stream: true`) is recorded too: iterate the client's stream as usual (its extras, such as `controller`, are untouched); once it ends the events carry the full output, tool calls and token usage (for OpenAI chat, usage needs `stream_options: { include_usage: true }`). A stream you stop early (`break`) is marked `truncated: true`; one that fails mid-way becomes `llm_error` with the partial output. A stream you never read does not hold up other recordings. The `.stream()` helper methods are not recorded yet.
 - `zdb.uninstrument()` restores the original methods.
 
 ## Python vs TypeScript

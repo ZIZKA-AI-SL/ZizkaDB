@@ -32,8 +32,15 @@ Supported: ``openai`` (sync and async chat completions and the Responses API,
 ``client.responses.create``; chat completions also cover
 OpenAI-compatible servers such as Ollama, vLLM and LM Studio), ``anthropic``
 (sync and async messages) and ``litellm`` (``completion``/``acompletion``
-called as ``litellm.completion``). Streaming calls are recorded without their
-output.
+called as ``litellm.completion``).
+
+Streaming (``stream=True``): you get the provider's stream unchanged; chunks
+are read as they pass and the events are written once the stream ends, with
+the full output, tool calls and token usage (OpenAI chat only sends usage
+when you set ``stream_options={"include_usage": True}``). A stream closed
+early is recorded with ``"truncated": True``; one that fails mid-way as
+``llm_error`` with the partial output. The ``.stream()`` helper methods are
+not recorded yet.
 """
 
 from __future__ import annotations
@@ -257,6 +264,194 @@ _PARSERS: dict[str, Callable[[Any, str | None], _Parsed]] = {
 }
 
 
+# ── streaming ───────────────────────────────────────────────────────────────
+
+
+class _StreamAccumulator:
+    """Rebuilds the parsed result of a streamed call from its chunks/events."""
+
+    def __init__(self, shape: str, model: str | None) -> None:
+        self.shape = shape
+        self.model = model
+        self.texts: list[str] = []
+        self.tools: dict[Any, dict[str, Any]] = {}  # index -> {id, name, args}
+        self.usage: dict[str, Any] | None = None
+        self.final: _Parsed | None = None  # Responses API: the completed response
+
+    def feed(self, chunk: Any) -> None:
+        try:
+            getattr(self, f"_feed_{self.shape}")(chunk)
+        except Exception as exc:  # a chunk we cannot read is skipped
+            logger.debug("zizkadb.instrument: skipped a stream chunk: %s", exc)
+
+    def _feed_openai(self, chunk: Any) -> None:
+        self.model = _get(chunk, "model") or self.model
+        for choice in _get(chunk, "choices") or []:
+            delta = _get(choice, "delta")
+            if _get(delta, "content"):
+                self.texts.append(_get(delta, "content"))
+            for tc in _get(delta, "tool_calls") or []:
+                slot = self.tools.setdefault(_get(tc, "index", len(self.tools)), {"id": None, "name": None, "args": ""})
+                fn = _get(tc, "function")
+                slot["id"] = _get(tc, "id") or slot["id"]
+                slot["name"] = _get(fn, "name") or slot["name"]
+                slot["args"] += _get(fn, "arguments") or ""
+        usage = _get(chunk, "usage")
+        if usage is not None:  # only sent with stream_options={"include_usage": True}
+            self.usage = _parse_openai({"model": self.model, "usage": usage}, self.model).usage
+
+    def _feed_openai_responses(self, event: Any) -> None:
+        kind = _get(event, "type")
+        if kind == "response.output_text.delta" and _get(event, "delta"):
+            self.texts.append(_get(event, "delta"))
+        elif kind in ("response.completed", "response.incomplete") and _get(event, "response") is not None:
+            self.final = _parse_openai_responses(_get(event, "response"), self.model)
+
+    def _feed_anthropic(self, event: Any) -> None:
+        kind = _get(event, "type")
+        if kind == "message_start":
+            message = _get(event, "message")
+            self.model = _get(message, "model") or self.model
+            usage = _get(message, "usage")
+            if usage is not None:
+                self.usage = _parse_anthropic({"model": self.model, "usage": usage}, self.model).usage
+        elif kind == "content_block_start":
+            block = _get(event, "content_block")
+            if _get(block, "type") == "tool_use":
+                self.tools[_get(event, "index")] = {"id": _get(block, "id"), "name": _get(block, "name"), "args": ""}
+        elif kind == "content_block_delta":
+            delta = _get(event, "delta")
+            if _get(delta, "type") == "text_delta":
+                self.texts.append(_get(delta, "text") or "")
+            elif _get(delta, "type") == "input_json_delta" and _get(event, "index") in self.tools:
+                self.tools[_get(event, "index")]["args"] += _get(delta, "partial_json") or ""
+        elif kind == "message_delta":
+            usage = _get(event, "usage")
+            if usage is not None and self.usage is not None:
+                self.usage["output_tokens"] = _get(usage, "output_tokens", 0) or 0
+
+    def result(self) -> _Parsed:
+        if self.final is not None:
+            return self.final
+        calls = [
+            {"id": t["id"], "name": t["name"], "arguments": _parse_args(t["args"]) if t["args"] else {}}
+            for _, t in sorted(self.tools.items(), key=lambda kv: (kv[0] is None, kv[0]))
+        ]
+        return _Parsed(self.model, "".join(self.texts) or None, calls, self.usage)
+
+
+class _SyncStream:
+    """Passes a provider stream through unchanged and records it when it ends.
+
+    "complete" when iteration finishes, "truncated" when the stream is closed
+    or its ``with`` block exits first, "error" when reading it raises.
+    """
+
+    def __init__(self, inner: Any, acc: _StreamAccumulator, finish: Callable[[str, Exception | None], None]) -> None:
+        self._inner = inner
+        self._acc = acc
+        self._finish_cb = finish
+        self._it: Any = None
+        self._done = False
+
+    def _finish(self, outcome: str, exc: Exception | None = None) -> None:
+        if not self._done:
+            self._done = True
+            self._finish_cb(outcome, exc)
+
+    def __iter__(self) -> "_SyncStream":
+        return self
+
+    def __next__(self) -> Any:
+        if self._it is None:
+            self._it = iter(self._inner)
+        try:
+            chunk = next(self._it)
+        except StopIteration:
+            self._finish("complete")
+            raise
+        except Exception as exc:
+            self._finish("error", exc)
+            raise
+        self._acc.feed(chunk)
+        return chunk
+
+    def __enter__(self) -> "_SyncStream":
+        enter = getattr(self._inner, "__enter__", None)
+        if enter is not None:
+            enter()
+        return self
+
+    def __exit__(self, *exc_info: Any) -> Any:
+        self._finish("truncated")
+        exit_ = getattr(self._inner, "__exit__", None)
+        return exit_(*exc_info) if exit_ is not None else None
+
+    def close(self) -> None:
+        self._finish("truncated")
+        close = getattr(self._inner, "close", None)
+        if close is not None:
+            close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _AsyncStream:
+    """Async counterpart of :class:`_SyncStream`."""
+
+    def __init__(self, inner: Any, acc: _StreamAccumulator, finish: Callable[[str, Exception | None], Any]) -> None:
+        self._inner = inner
+        self._acc = acc
+        self._finish_cb = finish
+        self._it: Any = None
+        self._done = False
+
+    async def _finish(self, outcome: str, exc: Exception | None = None) -> None:
+        if not self._done:
+            self._done = True
+            await self._finish_cb(outcome, exc)
+
+    def __aiter__(self) -> "_AsyncStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._it is None:
+            self._it = self._inner.__aiter__()
+        try:
+            chunk = await self._it.__anext__()
+        except StopAsyncIteration:
+            await self._finish("complete")
+            raise
+        except Exception as exc:
+            await self._finish("error", exc)
+            raise
+        self._acc.feed(chunk)
+        return chunk
+
+    async def __aenter__(self) -> "_AsyncStream":
+        enter = getattr(self._inner, "__aenter__", None)
+        if enter is not None:
+            await enter()
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> Any:
+        await self._finish("truncated")
+        exit_ = getattr(self._inner, "__aexit__", None)
+        return await exit_(*exc_info) if exit_ is not None else None
+
+    async def close(self) -> None:
+        await self._finish("truncated")
+        close = getattr(self._inner, "close", None)
+        if close is not None:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 # ── recording ───────────────────────────────────────────────────────────────
 
 
@@ -355,11 +550,14 @@ class Instrumentation:
             plan.append(("user_message", {"text": self._content(user_text)}, None))
         return plan
 
-    def _llm_data(self, provider: str, kwargs: dict[str, Any], parsed: _Parsed | None, streamed: bool) -> dict[str, Any]:
+    def _llm_data(
+        self, provider: str, kwargs: dict[str, Any], parsed: _Parsed | None, streamed: bool, truncated: bool = False
+    ) -> dict[str, Any]:
         data: dict[str, Any] = {"provider": provider, "model": (parsed.model if parsed else None) or kwargs.get("model")}
         if streamed:
             data["streamed"] = True
-            data["note"] = "streaming response; output not captured"
+        if truncated:
+            data["truncated"] = True
         if parsed is not None:
             data["output"] = self._content(parsed.text)
             if parsed.tool_calls:
@@ -367,6 +565,47 @@ class Instrumentation:
             if parsed.usage:
                 data["token_usage"] = parsed.usage
         return data
+
+    def _after_sync(self, provider: str, kwargs: dict[str, Any], parsed: _Parsed | None, parent: str | None,
+                    streamed: bool = False, truncated: bool = False) -> None:
+        llm_id = self._write_sync("llm_end", self._llm_data(provider, kwargs, parsed, streamed, truncated), parent)
+        for call in parsed.tool_calls if parsed else []:
+            eid = self._write_sync("tool_call", {"tool": call["name"], "tool_call_id": call["id"], "arguments": self._content(call["arguments"])}, llm_id)
+            self._remember_tool(call["id"], eid)
+
+    async def _after_async(self, provider: str, kwargs: dict[str, Any], parsed: _Parsed | None, parent: str | None,
+                           streamed: bool = False, truncated: bool = False) -> None:
+        llm_id = await self._write_async("llm_end", self._llm_data(provider, kwargs, parsed, streamed, truncated), parent)
+        for call in parsed.tool_calls if parsed else []:
+            eid = await self._write_async("tool_call", {"tool": call["name"], "tool_call_id": call["id"], "arguments": self._content(call["arguments"])}, llm_id)
+            self._remember_tool(call["id"], eid)
+
+    def _stream_error_data(self, provider: str, kwargs: dict[str, Any], acc: _StreamAccumulator, exc: Exception | None) -> dict[str, Any]:
+        partial = acc.result()
+        return {"provider": provider, "model": partial.model or kwargs.get("model"), "streamed": True,
+                "error": _clip(repr(exc)), "partial_output": self._content(partial.text)}
+
+    def _wrap_stream_sync(self, resp: Any, provider: str, shape: str, kwargs: dict[str, Any], parent: str | None) -> Any:
+        acc = _StreamAccumulator(shape, kwargs.get("model"))
+
+        def finish(outcome: str, exc: Exception | None) -> None:
+            if outcome == "error":
+                self._write_sync("llm_error", self._stream_error_data(provider, kwargs, acc, exc), parent)
+            else:
+                self._after_sync(provider, kwargs, acc.result(), parent, streamed=True, truncated=outcome == "truncated")
+
+        return _SyncStream(resp, acc, finish)
+
+    def _wrap_stream_async(self, resp: Any, provider: str, shape: str, kwargs: dict[str, Any], parent: str | None) -> Any:
+        acc = _StreamAccumulator(shape, kwargs.get("model"))
+
+        async def finish(outcome: str, exc: Exception | None) -> None:
+            if outcome == "error":
+                await self._write_async("llm_error", self._stream_error_data(provider, kwargs, acc, exc), parent)
+            else:
+                await self._after_async(provider, kwargs, acc.result(), parent, streamed=True, truncated=outcome == "truncated")
+
+        return _AsyncStream(resp, acc, finish)
 
     # -- wrappers -------------------------------------------------------------
 
@@ -393,12 +632,9 @@ class Instrumentation:
             except Exception as exc:
                 inst._write_sync("llm_error", {"provider": provider, "model": kwargs.get("model"), "error": _clip(repr(exc))}, parent)
                 raise
-            streamed = bool(kwargs.get("stream"))
-            parsed = None if streamed else _safe_parse(shape, resp, kwargs.get("model"))
-            llm_id = inst._write_sync("llm_end", inst._llm_data(provider, kwargs, parsed, streamed), parent)
-            for call in parsed.tool_calls if parsed else []:
-                eid = inst._write_sync("tool_call", {"tool": call["name"], "tool_call_id": call["id"], "arguments": inst._content(call["arguments"])}, llm_id)
-                inst._remember_tool(call["id"], eid)
+            if kwargs.get("stream"):
+                return inst._wrap_stream_sync(resp, provider, shape, kwargs, parent)
+            inst._after_sync(provider, kwargs, _safe_parse(shape, resp, kwargs.get("model")), parent)
             return resp
 
         wrapper.__wrapped__ = original  # type: ignore[attr-defined]
@@ -427,12 +663,9 @@ class Instrumentation:
             except Exception as exc:
                 await inst._write_async("llm_error", {"provider": provider, "model": kwargs.get("model"), "error": _clip(repr(exc))}, parent)
                 raise
-            streamed = bool(kwargs.get("stream"))
-            parsed = None if streamed else _safe_parse(shape, resp, kwargs.get("model"))
-            llm_id = await inst._write_async("llm_end", inst._llm_data(provider, kwargs, parsed, streamed), parent)
-            for call in parsed.tool_calls if parsed else []:
-                eid = await inst._write_async("tool_call", {"tool": call["name"], "tool_call_id": call["id"], "arguments": inst._content(call["arguments"])}, llm_id)
-                inst._remember_tool(call["id"], eid)
+            if kwargs.get("stream"):
+                return inst._wrap_stream_async(resp, provider, shape, kwargs, parent)
+            await inst._after_async(provider, kwargs, _safe_parse(shape, resp, kwargs.get("model")), parent)
             return resp
 
         wrapper.__wrapped__ = original  # type: ignore[attr-defined]
