@@ -11,7 +11,7 @@ in one open-source database on Postgres. Built for **EU AI Act Article 12** reco
 
 Keyword + vector search · Agent drift measurement · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
-**[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations-langchain-langgraph-crewai-livekit-mcp)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
+**[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations-langchain-langgraph-crewai-livekit-openclaw-mcp)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
 
 [![CI](https://github.com/ZIZKA-AI-SL/ZizkaDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZIZKA-AI-SL/ZizkaDB/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
@@ -57,7 +57,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 
 - [Quickstart (60 seconds)](#quickstart-60-seconds)
   - [Self-host on a server](#self-host-on-a-server) · [Deploy on Redu Cloud](#deploy-on-redu-cloud)
-- [Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP](#integrations-langchain-langgraph-crewai-livekit-mcp)
+- [Integrations: LangChain, LangGraph, CrewAI, LiveKit, OpenClaw, MCP](#integrations-langchain-langgraph-crewai-livekit-openclaw-mcp)
 - [Connect your agent](#connect-your-agent)
 - [What it does](#what-it-does)
 - [Audit trail, agent auditability and EU AI Act Article 12](#audit-trail-agent-auditability-and-eu-ai-act-article-12)
@@ -184,14 +184,14 @@ Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troub
 
 ---
 
-## Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP
+## Integrations: LangChain, LangGraph, CrewAI, LiveKit, OpenClaw, MCP
 
 Works with the agent framework you already use — add one package and every step is logged with its cause.
 
 **In CI (GitHub Marketplace):** [ZizkaDB Why](https://github.com/marketplace/actions/zizkadb-why-explain-ai-agent-failures) explains agent test failures in your PR, and [ZizkaDB Audit](https://github.com/marketplace/actions/zizkadb-audit-verify-ai-agent-history) proves the recorded history is intact. One step, no account: `uses: ZIZKA-AI-SL/zizkadb-why-action@v1`. [How it works](docs/integrate/github-actions.md).
 
 <p align="center">
-  <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/python/3776AB" alt="Python" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt="TypeScript" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#langchain"><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="LangChain" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#crewai"><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="CrewAI" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#livekit-agents-voice"><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="LiveKit" height="40"/></a> &nbsp;&nbsp; <a href="mcp/README.md"><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="MCP" height="40"/></a> &nbsp;&nbsp; <a href="https://db.zizka.ai/swagger"><img src="https://cdn.simpleicons.org/swagger/85EA2D" alt="REST API" height="40"/></a>
+  <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/python/3776AB" alt="Python" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt="TypeScript" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#langchain"><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="LangChain" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#crewai"><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="CrewAI" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#livekit-agents-voice"><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="LiveKit" height="40"/></a> &nbsp;&nbsp; <a href="integrations/openclaw/README.md"><img src="https://docs.openclaw.ai/assets/pixel-lobster.svg" alt="OpenClaw" height="40"/></a> &nbsp;&nbsp; <a href="mcp/README.md"><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="MCP" height="40"/></a> &nbsp;&nbsp; <a href="https://db.zizka.ai/swagger"><img src="https://cdn.simpleicons.org/swagger/85EA2D" alt="REST API" height="40"/></a>
 </p>
 
 <table>
@@ -225,6 +225,11 @@ Works with the agent framework you already use — add one package and every ste
     <td nowrap><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="" height="20" align="center"/>&nbsp;<a href="CONNECT.md#livekit-agents-voice"><strong>LiveKit</strong></a></td>
     <td><code>pip install zizkadb-livekit</code></td>
     <td>Voice agents — one call, one session</td>
+  </tr>
+  <tr>
+    <td nowrap><img src="https://docs.openclaw.ai/assets/pixel-lobster.svg" alt="" height="20" align="center"/>&nbsp;<a href="integrations/openclaw/README.md"><strong>OpenClaw</strong></a></td>
+    <td><code>openclaw plugins install clawhub:@zizka-ai/zizkadb</code></td>
+    <td>Plugin: every message, tool call and model output, with its cause</td>
   </tr>
   <tr>
     <td nowrap><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="" height="20" align="center"/>&nbsp;<a href="mcp/README.md"><strong>MCP</strong></a></td>
@@ -330,7 +335,7 @@ ZizkaDB supports your record-keeping obligations under EU AI Act Article 12 and 
 
 ```mermaid
 flowchart LR
-    A[Your agent<br/>SDK · LangChain · CrewAI · LiveKit] -->|events + parent_id| B[ZizkaDB API]
+    A[Your agent<br/>SDK · LangChain · CrewAI · LiveKit · OpenClaw] -->|events + parent_id| B[ZizkaDB API]
     D[Dashboard] --> B
     M[MCP server<br/>Cursor · Claude] --> B
     B --> P[(PostgreSQL<br/>events · hash chain · keyword search)]
@@ -473,6 +478,8 @@ All-time downloads of every ZizkaDB package. The total badge at the top is the s
 | `zizkadb-langchain` | PyPI | [![zizkadb-langchain](https://img.shields.io/pepy/dt/zizkadb-langchain?label=downloads)](https://pepy.tech/projects/zizkadb-langchain) | [pepy.tech](https://pepy.tech/projects/zizkadb-langchain) · [pypi.org](https://pypi.org/project/zizkadb-langchain/) |
 | `zizkadb-crewai` | PyPI | [![zizkadb-crewai](https://img.shields.io/pepy/dt/zizkadb-crewai?label=downloads)](https://pepy.tech/projects/zizkadb-crewai) | [pepy.tech](https://pepy.tech/projects/zizkadb-crewai) · [pypi.org](https://pypi.org/project/zizkadb-crewai/) |
 | `zizkadb-sdk` (TypeScript SDK) | npm | [![zizkadb-sdk npm](https://img.shields.io/npm/d18m/zizkadb-sdk?label=downloads)](https://npm-stat.com/charts.html?package=zizkadb-sdk) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-sdk) · [npmjs.com](https://www.npmjs.com/package/zizkadb-sdk) |
+| `@zizka-ai/zizkadb` (OpenClaw plugin) | ClawHub | [![zizkadb ClawHub](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fclawhub.ai%2Fapi%2Fv1%2Fpackages%2F%2540zizka-ai%252Fzizkadb&query=%24.package.stats.downloads&label=downloads)](https://clawhub.ai/plugins/@zizka-ai/zizkadb) | [clawhub.ai](https://clawhub.ai/plugins/@zizka-ai/zizkadb) |
+| `zizkadb-openclaw` (OpenClaw plugin) | npm | [![zizkadb-openclaw npm](https://img.shields.io/npm/d18m/zizkadb-openclaw?label=downloads)](https://npm-stat.com/charts.html?package=zizkadb-openclaw) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-openclaw) · [npmjs.com](https://www.npmjs.com/package/zizkadb-openclaw) |
 
 ---
 
