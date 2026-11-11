@@ -81,6 +81,26 @@ Then call OpenAI, Anthropic or LiteLLM as usual (sync or async). Each call is re
 - OpenAI-compatible servers (Ollama, vLLM, LM Studio) are covered through the `openai` client. Streaming calls are recorded without their output.
 - A failed write is logged as a warning; your LLM call is never affected. `inst.uninstrument()` restores the original methods.
 
+## Turn a bad session into a test
+
+```bash
+zizkadb test from-session <session_id> --agent my-bot --entry my_app.agent:answer
+pytest tests/test_session_<id>.py
+```
+
+Writes a snapshot of the session (`tests/zizkadb_sessions/<name>.json`: user inputs, tool path, final answer, errors) and a pytest test that replays the user inputs through your agent and checks it calls the same tools, in the same order, without errors. Without `--entry`, connect `run_agent()` in the generated file to your agent. If the recorded run was the bug, edit `EXPECTED_TOOL_CALLS` to the path the agent should take.
+
+The test runs inside `zizkadb.testing.capture()`, which records OpenAI / Anthropic / LiteLLM calls in memory (no ZizkaDB server needed). Use it in your own tests too:
+
+```python
+from zizkadb.testing import capture
+
+def test_refund_question():
+    with capture() as run:
+        my_agent("How long do refunds take?")
+    assert run.tool_calls == ["search_policies"] and not run.errors
+```
+
 ## Multi-agent apps (ZizkaDB Cloud)
 
 An API key works for one agent name. Running several agents — and agent-to-agent messaging between them — is a [ZizkaDB Cloud](https://db.zizka.ai) feature; create each agent and its key in the dashboard.

@@ -209,6 +209,7 @@ class Instrumentation:
         self._db = db
         self.agent = agent
         self.capture_content = capture_content
+        self.providers: tuple[str, ...] = ()
         self._patches: list[tuple[Any, str, Any]] = []
         # tool_call_id -> event_id, so a later tool result links to its call
         self._tool_events: OrderedDict[str, str] = OrderedDict()
@@ -430,7 +431,14 @@ def instrument(
     global _active
     if _active is not None:
         _active.uninstrument()
-    inst = Instrumentation(db, agent, capture_content)
+    inst = _apply(Instrumentation(db, agent, capture_content), providers)
+    _active = inst
+    return inst
+
+
+def _apply(inst: Instrumentation, providers: tuple[str, ...]) -> Instrumentation:
+    """Patch the installed provider libraries to report to ``inst``."""
+    inst.providers = tuple(providers)
     patched = []
     for provider in providers:
         for module_path, cls_name, attr, kind, shape in _TARGETS.get(provider, []):
@@ -448,7 +456,6 @@ def instrument(
             patched.append(f"{provider}:{cls_name or module_path}.{attr}")
     if not patched:
         logger.warning("zizkadb.instrument: none of %s is installed; nothing to record", ", ".join(providers))
-    _active = inst
     return inst
 
 
