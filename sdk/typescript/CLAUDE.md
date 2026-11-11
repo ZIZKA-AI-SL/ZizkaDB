@@ -48,7 +48,7 @@ const chain = await db.why(tool.eventId)
 
 - `src/index.ts` — `ZizkaDB` class and all public methods
 - `src/types.ts` — TypeScript type definitions
-- `src/instrument.ts` — `instrument(db, { agent, clients })`: auto-capture of OpenAI (chat + Responses API) and Anthropic client calls as linked events; patches the given client instances, returns the original promise, records in the background (`flush()`, `uninstrument()`); `clients` may be classes (patches their resource prototypes)
+- `src/instrument.ts` — `instrument(db, { agent, clients })`: auto-capture of OpenAI (chat + Responses API), Anthropic, Mistral, Cohere v2 and Bedrock (`send()` of Converse commands) client calls as linked events; `wrap(owner, provider, shape, method, { alwaysStream, streamProp })`; patches the given client instances, returns the original promise, records in the background (`flush()`, `uninstrument()`); `clients` may be classes (patches their resource prototypes)
 - `zizkadbMiddleware(db, { agent })` (also `src/instrument.ts`): Vercel AI SDK language-model middleware (spec v1-v3, AI SDK 4-6); records through the same `Recorder` (`begin` / `finish` / `fail`), or into the active `capture()` run
 - `src/testing.ts` — `capture({ clients }, fn)`: in-memory recording for tests; other recorders stay quiet during it
 - `src/sessionTests.ts` + `src/cli.ts` — `npx zizkadb-sdk test from-session`: session snapshot + generated vitest test (Node-only: never import from `index.ts`, which must stay usable in browsers and edge runtimes)

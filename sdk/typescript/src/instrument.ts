@@ -15,8 +15,12 @@
  *
  * Supported clients (detected by shape, no import of the libraries):
  * - OpenAI: `chat.completions.create` and `responses.create` (also covers
- *   OpenAI-compatible servers such as Ollama, vLLM and LM Studio)
+ *   OpenAI-compatible APIs: DeepSeek, GLM, Kimi, Ollama, vLLM, LM Studio...)
  * - Anthropic: `messages.create`
+ * - Mistral (`@mistralai/mistralai`): `chat.complete`, `chat.stream`
+ * - Cohere (`cohere-ai` CohereClientV2): `chat`, `chatStream`
+ * - AWS Bedrock (`@aws-sdk/client-bedrock-runtime`): `send()` of
+ *   ConverseCommand / ConverseStreamCommand
  *
  * The call returns the client's own promise (so `.withResponse()` and other
  * extras keep working); recording runs in the background and never changes
@@ -71,7 +75,7 @@ export interface Instrumentation {
   uninstrument(): void
 }
 
-type Shape = 'openai' | 'openai_responses' | 'anthropic' | 'ai_sdk'
+type Shape = 'openai' | 'openai_responses' | 'anthropic' | 'ai_sdk' | 'mistral' | 'cohere' | 'bedrock'
 
 interface Parsed {
   model: string | null
@@ -85,6 +89,13 @@ interface Parsed {
 const TEXT_LIMIT = 4000
 const TOOL_IDS_KEPT = 1000
 const TEXT_BLOCKS = new Set(['text', 'input_text', 'output_text'])
+
+/** First defined field among snake_case / camelCase spellings (native SDKs use camelCase). */
+function pick(obj: AnyRecord | null | undefined, ...names: string[]): any {
+  if (!obj) return undefined
+  for (const n of names) if (obj[n] !== undefined && obj[n] !== null) return obj[n]
+  return undefined
+}
 
 function clip(value: unknown): unknown {
   if (typeof value === 'string' && value.length > TEXT_LIMIT) {
@@ -144,9 +155,32 @@ function requestView(shape: Shape, params: AnyRecord): { userText: string | null
     const last = items[items.length - 1]
     return { userText: last?.role === 'user' ? textOf(last.content) : null, results }
   }
+  if (shape === 'bedrock') {
+    const messages: AnyRecord[] = Array.isArray(params.messages) ? params.messages : []
+    for (const msg of messages) {
+      for (const block of msg?.content ?? []) {
+        const tr = block?.toolResult
+        if (tr?.toolUseId) {
+          const texts = (tr.content ?? []).filter((p: AnyRecord) => p?.text).map((p: AnyRecord) => p.text)
+          results.push([tr.toolUseId, texts.length ? clip(texts.join('\n')) : (tr.content ?? []).map((p: AnyRecord) => p?.json)])
+        }
+      }
+    }
+    const last = messages[messages.length - 1]
+    let userText: string | null = null
+    if (last?.role === 'user' && !(last.content ?? []).some((b: AnyRecord) => b?.toolResult)) {
+      const texts = (last.content ?? []).filter((b: AnyRecord) => b?.text).map((b: AnyRecord) => b.text)
+      userText = texts.length ? texts.join('\n') : null
+    }
+    return { userText, results }
+  }
   const messages: AnyRecord[] = Array.isArray(params.messages) ? params.messages : []
   for (const msg of messages) {
-    if (msg?.role === 'tool' && msg.tool_call_id) results.push([msg.tool_call_id, clip(textOf(msg.content))])
+    const toolCallId = pick(msg, 'tool_call_id', 'toolCallId')
+    if (msg?.role === 'tool' && toolCallId) {
+      const text = textOf(msg.content)
+      results.push([toolCallId, text !== null ? clip(text) : msg.content])
+    }
     if (Array.isArray(msg?.content)) {
       for (const block of msg.content) {
         if (block?.type === 'tool_result' && block.tool_use_id) {
@@ -171,25 +205,59 @@ function requestView(shape: Shape, params: AnyRecord): { userText: string | null
 function openaiUsage(u: AnyRecord, model: string | null): AnyRecord {
   const out: AnyRecord = {
     model,
-    input_tokens: u.prompt_tokens ?? 0,
-    output_tokens: u.completion_tokens ?? 0,
-    cached_tokens: u.prompt_tokens_details?.cached_tokens || u.prompt_cache_hit_tokens || u.cached_tokens || 0,
+    input_tokens: pick(u, 'prompt_tokens', 'promptTokens') ?? 0,
+    output_tokens: pick(u, 'completion_tokens', 'completionTokens') ?? 0,
+    cached_tokens: pick(u, 'prompt_tokens_details', 'promptTokensDetails')?.cached_tokens || u.prompt_cache_hit_tokens || u.cached_tokens || 0,
   }
-  const reasoning = u.completion_tokens_details?.reasoning_tokens
+  const reasoning = pick(u, 'completion_tokens_details', 'completionTokensDetails')?.reasoning_tokens
   if (reasoning) out.reasoning_tokens = reasoning
   return out
 }
 
 function parseOpenAI(resp: AnyRecord, model: string | null): Parsed {
   const message = resp?.choices?.[0]?.message
-  const toolCalls = (message?.tool_calls ?? []).map((tc: AnyRecord) => ({
+  const toolCalls = (pick(message, 'tool_calls', 'toolCalls') ?? []).map((tc: AnyRecord) => ({
     id: tc.id ?? null, name: tc.function?.name ?? null, arguments: parseArgs(tc.function?.arguments),
   }))
   const usage = resp?.usage ? openaiUsage(resp.usage, resp.model ?? model) : null
   return {
     model: resp?.model ?? model, text: textOf(message?.content), toolCalls, usage,
-    reasoning: message?.reasoning_content ?? message?.reasoning ?? null,
+    reasoning: pick(message, 'reasoning_content', 'reasoningContent', 'reasoning') ?? null,
   }
+}
+
+function parseCohere(resp: AnyRecord, model: string | null): Parsed {
+  const message = resp?.message
+  const texts = (Array.isArray(message?.content) ? message.content : [])
+    .filter((b: AnyRecord) => b?.type === 'text' && b.text).map((b: AnyRecord) => b.text as string)
+  const toolCalls = (pick(message, 'tool_calls', 'toolCalls') ?? []).map((tc: AnyRecord) => ({
+    id: tc.id ?? null, name: tc.function?.name ?? null, arguments: parseArgs(tc.function?.arguments),
+  }))
+  const tokens = pick(resp?.usage, 'tokens', 'billed_units', 'billedUnits')
+  const usage = tokens ? {
+    model,
+    input_tokens: Math.round(pick(tokens, 'input_tokens', 'inputTokens') ?? 0),
+    output_tokens: Math.round(pick(tokens, 'output_tokens', 'outputTokens') ?? 0),
+    cached_tokens: 0,
+  } : null
+  return { model, text: texts.length ? texts.join('') : null, toolCalls, usage, reasoning: pick(message, 'tool_plan', 'toolPlan') ?? null }
+}
+
+function bedrockUsage(u: AnyRecord | undefined, model: string | null): AnyRecord | null {
+  if (!u) return null
+  return { model, input_tokens: u.inputTokens ?? 0, output_tokens: u.outputTokens ?? 0, cached_tokens: u.cacheReadInputTokens ?? 0 }
+}
+
+function parseBedrock(resp: AnyRecord, model: string | null): Parsed {
+  const texts: string[] = []
+  const reasoning: string[] = []
+  const toolCalls: Parsed['toolCalls'] = []
+  for (const block of resp?.output?.message?.content ?? []) {
+    if (block?.text) texts.push(block.text)
+    else if (block?.toolUse) toolCalls.push({ id: block.toolUse.toolUseId ?? null, name: block.toolUse.name ?? null, arguments: block.toolUse.input })
+    else if (block?.reasoningContent?.reasoningText?.text) reasoning.push(block.reasoningContent.reasoningText.text)
+  }
+  return { model, text: texts.length ? texts.join('') : null, toolCalls, usage: bedrockUsage(resp?.usage, model), reasoning: reasoning.length ? reasoning.join('') : null }
 }
 
 function parseOpenAIResponses(resp: AnyRecord, model: string | null): Parsed {
@@ -274,6 +342,9 @@ const PARSERS: Record<Shape, (r: AnyRecord, m: string | null) => Parsed> = {
   openai_responses: parseOpenAIResponses,
   anthropic: parseAnthropic,
   ai_sdk: parseAiSdk,
+  mistral: parseOpenAI,
+  cohere: parseCohere,
+  bedrock: parseBedrock,
 }
 
 // ── streaming ─────────────────────────────────────────────────────────────
@@ -300,6 +371,9 @@ class StreamAccumulator {
       if (this.shape === 'openai') this.feedOpenAI(c)
       else if (this.shape === 'openai_responses') this.feedResponses(c)
       else if (this.shape === 'ai_sdk') this.feedAiSdk(c)
+      else if (this.shape === 'mistral') this.feedOpenAI(c?.data ?? c)
+      else if (this.shape === 'cohere') this.feedCohere(c)
+      else if (this.shape === 'bedrock') this.feedBedrock(c)
       else this.feedAnthropic(c)
     } catch {
       // a chunk we cannot read is skipped; the caller's stream is unaffected
@@ -321,11 +395,17 @@ class StreamAccumulator {
       const delta = choice?.delta ?? {}
       if (delta.content) this.texts.push(delta.content)
       if (delta.reasoning_content || delta.reasoning) this.reasoning.push(delta.reasoning_content || delta.reasoning)
-      for (const tc of delta.tool_calls ?? []) {
+      for (const tc of pick(delta, 'tool_calls', 'toolCalls') ?? []) {
+        const args = tc.function?.arguments
+        if (args && typeof args === 'object') {
+          // Mistral sends whole arguments
+          this.wholeCalls.push({ id: tc.id ?? null, name: tc.function?.name ?? null, arguments: args })
+          continue
+        }
         const slot = this.slot(tc.index ?? this.tools.size)
         slot.id = tc.id ?? slot.id
         slot.name = tc.function?.name ?? slot.name
-        slot.args += tc.function?.arguments ?? ''
+        slot.args += args ?? ''
       }
     }
     // only sent with stream_options: { include_usage: true }
@@ -340,6 +420,41 @@ class StreamAccumulator {
       this.wholeCalls.push({ id: p.toolCallId ?? null, name: p.toolName ?? null, arguments: parseArgs(p.input ?? p.args) })
     } else if (p?.type === 'response-metadata' && p.modelId) this.model = p.modelId
     else if (p?.type === 'finish') this.usage = aiSdkUsage(p.usage, this.model)
+  }
+
+  private feedCohere(e: AnyRecord): void {
+    const message = e?.delta?.message
+    if (e?.type === 'content-delta' && message?.content?.text) this.texts.push(message.content.text)
+    else if (e?.type === 'tool-plan-delta' && pick(message, 'tool_plan', 'toolPlan')) this.reasoning.push(pick(message, 'tool_plan', 'toolPlan'))
+    else if (e?.type === 'tool-call-start' || e?.type === 'tool-call-delta') {
+      const tc = pick(message, 'tool_calls', 'toolCalls') ?? {}
+      const slot = this.slot(e.index ?? this.tools.size)
+      slot.id = tc.id ?? slot.id
+      slot.name = tc.function?.name ?? slot.name
+      slot.args += tc.function?.arguments ?? ''
+    } else if (e?.type === 'message-end') {
+      const tokens = pick(e.delta?.usage, 'tokens', 'billed_units', 'billedUnits')
+      if (tokens) {
+        this.usage = {
+          model: this.model,
+          input_tokens: Math.round(pick(tokens, 'input_tokens', 'inputTokens') ?? 0),
+          output_tokens: Math.round(pick(tokens, 'output_tokens', 'outputTokens') ?? 0),
+          cached_tokens: 0,
+        }
+      }
+    }
+  }
+
+  private feedBedrock(e: AnyRecord): void {
+    if (e?.contentBlockStart?.start?.toolUse) {
+      const tu = e.contentBlockStart.start.toolUse
+      this.tools.set(e.contentBlockStart.contentBlockIndex ?? this.tools.size, { id: tu.toolUseId ?? null, name: tu.name ?? null, args: '' })
+    } else if (e?.contentBlockDelta) {
+      const d = e.contentBlockDelta.delta ?? {}
+      if (d.text) this.texts.push(d.text)
+      else if (d.toolUse && this.tools.has(e.contentBlockDelta.contentBlockIndex)) this.tools.get(e.contentBlockDelta.contentBlockIndex)!.args += d.toolUse.input ?? ''
+      else if (d.reasoningContent?.text) this.reasoning.push(d.reasoningContent.text)
+    } else if (e?.metadata?.usage) this.usage = bedrockUsage(e.metadata.usage, this.model)
   }
 
   private feedResponses(e: AnyRecord): void {
@@ -389,11 +504,19 @@ export function _setCapturing(on: boolean, recorder: Recorder | null = null): vo
   captureRecorder = on ? recorder : capturing > 0 ? captureRecorder : null
 }
 
+/** @internal How a wrapped method returns its stream. */
+interface WrapOptions {
+  /** The method always streams (`chat.stream`, `chatStream`), whatever its params say. */
+  alwaysStream?: boolean
+  /** The stream is a property of the response (`response.stream`). */
+  streamProp?: string
+}
+
 export class Recorder implements Instrumentation {
   private readonly toolEvents = new Map<string, string>()
   private readonly resultsSeen = new Set<string>()
   private tail: Promise<void> = Promise.resolve()
-  readonly patches: { owner: AnyRecord; hadOwn: boolean; previous: unknown }[] = []
+  readonly patches: { owner: AnyRecord; method: string; hadOwn: boolean; previous: unknown }[] = []
 
   constructor(
     private readonly db: InstrumentTarget,
@@ -489,7 +612,7 @@ export class Recorder implements Instrumentation {
   }
 
   /** Record one call. `result` is what the client returned, untouched. */
-  record(provider: string, shape: Shape, params: AnyRecord, result: unknown): void {
+  record(provider: string, shape: Shape, params: AnyRecord, result: unknown, opts: WrapOptions = {}): void {
     if (capturing > 0 && !this.forCapture) return
     const model: string | null = params.model ?? null
     const parent = this.begin(shape, params)
@@ -502,9 +625,11 @@ export class Recorder implements Instrumentation {
       then: (ok: (v: unknown) => void, bad: (e: unknown) => void) => unknown
     }
 
-    if (params.stream) {
-      thenable.then((stream) => {
+    if (opts.alwaysStream || params.stream) {
+      thenable.then((value) => {
         try {
+          // Bedrock ConverseStream: the events are on response.stream
+          const stream = opts.streamProp ? (value as AnyRecord)?.[opts.streamProp] : value
           this.wrapStream(stream as AnyRecord, shape, model, (outcome, acc, err) => {
             if (outcome === 'error') this.fail(provider, model, err, parent, acc.result())
             else this.finish(provider, model, acc.result(), parent, outcome === 'truncated' ? { streamed: true, truncated: true } : { streamed: true })
@@ -577,18 +702,41 @@ export class Recorder implements Instrumentation {
     }
   }
 
-  wrap(owner: AnyRecord, provider: string, shape: Shape): void {
-    const original = owner.create
+  wrap(owner: AnyRecord, provider: string, shape: Shape, method = 'create', opts: WrapOptions = {}): void {
+    const original = owner[method]
     if (typeof original !== 'function') return
-    const hadOwn = Object.prototype.hasOwnProperty.call(owner, 'create')
-    this.patches.push({ owner, hadOwn, previous: hadOwn ? original : undefined })
+    const hadOwn = Object.prototype.hasOwnProperty.call(owner, method)
+    this.patches.push({ owner, method, hadOwn, previous: hadOwn ? original : undefined })
     const recorder = this
-    owner.create = function (this: unknown, params: AnyRecord, ...rest: unknown[]) {
+    owner[method] = function (this: unknown, params: AnyRecord, ...rest: unknown[]) {
       const result = original.call(this ?? owner, params, ...rest)
       try {
-        recorder.record(provider, shape, params ?? {}, result)
+        recorder.record(provider, shape, params ?? {}, result, opts)
       } catch {
         // recording must never affect the call
+      }
+      return result
+    }
+  }
+
+  /** AWS Bedrock: `client.send(command)`; only Converse / ConverseStream commands are recorded. */
+  wrapBedrock(client: AnyRecord): void {
+    const original = client.send
+    if (typeof original !== 'function') return
+    const hadOwn = Object.prototype.hasOwnProperty.call(client, 'send')
+    this.patches.push({ owner: client, method: 'send', hadOwn, previous: hadOwn ? original : undefined })
+    const recorder = this
+    client.send = function (this: unknown, command: AnyRecord, ...rest: unknown[]) {
+      const result = original.call(this ?? client, command, ...rest)
+      const name = command?.constructor?.name
+      if (name === 'ConverseCommand' || name === 'ConverseStreamCommand') {
+        try {
+          const input = command.input ?? {}
+          recorder.record('bedrock', 'bedrock', { model: input.modelId ?? null, messages: input.messages }, result,
+            name === 'ConverseStreamCommand' ? { alwaysStream: true, streamProp: 'stream' } : {})
+        } catch {
+          // recording must never affect the call
+        }
       }
       return result
     }
@@ -599,9 +747,9 @@ export class Recorder implements Instrumentation {
   }
 
   uninstrument(): void {
-    for (const { owner, hadOwn, previous } of this.patches.reverse()) {
-      if (hadOwn) owner.create = previous
-      else delete owner.create
+    for (const { owner, method, hadOwn, previous } of this.patches.reverse()) {
+      if (hadOwn) owner[method] = previous
+      else delete owner[method]
     }
     this.patches.length = 0
   }
@@ -632,9 +780,21 @@ export function _instrument(recorder: Recorder, clients: unknown[]): Instrumenta
     if (c.chat?.completions) recorder.wrap(c.chat.completions, 'openai', 'openai')
     if (c.responses) recorder.wrap(c.responses, 'openai', 'openai_responses')
     if (c.messages && !c.chat) recorder.wrap(c.messages, 'anthropic', 'anthropic')
+    // Mistral: client.chat.complete / client.chat.stream
+    if (c.chat && !c.chat.completions && typeof c.chat.complete === 'function') {
+      recorder.wrap(c.chat, 'mistral', 'mistral', 'complete')
+      recorder.wrap(c.chat, 'mistral', 'mistral', 'stream', { alwaysStream: true })
+    }
+    // Cohere v2: client.chat / client.chatStream
+    if (typeof c.chatStream === 'function' && typeof c.chat === 'function') {
+      recorder.wrap(c, 'cohere', 'cohere', 'chat')
+      recorder.wrap(c, 'cohere', 'cohere', 'chatStream', { alwaysStream: true })
+    }
+    // AWS Bedrock runtime: client.send(new ConverseCommand(...))
+    if (typeof c.send === 'function' && c.constructor?.name === 'BedrockRuntimeClient') recorder.wrapBedrock(c)
   }
   if (!recorder.patches.length) {
-    console.warn('zizkadb.instrument: no OpenAI or Anthropic client found in `clients`; nothing to record')
+    console.warn('zizkadb.instrument: no supported client found in `clients`; nothing to record')
   }
   return recorder
 }

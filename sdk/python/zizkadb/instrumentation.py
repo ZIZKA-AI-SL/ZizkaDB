@@ -51,6 +51,7 @@ import contextvars
 import importlib
 import json
 import logging
+import sys
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -108,9 +109,46 @@ _TARGETS: dict[str, list[tuple[str, str | None, str, str, str]]] = {
         ("zai.api_resource.chat.completions", "Completions", "create", "sync", "openai"),
         ("zhipuai.api_resource.chat.completions", "Completions", "create", "sync", "openai"),
     ],
+    # Mistral (mistralai v1 and v2+ layouts)
+    "mistral": [
+        ("mistralai.client.chat", "Chat", "complete", "sync", "mistral"),
+        ("mistralai.client.chat", "Chat", "stream", "sync_stream", "mistral"),
+        ("mistralai.client.chat", "Chat", "complete_async", "async", "mistral"),
+        ("mistralai.client.chat", "Chat", "stream_async", "async_stream", "mistral"),
+        ("mistralai.chat", "Chat", "complete", "sync", "mistral"),
+        ("mistralai.chat", "Chat", "stream", "sync_stream", "mistral"),
+        ("mistralai.chat", "Chat", "complete_async", "async", "mistral"),
+        ("mistralai.chat", "Chat", "stream_async", "async_stream", "mistral"),
+    ],
+    # Cohere v2 chat (ClientV2 / AsyncClientV2)
+    "cohere": [
+        ("cohere.v2.client", "V2Client", "chat", "sync", "cohere"),
+        ("cohere.v2.client", "V2Client", "chat_stream", "sync_stream", "cohere"),
+        ("cohere.v2.client", "AsyncV2Client", "chat", "async", "cohere"),
+        ("cohere.v2.client", "AsyncV2Client", "chat_stream", "async_gen_stream", "cohere"),
+    ],
+    # AWS Bedrock Converse / ConverseStream through boto3 (clients are built at
+    # runtime, so the one method every call goes through is wrapped)
+    "bedrock": [
+        ("botocore.client", "BaseClient", "_make_api_call", "bedrock", "bedrock"),
+    ],
+    # Models run in-process
+    "llama_cpp": [
+        ("llama_cpp", "Llama", "create_chat_completion", "sync", "openai"),
+    ],
+    "transformers": [
+        ("transformers.pipelines.text_generation", "TextGenerationPipeline", "__call__", "hf_pipeline", "hf_pipeline"),
+    ],
 }
 
-_DEFAULT_PROVIDERS = ("openai", "anthropic", "litellm", "gemini", "ollama", "zhipu")
+# Heavy libraries (PyTorch, native code) are never imported by instrument():
+# they are patched only when the app has imported them already.
+_ONLY_IF_IMPORTED = {"transformers": "transformers", "llama_cpp": "llama_cpp"}
+
+_DEFAULT_PROVIDERS = (
+    "openai", "anthropic", "litellm", "gemini", "ollama", "zhipu",
+    "mistral", "cohere", "bedrock", "llama_cpp", "transformers",
+)
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -118,6 +156,25 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
+
+
+def _jsonable(value: Any, depth: int = 0) -> Any:
+    """A JSON-safe copy of a value recorded from a provider (SDK objects included)."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if depth > 6:
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v, depth + 1) for v in value]
+    dump = getattr(value, "model_dump", None) or getattr(value, "to_dict", None)
+    if callable(dump):
+        try:
+            return _jsonable(dump(), depth + 1)
+        except Exception:
+            pass
+    return str(value)
 
 
 def _clip(value: Any, limit: int = _TEXT_LIMIT) -> Any:
@@ -173,7 +230,9 @@ def _tool_results(messages: Any) -> list[tuple[str, Any]]:
     out: list[tuple[str, Any]] = []
     for msg in messages if isinstance(messages, list) else []:
         if _get(msg, "role") == "tool" and _get(msg, "tool_call_id"):
-            out.append((_get(msg, "tool_call_id"), _clip(_text_of(_get(msg, "content")))))
+            raw = _get(msg, "content")
+            text = _text_of(raw)
+            out.append((_get(msg, "tool_call_id"), _clip(text) if text is not None else raw))
         elif _get(msg, "role") == "tool" and _get(msg, "tool_name"):
             # ollama: tool calls carry no id, results name their tool
             out.append((_name_key(_get(msg, "tool_name")), _clip(_text_of(_get(msg, "content")))))
@@ -224,6 +283,26 @@ def _gemini_view(contents: Any) -> tuple[str | None, list[tuple[str, Any]]]:
     return user_text, results
 
 
+def _bedrock_view(messages: Any) -> tuple[str | None, list[tuple[str, Any]]]:
+    """(new user text, tool results) of Bedrock Converse ``messages``."""
+    results: list[tuple[str, Any]] = []
+    for msg in messages if isinstance(messages, list) else []:
+        for block in _get(msg, "content") or []:
+            tr = _get(block, "toolResult")
+            if tr is not None and _get(tr, "toolUseId"):
+                parts = _get(tr, "content") or []
+                texts = [_get(p, "text") for p in parts if _get(p, "text")]
+                results.append((_get(tr, "toolUseId"), _clip("\n".join(texts)) if texts else [_get(p, "json") for p in parts]))
+    last = messages[-1] if isinstance(messages, list) and messages else None
+    user_text = None
+    if last is not None and _get(last, "role") == "user":
+        blocks = _get(last, "content") or []
+        if not any(_get(b, "toolResult") is not None for b in blocks):
+            texts = [_get(b, "text") for b in blocks if _get(b, "text")]
+            user_text = "\n".join(texts) if texts else None
+    return user_text, results
+
+
 def _responses_items(kwargs: dict[str, Any]) -> list[Any]:
     """Responses API ``input`` as a list of items (a bare string is one user message)."""
     raw = kwargs.get("input")
@@ -236,6 +315,13 @@ def _request_view(shape: str, kwargs: dict[str, Any], args: tuple[Any, ...] = ()
     """(new user text, tool results) carried by a request, for any API shape."""
     if shape == "gemini":
         return _gemini_view(kwargs["contents"] if "contents" in kwargs else (args[1] if len(args) > 1 else None))
+    if shape == "bedrock":
+        return _bedrock_view(kwargs.get("messages"))
+    if shape == "hf_pipeline":
+        inputs = kwargs.get("text_inputs", args[1] if len(args) > 1 else None)
+        if isinstance(inputs, str):
+            return inputs, []
+        return _new_user_text(inputs), _tool_results(inputs)
     if shape != "openai_responses":
         messages = _messages_arg(args, kwargs, "messages")
         return _new_user_text(messages), _tool_results(messages)
@@ -388,11 +474,75 @@ def _parse_openai_responses(resp: Any, model: str | None) -> _Parsed:
     return _Parsed(_get(resp, "model") or model, "\n".join(texts) if texts else None, calls, token_usage)
 
 
+def _parse_mistral(resp: Any, model: str | None) -> _Parsed:
+    # OpenAI-shaped; tool arguments may arrive as a dict instead of a JSON string
+    return _parse_openai(resp, model)
+
+
+def _parse_cohere(resp: Any, model: str | None) -> _Parsed:
+    message = _get(resp, "message")
+    texts = [_get(b, "text") for b in _get(message, "content") or [] if _get(b, "type") == "text" and _get(b, "text")]
+    calls = []
+    for tc in _get(message, "tool_calls") or []:
+        fn = _get(tc, "function")
+        calls.append({"id": _get(tc, "id"), "name": _get(fn, "name"), "arguments": _parse_args(_get(fn, "arguments"))})
+    usage = _get(resp, "usage")
+    tokens = _get(usage, "tokens") or _get(usage, "billed_units")
+    token_usage = None
+    if tokens is not None:
+        token_usage = {"model": model, "input_tokens": int(_get(tokens, "input_tokens", 0) or 0),
+                       "output_tokens": int(_get(tokens, "output_tokens", 0) or 0), "cached_tokens": 0}
+    return _Parsed(model, "".join(texts) or None, calls, token_usage, reasoning=_get(message, "tool_plan") or None)
+
+
+def _bedrock_usage(usage: Any, model: str | None) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    return {"model": model, "input_tokens": _get(usage, "inputTokens", 0) or 0,
+            "output_tokens": _get(usage, "outputTokens", 0) or 0,
+            "cached_tokens": _get(usage, "cacheReadInputTokens", 0) or 0}
+
+
+def _parse_bedrock(resp: Any, model: str | None) -> _Parsed:
+    message = _get(_get(resp, "output"), "message")
+    texts, reasoning, calls = [], [], []
+    for block in _get(message, "content") or []:
+        if _get(block, "text"):
+            texts.append(_get(block, "text"))
+        elif _get(block, "toolUse") is not None:
+            tu = _get(block, "toolUse")
+            calls.append({"id": _get(tu, "toolUseId"), "name": _get(tu, "name"), "arguments": _get(tu, "input")})
+        elif _get(block, "reasoningContent") is not None:
+            text = _get(_get(_get(block, "reasoningContent"), "reasoningText"), "text")
+            if text:
+                reasoning.append(text)
+    return _Parsed(model, "".join(texts) or None, calls, _bedrock_usage(_get(resp, "usage"), model),
+                   reasoning="".join(reasoning) or None)
+
+
+def _parse_hf_pipeline(resp: Any, model: str | None) -> _Parsed:
+    """TextGenerationPipeline output: chat in, the conversation out; text in, text out."""
+    first = resp[0] if isinstance(resp, list) and resp else resp
+    if isinstance(first, list):  # batched: the first input's results
+        first = first[0] if first else None
+    generated = _get(first, "generated_text")
+    if isinstance(generated, list):
+        last = generated[-1] if generated else None
+        text = _text_of(_get(last, "content")) if _get(last, "role") == "assistant" else None
+    else:
+        text = generated
+    return _Parsed(model, text or None, [], None)
+
+
 _PARSERS: dict[str, Callable[[Any, str | None], _Parsed]] = {
     "openai": _parse_openai,
     "openai_responses": _parse_openai_responses,
     "gemini": _parse_gemini,
     "ollama": _parse_ollama,
+    "mistral": _parse_mistral,
+    "cohere": _parse_cohere,
+    "bedrock": _parse_bedrock,
+    "hf_pipeline": _parse_hf_pipeline,
     "anthropic": _parse_anthropic,
 }
 
@@ -431,10 +581,62 @@ class _StreamAccumulator:
                 fn = _get(tc, "function")
                 slot["id"] = _get(tc, "id") or slot["id"]
                 slot["name"] = _get(fn, "name") or slot["name"]
-                slot["args"] += _get(fn, "arguments") or ""
+                args = _get(fn, "arguments")
+                if isinstance(args, dict):  # Mistral sends whole arguments
+                    slot["args"] = args
+                else:
+                    slot["args"] += args or ""
         usage = _get(chunk, "usage")
         if usage is not None:  # OpenAI: only with stream_options={"include_usage": True}
             self.usage = _openai_usage(usage, self.model)
+
+    def _feed_mistral(self, event: Any) -> None:
+        # CompletionEvent wraps the OpenAI-shaped chunk in .data
+        self._feed_openai(_get(event, "data") if _get(event, "data") is not None else event)
+
+    def _feed_cohere(self, event: Any) -> None:
+        kind = _get(event, "type")
+        message = _get(_get(event, "delta"), "message")
+        if kind == "content-delta":
+            text = _get(_get(message, "content"), "text")
+            if text:
+                self.texts.append(text)
+        elif kind == "tool-plan-delta" and _get(message, "tool_plan"):
+            self.reasoning.append(_get(message, "tool_plan"))
+        elif kind in ("tool-call-start", "tool-call-delta"):
+            tc = _get(message, "tool_calls")
+            fn = _get(tc, "function")
+            slot = self.tools.setdefault(_get(event, "index", len(self.tools)), {"id": None, "name": None, "args": ""})
+            slot["id"] = _get(tc, "id") or slot["id"]
+            slot["name"] = _get(fn, "name") or slot["name"]
+            slot["args"] += _get(fn, "arguments") or ""
+        elif kind == "message-end":
+            usage = _get(_get(event, "delta"), "usage")
+            tokens = _get(usage, "tokens") or _get(usage, "billed_units")
+            if tokens is not None:
+                self.usage = {"model": self.model, "input_tokens": int(_get(tokens, "input_tokens", 0) or 0),
+                              "output_tokens": int(_get(tokens, "output_tokens", 0) or 0), "cached_tokens": 0}
+
+    def _feed_bedrock(self, event: Any) -> None:
+        if _get(event, "contentBlockStart") is not None:
+            start = _get(_get(event, "contentBlockStart"), "start")
+            tu = _get(start, "toolUse")
+            if tu is not None:
+                idx = _get(_get(event, "contentBlockStart"), "contentBlockIndex", len(self.tools))
+                self.tools[idx] = {"id": _get(tu, "toolUseId"), "name": _get(tu, "name"), "args": ""}
+        elif _get(event, "contentBlockDelta") is not None:
+            cbd = _get(event, "contentBlockDelta")
+            delta = _get(cbd, "delta")
+            if _get(delta, "text"):
+                self.texts.append(_get(delta, "text"))
+            elif _get(delta, "toolUse") is not None:
+                idx = _get(cbd, "contentBlockIndex")
+                if idx in self.tools:
+                    self.tools[idx]["args"] += _get(_get(delta, "toolUse"), "input") or ""
+            elif _get(delta, "reasoningContent") is not None and _get(_get(delta, "reasoningContent"), "text"):
+                self.reasoning.append(_get(_get(delta, "reasoningContent"), "text"))
+        elif _get(event, "metadata") is not None:
+            self.usage = _bedrock_usage(_get(_get(event, "metadata"), "usage"), self.model)
 
     def _feed_gemini(self, chunk: Any) -> None:
         part = _parse_gemini(chunk, self.model)
@@ -603,7 +805,7 @@ class _AsyncStream:
 
     async def close(self) -> None:
         await self._finish("truncated")
-        close = getattr(self._inner, "close", None)
+        close = getattr(self._inner, "aclose", None) or getattr(self._inner, "close", None)
         if close is not None:
             result = close()
             if hasattr(result, "__await__"):
@@ -703,7 +905,7 @@ class Instrumentation:
     # -- one LLM call, as a plan of events ----------------------------------
 
     def _content(self, value: Any) -> Any:
-        return _clip(value) if self.capture_content else None
+        return _clip(_jsonable(value)) if self.capture_content else None
 
     def _before(self, kwargs: dict[str, Any], shape: str = "openai", args: tuple[Any, ...] = ()) -> list[tuple[str, dict[str, Any], str | None]]:
         """Events to write before the call: tool results, then the new user message."""
@@ -872,6 +1074,96 @@ class Instrumentation:
         wrapper.__wrapped__ = original  # type: ignore[attr-defined]
         return wrapper
 
+    def wrap_async_gen_stream(self, original: Callable[..., Any], provider: str, shape: str) -> Callable[..., Any]:
+        """Wrap an async generator method (Cohere ``AsyncClientV2.chat_stream``): calling it
+        returns the stream directly, so recording starts with the first chunk read."""
+        inst = self
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if _in_call.get():
+                return original(*args, **kwargs)
+
+            async def gen() -> Any:
+                parent = None
+                for event, data, tool_id in inst._before(kwargs, shape, args):
+                    eid = await inst._write_async(event, data, inst._tool_event(tool_id) if tool_id else None)
+                    parent = eid or parent
+                stream = inst._wrap_stream_async(original(*args, **kwargs), provider, shape, kwargs, parent)
+                complete = False
+                try:
+                    async for item in stream:
+                        yield item
+                    complete = True
+                finally:
+                    if not complete:
+                        await stream.close()  # stopped early, or failed: recorded once either way
+
+            return gen()
+
+        wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+        return wrapper
+
+    def wrap_bedrock(self, original: Callable[..., Any], provider: str, shape: str) -> Callable[..., Any]:
+        """Wrap botocore's ``BaseClient._make_api_call``; only Bedrock Converse calls are recorded."""
+        inst = self
+
+        def wrapper(client: Any, operation_name: str, api_params: dict[str, Any], *rest: Any, **kw: Any) -> Any:
+            if operation_name not in ("Converse", "ConverseStream") or _in_call.get():
+                return original(client, operation_name, api_params, *rest, **kw)
+            token = _in_call.set(True)
+            try:
+                meta = {"model": api_params.get("modelId"), "messages": api_params.get("messages")}
+                parent = None
+                for event, data, tool_id in inst._before(meta, "bedrock"):
+                    eid = inst._write_sync(event, data, inst._tool_event(tool_id) if tool_id else None)
+                    parent = eid or parent
+                try:
+                    resp = original(client, operation_name, api_params, *rest, **kw)
+                except Exception as exc:
+                    inst._write_sync("llm_error", {"provider": provider, "model": meta["model"], "error": _clip(repr(exc))}, parent)
+                    raise
+                if operation_name == "ConverseStream" and isinstance(resp, dict) and "stream" in resp:
+                    resp = dict(resp)
+                    resp["stream"] = inst._wrap_stream_sync(resp["stream"], provider, "bedrock", meta, parent)
+                    return resp
+                inst._after_sync(provider, meta, _safe_parse("bedrock", resp, meta["model"]), parent)
+                return resp
+            finally:
+                _in_call.reset(token)
+
+        wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+        return wrapper
+
+    def wrap_hf_pipeline(self, original: Callable[..., Any], provider: str, shape: str) -> Callable[..., Any]:
+        """Wrap ``TextGenerationPipeline.__call__`` (a model run in-process)."""
+        inst = self
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if _in_call.get():
+                return original(*args, **kwargs)
+            token = _in_call.set(True)
+            try:
+                pipe = args[0] if args else None
+                model_obj = getattr(pipe, "model", None)
+                name = getattr(model_obj, "name_or_path", None) or getattr(getattr(model_obj, "config", None), "_name_or_path", None)
+                meta = {"model": name}
+                parent = None
+                for event, data, tool_id in inst._before(kwargs, shape, args):
+                    eid = inst._write_sync(event, data, inst._tool_event(tool_id) if tool_id else None)
+                    parent = eid or parent
+                try:
+                    resp = original(*args, **kwargs)
+                except Exception as exc:
+                    inst._write_sync("llm_error", {"provider": provider, "model": name, "error": _clip(repr(exc))}, parent)
+                    raise
+                inst._after_sync(provider, meta, _safe_parse(shape, resp, name), parent)
+                return resp
+            finally:
+                _in_call.reset(token)
+
+        wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+        return wrapper
+
     # -- wrappers -------------------------------------------------------------
 
     def wrap_sync(self, original: Callable[..., Any], provider: str, shape: str, always_stream: bool = False) -> Callable[..., Any]:
@@ -988,6 +1280,10 @@ def instrument(
     inst = Instrumentation(db, agent, capture_content)
     patched = []
     for provider in providers:
+        root = _ONLY_IF_IMPORTED.get(provider)
+        if root is not None and root not in sys.modules:
+            logger.debug("zizkadb.instrument: %s not imported yet; call instrument() after importing it", root)
+            continue
         for module_path, cls_name, attr, kind, shape in _TARGETS.get(provider, []):
             try:
                 module = importlib.import_module(module_path)
@@ -1004,6 +1300,9 @@ def instrument(
                 "async_stream": lambda o, p, sh: inst.wrap_async(o, p, sh, always_stream=True),
                 "helper_sync": inst.wrap_helper_sync,
                 "helper_async": inst.wrap_helper_async,
+                "async_gen_stream": inst.wrap_async_gen_stream,
+                "bedrock": inst.wrap_bedrock,
+                "hf_pipeline": inst.wrap_hf_pipeline,
             }[kind]
             setattr(owner, attr, wrap(original, provider, shape))
             inst._patches.append((owner, attr, original))
