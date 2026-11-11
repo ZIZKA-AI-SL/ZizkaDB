@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### TypeScript SDK
+
+- **`instrument(db, { agent, clients })`: one-line auto-capture**, matching the Python SDK. Records every OpenAI (`chat.completions.create`, `responses.create`) and Anthropic (`messages.create`) call on the given clients as causally linked events: `user_message` → `llm_end` (with `token_usage`) → `tool_call` → `tool_result`. The call returns the client's own promise (`.withResponse()` keeps working); recording runs in the background, never changes the result or error, and `flush()` waits for it. `captureContent: false` keeps text out.
+
 ### Python SDK
 
 - **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.

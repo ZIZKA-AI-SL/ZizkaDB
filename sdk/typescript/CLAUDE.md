@@ -48,6 +48,7 @@ const chain = await db.why(tool.eventId)
 
 - `src/index.ts` — `ZizkaDB` class and all public methods
 - `src/types.ts` — TypeScript type definitions
+- `src/instrument.ts` — `instrument(db, { agent, clients })`: auto-capture of OpenAI (chat + Responses API) and Anthropic client calls as linked events; patches the given client instances, returns the original promise, records in the background (`flush()`, `uninstrument()`)
 
 ---
 

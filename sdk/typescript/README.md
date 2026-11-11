@@ -36,12 +36,37 @@ const chain = await db.why(result.eventId)
 chain.print()
 ```
 
+## Auto-capture LLM calls (one line)
+
+```ts
+import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
+import { ZizkaDB, instrument } from 'zizkadb-sdk'
+
+const db = new ZizkaDB({ apiKey: 'zizkadb_live_xxxx' })
+const openai = new OpenAI()
+const anthropic = new Anthropic()
+
+const zdb = instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })
+```
+
+Then call the clients as usual. Every call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
+
+`user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
+
+- Covers OpenAI `chat.completions.create` and `responses.create` (also OpenAI-compatible servers: Ollama, vLLM, LM Studio) and Anthropic `messages.create`.
+- Calls return the client's own promise, so `.withResponse()` and other extras keep working. Recording runs in the background and never changes the result or the error.
+- `await zdb.flush()` waits for pending writes, e.g. before a script or serverless function exits.
+- `captureContent: false` stores only models, tool names, token usage and the links. Streaming calls are recorded without their output.
+- `zdb.uninstrument()` restores the original methods.
+
 ## Python vs TypeScript
 
 | Feature | Python SDK | TypeScript SDK |
 |---------|------------|----------------|
 | `token_usage` on `log()` | `token_usage={...}` kwarg merges into event `data` | **Not supported** — pass token counts inside `data` manually, or use the Python SDK |
 | `db.token_usage()` analytics | Yes | Yes (`tokenUsage()`) |
+| Auto-capture LLM calls | `zizkadb.instrument(db, agent=...)` | `instrument(db, { agent, clients })` (records `token_usage` too) |
 
 ## Multi-agent apps (one key, many agent names)
 
