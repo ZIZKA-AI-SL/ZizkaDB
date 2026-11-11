@@ -53,7 +53,7 @@
     "openclaw": "2026.11.3",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^3.0.0",
+    "vitest": "^5.1.0",
     "zizkadb-sdk": "^0.7.0"
   },
   "engines": {
