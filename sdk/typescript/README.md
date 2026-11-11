@@ -143,7 +143,7 @@ Needs a server from release 0.6.0. Full guide: [CONNECT.md](https://github.com/Z
 | `ZIZKADB_HOST` | Self-hosted API URL. Used when the client gets no `host` argument, so with an API key it sends requests here instead of ZizkaDB Cloud (legacy alias `AGENTDB_HOST`) |
 | `ZIZKADB_TELEMETRY` | Set `false` to opt out (anonymous ping on client construct) |
 
-Core HTTP client only — LangChain, CrewAI, and LiveKit adapters are Python packages (`zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`).
+Core HTTP client only — LangChain, CrewAI, and LiveKit adapters are Python packages (`zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`). The [OpenClaw plugin](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/integrations/openclaw/README.md) (`zizkadb-openclaw`) is TypeScript and built on this SDK.
 
 ## Links
 

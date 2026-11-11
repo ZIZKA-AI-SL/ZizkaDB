@@ -29,7 +29,7 @@ The API and the single-container image make no outbound calls of their own.
 
 Each package sends one anonymous ping per process, the first time it is used, to count installs. It does not repeat on every call.
 
-- **Packages:** the SDK client (`zizkadb-sdk`, Python and TypeScript) and the MCP server (`zizkadb-mcp`). The integrations use the SDK client, so they are counted through its ping; the bundled LangChain and CrewAI integrations and `zizkadb-livekit` also report their own package name.
+- **Packages:** the SDK client (`zizkadb-sdk`, Python and TypeScript) and the MCP server (`zizkadb-mcp`). The integrations use the SDK client, so they are counted through its ping (the OpenClaw plugin bundles the TypeScript SDK and reports as `typescript`); the bundled LangChain and CrewAI integrations and `zizkadb-livekit` also report their own package name.
 - **Sent:**
   - A random install ID, generated once and stored in `~/.zizkadb/install_id`.
   - The package name and version.

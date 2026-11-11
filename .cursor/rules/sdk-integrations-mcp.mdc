@@ -41,13 +41,14 @@ const baseline = await db.baseline({ agent: 'my-bot' })
 
 ## Integrations (`integrations/`)
 
-Three standalone packages: `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`. **Published on PyPI**.
+Standalone Python packages on PyPI: `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`, `zizkadb-langgraph`. Plus the OpenClaw plugin (TypeScript): `zizkadb-openclaw` on npm, `@zizka-ai/zizkadb` on ClawHub.
 
 | Package | Class | Notes |
 |---|---|---|
 | `zizkadb-langchain` | `ZizkaDBCallbackHandler` | Duplicated in SDK — keep both in sync |
 | `zizkadb-crewai` | `ZizkaDBCrewLogger` | Duplicated in SDK — keep both in sync |
 | `zizkadb-livekit` | `ZizkaDBLiveKitObserver` | Standalone only — `integrations/livekit/` |
+| `zizkadb-openclaw` | OpenClaw plugin `zizkadb` | TypeScript — `integrations/openclaw/` (see `integrations/CLAUDE.md`) |
 
 ## MCP Server (`mcp/`)
 

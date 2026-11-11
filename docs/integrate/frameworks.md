@@ -10,6 +10,7 @@ Only list **SUPPORTED** when an adapter or official example exists in this repos
 | **LangChain (Python)** | Supported | `zizkadb-langchain` **0.1.3** — [examples/langchain-agent](../../examples/langchain-agent/) |
 | **CrewAI (Python)** | Supported | `zizkadb-crewai` **0.1.3** + auto `ZizkaDBCrewAIListener` — [examples/crewai-agent](../../examples/crewai-agent/) |
 | **LiveKit Agents (voice)** | Supported | `zizkadb-livekit` **0.2.0** — [docs/integrations/livekit.md](../integrations/livekit.md) · [examples/livekit-agent](../../examples/livekit-agent/) |
+| **OpenClaw** | Supported | Plugin `@zizka-ai/zizkadb` **0.1.0** (ClawHub) / `zizkadb-openclaw` (npm) — [integrations/openclaw](../../integrations/openclaw/) |
 | **MCP (Cursor, Claude Desktop)** | Supported | `zizkadb-mcp` **0.1.14** · [mcp/README.md](../../mcp/README.md) |
 | **OpenAI / Anthropic SDKs** | Example pattern | Manual `log()` around API calls · [examples/openai-agent](../../examples/openai-agent/) |
 | **LangGraph** | Supported | `zizkadb-langgraph` **0.1.0** — [integrations/langgraph](../../integrations/langgraph/) |

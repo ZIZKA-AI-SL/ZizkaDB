@@ -29,7 +29,7 @@ async with ZizkaDB(host="http://localhost:8000") as db:
     (await db.why(tool.event_id)).print()
 ```
 
-→ [CONNECT.md](CONNECT.md) for LangChain, CrewAI, **LiveKit (voice)**, TypeScript, MCP
+→ [CONNECT.md](CONNECT.md) for LangChain, CrewAI, **LiveKit (voice)**, **OpenClaw**, TypeScript, MCP
 
 ## Next
 

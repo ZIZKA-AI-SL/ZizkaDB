@@ -6,7 +6,7 @@ People with access to ZizkaDB's sensitive resources, what they are responsible f
 
 | Name | GitHub | Role | Access to sensitive resources |
 |------|--------|------|-------------------------------|
-| Mir Arshad Ali Talpur | [@Zizka-ai](https://github.com/Zizka-ai) | Lead maintainer, security contact | GitHub organization owner (`ZIZKA-AI-SL`); repository admin; PyPI owner of `zizkadb-sdk`, `zizkadb-mcp`, `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-langgraph`, `zizkadb-livekit`; npm owner of `zizkadb-sdk`; GitHub Actions secrets; security mailbox `founder@zizka.ai` |
+| Mir Arshad Ali Talpur | [@Zizka-ai](https://github.com/Zizka-ai) | Lead maintainer, security contact | GitHub organization owner (`ZIZKA-AI-SL`); repository admin; PyPI owner of `zizkadb-sdk`, `zizkadb-mcp`, `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-langgraph`, `zizkadb-livekit`; npm owner of `zizkadb-sdk`, `zizkadb-openclaw`; ClawHub owner of `@zizka-ai/zizkadb`; GitHub Actions secrets; security mailbox `founder@zizka.ai` |
 
 Container images on GHCR (`ghcr.io/zizka-ai-sl/*`) are published only by the `publish-images.yml` workflow, never from a personal machine.
 

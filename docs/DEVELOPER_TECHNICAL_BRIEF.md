@@ -21,7 +21,7 @@
 | ZizkaDB **is** | ZizkaDB **is not** |
 |----------------|-------------------|
 | An **event store + memory layer** for agents | A vector DB you query only by embedding similarity |
-| **Framework-agnostic** (Claude, OpenAI, LangChain, LiveKit, custom code) | Locked to one LLM vendor or one orchestration framework |
+| **Framework-agnostic** (Claude, OpenAI, LangChain, LiveKit, OpenClaw, custom code) | Locked to one LLM vendor or one orchestration framework |
 | **Causal** (parent → child event links) | A chat transcript dump |
 | **Self-hostable** (Docker, full features, free) | SaaS-only |
 | **Model-agnostic** for logging; embeddings use OpenAI for semantic search | A replacement for your LLM |
@@ -163,8 +163,9 @@ db = ZizkaDB(host="http://localhost:8000")  # or DEV_API_KEY for local dev
 | `zizkadb-langchain` | `pip install zizkadb-langchain` | LangChain callback handler |
 | `zizkadb-crewai` | `pip install zizkadb-crewai` | CrewAI crew logger |
 | `zizkadb-livekit` | `pip install zizkadb-livekit` | LiveKit voice calls → Sessions + Events (transcript only) |
+| `@zizka-ai/zizkadb` (ClawHub) / `zizkadb-openclaw` (npm) | `openclaw plugins install clawhub:@zizka-ai/zizkadb` | OpenClaw plugin: every turn (messages, tool calls, model outputs, token usage) as a causal chain |
 
-Each depends on `zizkadb-sdk` — users install the framework package only.
+Each depends on `zizkadb-sdk` (the OpenClaw plugin bundles the TypeScript SDK) — users install the framework package only.
 
 ---
 

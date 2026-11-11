@@ -33,7 +33,7 @@ Worked example: [worked/01-support-order-delay](../worked/01-support-order-delay
 
 ### Connect your own agent
 
-See **[CONNECT.md](../CONNECT.md)** — Python, TypeScript, LangChain, CrewAI, **LiveKit (voice)**, MCP, REST.
+See **[CONNECT.md](../CONNECT.md)** — Python, TypeScript, LangChain, CrewAI, **LiveKit (voice)**, **OpenClaw**, MCP, REST.
 
 ### Stack only (no demo)
 
