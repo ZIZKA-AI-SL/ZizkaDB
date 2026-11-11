@@ -1,0 +1,79 @@
+{
+  "name": "zizkadb-openclaw",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin: tamper-evident, causal audit trail of what your agent did and why (messages, tool calls, model outputs, token usage) in ZizkaDB",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./openclaw.plugin.json": "./openclaw.plugin.json"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "install": {
+      "clawhubSpec": "clawhub:zizka-ai/zizkadb",
+      "npmSpec": "zizkadb-openclaw",
+      "defaultChoice": "clawhub",
+      "minHostVersion": ">=2026.9.5"
+    },
+    "compat": {
+      "pluginApi": ">=2026.9.5"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.9.5"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": "2026.11.3",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0",
+    "zizkadb-sdk": "^0.7.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "zizkadb",
+    "ai-agents",
+    "audit-trail",
+    "agent-auditability",
+    "causal",
+    "llm",
+    "tool-calls"
+  ],
+  "homepage": "https://github.com/ZIZKA-AI-SL/ZizkaDB/tree/main/integrations/openclaw#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZIZKA-AI-SL/ZizkaDB.git",
+    "directory": "integrations/openclaw"
+  },
+  "bugs": "https://github.com/ZIZKA-AI-SL/ZizkaDB/issues",
+  "author": "Zizka AI <founder@zizka.ai>",
+  "license": "AGPL-3.0-or-later"
+}
