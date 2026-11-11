@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Python SDK
 
 - **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.
+- **`zizkadb test from-session <session_id> --agent <agent>`: a recorded session becomes a pytest regression test.** It writes a snapshot (user inputs, tool path, final answer, errors) and a test that replays the inputs through your agent (`--entry module:function`) and checks the same tool path without errors. Tests run inside the new `zizkadb.testing.capture()`, which records LLM and tool calls in memory with no server.
 
 ## [0.6.0] - 2026-11-07
 
