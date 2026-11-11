@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### More providers (Python and TypeScript SDKs)
+
+- **Python `instrument()`** now also records **Google Gemini** (`google-genai`: `generate_content`, `generate_content_stream`, chats; sync and async), the **native `ollama` package** (`ollama.chat`, `Client`, `AsyncClient`, streaming) and **Zhipu's SDKs** (`zai-sdk`, `zhipuai`). Tools without call ids (ollama, some Gemini calls) are matched to their call by tool name.
+- **TypeScript `zizkadbMiddleware(db, { agent })`** for the **Vercel AI SDK**: wrap any AI SDK model (Gemini, OpenAI, Anthropic, DeepSeek, Mistral, Groq, Ollama, ...) and `generateText` / `streamText` are recorded, including multi-step tool loops. AI SDK 4, 5 and 6 (model spec v1-v3); inside `capture()` the events go to the test run.
+- **OpenAI-compatible providers (DeepSeek, GLM, Kimi, ...) in both SDKs**: reasoning text (`reasoning_content`) is recorded as `reasoning` on `llm_end` (also Gemini thoughts and ollama `thinking`), and cached tokens are read from each provider's field (`prompt_cache_hit_tokens`, `cached_tokens`, `prompt_tokens_details.cached_tokens`) along with reasoning tokens. `capture_content=False` keeps reasoning out too.
+
 ### TypeScript SDK
 
 - **`npx zizkadb-sdk test from-session <session_id> --agent <agent>`**: the TypeScript counterpart of the Python command. Writes a session snapshot and a **vitest** test that replays the inputs through your agent (`--entry src/agent.ts:fn`, `--clients openai,anthropic`) and checks the same tool path without errors.

@@ -54,13 +54,28 @@ Then call the clients as usual. Every call is recorded as causally linked events
 
 `user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
 
-- Covers OpenAI `chat.completions.create` and `responses.create` (also OpenAI-compatible servers: Ollama, vLLM, LM Studio) and Anthropic `messages.create`.
+- Covers OpenAI `chat.completions.create` and `responses.create`, which also means every OpenAI-compatible API: **DeepSeek, GLM (Zhipu), Kimi (Moonshot)**, Qwen, Mistral, Groq, Together, OpenRouter, and local servers (**Ollama**, vLLM, LM Studio). Anthropic `messages.create` covers Claude, including on Bedrock and Vertex. Reasoning text (`reasoning_content`) and each provider's cached-token fields are recorded.
 - Calls return the client's own promise, so `.withResponse()` and other extras keep working. Recording runs in the background and never changes the result or the error.
 - `await zdb.flush()` waits for pending writes, e.g. before a script or serverless function exits.
 - `captureContent: false` stores only models, tool names, token usage and the links.
 - **Streaming** (`stream: true`) is recorded too: iterate the client's stream as usual (its extras, such as `controller`, are untouched); once it ends the events carry the full output, tool calls and token usage (for OpenAI chat, usage needs `stream_options: { include_usage: true }`). A stream you stop early (`break`) is marked `truncated: true`; one that fails mid-way becomes `llm_error` with the partial output. A stream you never read does not hold up other recordings. The `.stream()` helpers (`chat.completions.stream()`, `responses.stream()`, Anthropic `messages.stream()`) are recorded too.
 - `clients` also takes the client classes (`[OpenAI, Anthropic]`) to record every instance, including ones created later.
 - `zdb.uninstrument()` restores the original methods.
+
+## Vercel AI SDK (any provider)
+
+```ts
+import { generateText, wrapLanguageModel } from 'ai'
+import { google } from '@ai-sdk/google'
+import { ZizkaDB, zizkadbMiddleware } from 'zizkadb-sdk'
+
+const db = new ZizkaDB({ apiKey: 'zizkadb_live_xxxx' })
+const model = wrapLanguageModel({ model: google('gemini-2.5-flash'), middleware: zizkadbMiddleware(db, { agent: 'my-bot' }) })
+
+await generateText({ model, prompt: 'Where is order 42?', tools })
+```
+
+Wrap any AI SDK model (Google Gemini, OpenAI, Anthropic, DeepSeek, Mistral, Groq, xAI, Ollama, ...) and `generateText` / `streamText` are recorded as the same linked events, including multi-step tool loops, reasoning and token usage. Works with AI SDK 4, 5 and 6. Inside `capture()` (below) the events go to the test run instead of ZizkaDB.
 
 ## Turn a bad session into a test
 
@@ -91,6 +106,7 @@ it('answers refund questions with the policy search', async () => {
 | `token_usage` on `log()` | `token_usage={...}` kwarg merges into event `data` | **Not supported** — pass token counts inside `data` manually, or use the Python SDK |
 | `db.token_usage()` analytics | Yes | Yes (`tokenUsage()`) |
 | Auto-capture LLM calls | `zizkadb.instrument(db, agent=...)` | `instrument(db, { agent, clients })` (records `token_usage` too) |
+| Other providers | Gemini, native ollama, Zhipu SDKs, LiteLLM | Vercel AI SDK middleware (`zizkadbMiddleware`) |
 | Session → regression test | `zizkadb test from-session` (pytest) | `npx zizkadb-sdk test from-session` (vitest) |
 
 ## Multi-agent apps (one key, many agent names)

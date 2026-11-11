@@ -270,11 +270,11 @@ const tool = await db.log({ agent: 'my-bot', event: 'tool_call', data: { tool: '
 ;(await db.why(tool.eventId)).print()
 ```
 
-Or record every LLM call: `instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })`.
+Or record every LLM call: `instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })`, or wrap any Vercel AI SDK model with `zizkadbMiddleware(db, { agent: 'my-bot' })`.
 
 </details>
 
-**Or record every LLM call with one line** (Python; OpenAI, Anthropic, LiteLLM, and OpenAI-compatible servers such as Ollama and vLLM):
+**Or record every LLM call with one line** (Python): OpenAI and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, the native `ollama` package and LiteLLM:
 
 ```python
 import zizkadb

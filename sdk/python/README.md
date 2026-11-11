@@ -71,14 +71,25 @@ db = ZizkaDB("zizkadb_live_xxxx")
 zizkadb.instrument(db, agent="my-bot")
 ```
 
-Then call OpenAI (chat completions or the Responses API), Anthropic or LiteLLM as usual (sync or async). Each call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
+Then call your model as usual (sync or async). Each call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
 
 `user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
+
+| You call models through | Covered |
+| --- | --- |
+| `openai` (chat completions, Responses API) | OpenAI, Azure OpenAI, and every OpenAI-compatible API: **DeepSeek, GLM (Zhipu), Kimi (Moonshot)**, Qwen, Mistral, Groq, Together, Fireworks, OpenRouter, xAI, and local servers (**Ollama**, vLLM, LM Studio, llama.cpp, TGI) |
+| `anthropic` (messages, `messages.stream`) | Claude, including on AWS Bedrock and Google Vertex |
+| `google-genai` (`models.generate_content`, `generate_content_stream`, chats) | Gemini |
+| `ollama` (native package: `ollama.chat`, `Client`, `AsyncClient`) | any local Ollama model |
+| `zai-sdk` / `zhipuai` | GLM through Zhipu's own SDK |
+| `litellm` | 100+ providers behind LiteLLM (Bedrock, Vertex, Cohere, Hugging Face, ...) |
+
+Reasoning models are covered too: the thinking text (`reasoning_content` from DeepSeek, GLM and Kimi; Gemini thoughts; Ollama `thinking`) lands in `llm_end` as `reasoning`, and cached and reasoning tokens are read from each provider's own usage fields. Models run in-process (Hugging Face `transformers`, `llama-cpp-python`) make no API call to capture: log those steps with `db.log()` or the LangChain / CrewAI integrations.
 
 - Tool results are linked to the tool call that asked for them (OpenAI `role="tool"` or Responses API `function_call_output`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
 - Inside `async with db.track(agent="my-bot")` the events share that session.
 - `capture_content=False` stores only models, tool names, token usage and the links, no prompt or output text. Text is otherwise clipped to 4,000 characters.
-- OpenAI-compatible servers (Ollama, vLLM, LM Studio) are covered through the `openai` client.
+- Tools without call ids (the native `ollama` package, some Gemini calls) are matched to their call by tool name.
 - **Streaming** (`stream=True`) is recorded too: you get the provider's stream unchanged, and once it ends the events carry the full output, tool calls and token usage (for OpenAI chat, usage needs `stream_options={"include_usage": True}`). A stream closed early is marked `"truncated": true`; one that fails mid-way becomes `llm_error` with the partial output. The `.stream()` helpers are recorded too: OpenAI `chat.completions.stream()` / `responses.stream()` and Anthropic `messages.stream()` (recorded when its `with` block exits).
 - A failed write is logged as a warning; your LLM call is never affected. `inst.uninstrument()` restores the original methods.
 

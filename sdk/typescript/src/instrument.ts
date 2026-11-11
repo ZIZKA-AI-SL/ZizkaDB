@@ -71,13 +71,15 @@ export interface Instrumentation {
   uninstrument(): void
 }
 
-type Shape = 'openai' | 'openai_responses' | 'anthropic'
+type Shape = 'openai' | 'openai_responses' | 'anthropic' | 'ai_sdk'
 
 interface Parsed {
   model: string | null
   text: string | null
   toolCalls: { id: string | null; name: string | null; arguments: unknown }[]
   usage: AnyRecord | null
+  /** thinking text: DeepSeek / GLM / Kimi `reasoning_content`, AI SDK reasoning parts */
+  reasoning?: string | null
 }
 
 const TEXT_LIMIT = 4000
@@ -112,8 +114,26 @@ function parseArgs(raw: unknown): unknown {
 
 // ── request parsing ───────────────────────────────────────────────────────
 
+/** Text of an AI SDK tool result, across spec versions (`output` in v5+, `result` in v4). */
+function aiSdkToolOutput(part: AnyRecord): unknown {
+  const out = part.output ?? part.result
+  if (out && typeof out === 'object' && 'value' in out) return out.value
+  return out
+}
+
 function requestView(shape: Shape, params: AnyRecord): { userText: string | null; results: [string, unknown][] } {
   const results: [string, unknown][] = []
+  if (shape === 'ai_sdk') {
+    const prompt: AnyRecord[] = Array.isArray(params.prompt) ? params.prompt : []
+    for (const msg of prompt) {
+      if (msg?.role !== 'tool' || !Array.isArray(msg.content)) continue
+      for (const part of msg.content) {
+        if (part?.type === 'tool-result' && part.toolCallId) results.push([part.toolCallId, clip(aiSdkToolOutput(part))])
+      }
+    }
+    const last = prompt[prompt.length - 1]
+    return { userText: last?.role === 'user' ? textOf(last.content) : null, results }
+  }
   if (shape === 'openai_responses') {
     const items: AnyRecord[] = typeof params.input === 'string'
       ? [{ role: 'user', content: params.input }]
@@ -146,19 +166,30 @@ function requestView(shape: Shape, params: AnyRecord): { userText: string | null
 
 // ── response parsing ──────────────────────────────────────────────────────
 
+/** token_usage from an OpenAI-shaped usage block, including the variants
+ *  OpenAI-compatible providers use (DeepSeek cache hits, Kimi cached_tokens). */
+function openaiUsage(u: AnyRecord, model: string | null): AnyRecord {
+  const out: AnyRecord = {
+    model,
+    input_tokens: u.prompt_tokens ?? 0,
+    output_tokens: u.completion_tokens ?? 0,
+    cached_tokens: u.prompt_tokens_details?.cached_tokens || u.prompt_cache_hit_tokens || u.cached_tokens || 0,
+  }
+  const reasoning = u.completion_tokens_details?.reasoning_tokens
+  if (reasoning) out.reasoning_tokens = reasoning
+  return out
+}
+
 function parseOpenAI(resp: AnyRecord, model: string | null): Parsed {
   const message = resp?.choices?.[0]?.message
   const toolCalls = (message?.tool_calls ?? []).map((tc: AnyRecord) => ({
     id: tc.id ?? null, name: tc.function?.name ?? null, arguments: parseArgs(tc.function?.arguments),
   }))
-  const u = resp?.usage
-  const usage = u ? {
-    model: resp.model ?? model,
-    input_tokens: u.prompt_tokens ?? 0,
-    output_tokens: u.completion_tokens ?? 0,
-    cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0,
-  } : null
-  return { model: resp?.model ?? model, text: textOf(message?.content), toolCalls, usage }
+  const usage = resp?.usage ? openaiUsage(resp.usage, resp.model ?? model) : null
+  return {
+    model: resp?.model ?? model, text: textOf(message?.content), toolCalls, usage,
+    reasoning: message?.reasoning_content ?? message?.reasoning ?? null,
+  }
 }
 
 function parseOpenAIResponses(resp: AnyRecord, model: string | null): Parsed {
@@ -200,10 +231,49 @@ function parseAnthropic(resp: AnyRecord, model: string | null): Parsed {
   return { model: resp?.model ?? model, text: texts.length ? texts.join('\n') : null, toolCalls, usage }
 }
 
+/** token_usage from AI SDK usage: v3 nests totals (`inputTokens.total`), v2 uses numbers, v1 `promptTokens`. */
+function aiSdkUsage(u: AnyRecord | undefined, model: string | null): AnyRecord | null {
+  if (!u) return null
+  const num = (v: unknown) => (typeof v === 'number' ? v : 0)
+  const nested = typeof u.inputTokens === 'object' && u.inputTokens !== null
+  const out: AnyRecord = {
+    model,
+    input_tokens: nested ? num(u.inputTokens.total) : num(u.inputTokens ?? u.promptTokens),
+    output_tokens: typeof u.outputTokens === 'object' && u.outputTokens !== null ? num(u.outputTokens.total) : num(u.outputTokens ?? u.completionTokens),
+    cached_tokens: nested ? num(u.inputTokens.cacheRead) : num(u.cachedInputTokens),
+  }
+  const reasoning = typeof u.outputTokens === 'object' && u.outputTokens !== null ? u.outputTokens.reasoning : u.reasoningTokens
+  if (reasoning) out.reasoning_tokens = reasoning
+  return out
+}
+
+function parseAiSdk(result: AnyRecord, model: string | null): Parsed {
+  const texts: string[] = []
+  const reasoning: string[] = []
+  const toolCalls: Parsed['toolCalls'] = []
+  if (Array.isArray(result?.content)) {
+    for (const part of result.content) {
+      if (part?.type === 'text' && part.text) texts.push(part.text)
+      else if (part?.type === 'reasoning' && part.text) reasoning.push(part.text)
+      else if (part?.type === 'tool-call') {
+        toolCalls.push({ id: part.toolCallId ?? null, name: part.toolName ?? null, arguments: parseArgs(part.input ?? part.args) })
+      }
+    }
+  } else {
+    // spec v1 (AI SDK 4): text / toolCalls / reasoning on the result
+    if (result?.text) texts.push(result.text)
+    if (typeof result?.reasoning === 'string') reasoning.push(result.reasoning)
+    for (const tc of result?.toolCalls ?? []) toolCalls.push({ id: tc.toolCallId ?? null, name: tc.toolName ?? null, arguments: parseArgs(tc.args) })
+  }
+  const m = result?.response?.modelId ?? model
+  return { model: m, text: texts.length ? texts.join('') : null, toolCalls, usage: aiSdkUsage(result?.usage, m), reasoning: reasoning.length ? reasoning.join('') : null }
+}
+
 const PARSERS: Record<Shape, (r: AnyRecord, m: string | null) => Parsed> = {
   openai: parseOpenAI,
   openai_responses: parseOpenAIResponses,
   anthropic: parseAnthropic,
+  ai_sdk: parseAiSdk,
 }
 
 // ── streaming ─────────────────────────────────────────────────────────────
@@ -214,14 +284,22 @@ class StreamAccumulator {
   private readonly tools = new Map<number, { id: string | null; name: string | null; args: string }>()
   private usage: AnyRecord | null = null
   private final: Parsed | null = null
+  private readonly reasoning: string[] = []
+  private readonly wholeCalls: Parsed['toolCalls'] = []
 
   constructor(private readonly shape: Shape, private model: string | null) {}
+
+  /** Set while streaming, for parts that carry no model id. */
+  get modelId(): string | null {
+    return this.model
+  }
 
   feed(chunk: unknown): void {
     try {
       const c = chunk as AnyRecord
       if (this.shape === 'openai') this.feedOpenAI(c)
       else if (this.shape === 'openai_responses') this.feedResponses(c)
+      else if (this.shape === 'ai_sdk') this.feedAiSdk(c)
       else this.feedAnthropic(c)
     } catch {
       // a chunk we cannot read is skipped; the caller's stream is unaffected
@@ -242,6 +320,7 @@ class StreamAccumulator {
     for (const choice of c?.choices ?? []) {
       const delta = choice?.delta ?? {}
       if (delta.content) this.texts.push(delta.content)
+      if (delta.reasoning_content || delta.reasoning) this.reasoning.push(delta.reasoning_content || delta.reasoning)
       for (const tc of delta.tool_calls ?? []) {
         const slot = this.slot(tc.index ?? this.tools.size)
         slot.id = tc.id ?? slot.id
@@ -250,7 +329,17 @@ class StreamAccumulator {
       }
     }
     // only sent with stream_options: { include_usage: true }
-    if (c?.usage) this.usage = parseOpenAI({ model: this.model, usage: c.usage }, this.model).usage
+    if (c?.usage) this.usage = openaiUsage(c.usage, this.model)
+  }
+
+  /** AI SDK stream parts (spec v1-v3). */
+  private feedAiSdk(p: AnyRecord): void {
+    if (p?.type === 'text-delta') this.texts.push(p.delta ?? p.textDelta ?? '')
+    else if (p?.type === 'reasoning-delta' || p?.type === 'reasoning') this.reasoning.push(p.delta ?? p.textDelta ?? p.text ?? '')
+    else if (p?.type === 'tool-call') {
+      this.wholeCalls.push({ id: p.toolCallId ?? null, name: p.toolName ?? null, arguments: parseArgs(p.input ?? p.args) })
+    } else if (p?.type === 'response-metadata' && p.modelId) this.model = p.modelId
+    else if (p?.type === 'finish') this.usage = aiSdkUsage(p.usage, this.model)
   }
 
   private feedResponses(e: AnyRecord): void {
@@ -279,7 +368,12 @@ class StreamAccumulator {
     const toolCalls = [...this.tools.entries()]
       .sort(([a], [b]) => a - b)
       .map(([, t]) => ({ id: t.id, name: t.name, arguments: t.args ? parseArgs(t.args) : {} }))
-    return { model: this.model, text: this.texts.length ? this.texts.join('') : null, toolCalls, usage: this.usage }
+      .concat(this.wholeCalls)
+    if (this.usage) this.usage.model = this.model ?? this.usage.model
+    return {
+      model: this.model, text: this.texts.length ? this.texts.join('') : null, toolCalls, usage: this.usage,
+      reasoning: this.reasoning.length ? this.reasoning.join('') : null,
+    }
   }
 }
 
@@ -287,10 +381,12 @@ class StreamAccumulator {
 
 /** Set while a `capture()` block runs: other recorders stay quiet so a test sends nothing to ZizkaDB. */
 let capturing = 0
+let captureRecorder: Recorder | null = null
 
 /** @internal Used by `capture()` in ./testing. */
-export function _setCapturing(on: boolean): void {
+export function _setCapturing(on: boolean, recorder: Recorder | null = null): void {
   capturing += on ? 1 : -1
+  captureRecorder = on ? recorder : capturing > 0 ? captureRecorder : null
 }
 
 export class Recorder implements Instrumentation {
@@ -338,6 +434,7 @@ export class Recorder implements Instrumentation {
     const data: AnyRecord = { provider, model: parsed?.model ?? model, ...extra }
     if (parsed) {
       data.output = this.content(parsed.text)
+      if (parsed.reasoning) data.reasoning = this.content(parsed.reasoning)
       if (parsed.toolCalls.length) data.tool_calls = parsed.toolCalls.map((c) => c.name)
       if (parsed.usage) data.token_usage = parsed.usage
     }
@@ -353,13 +450,14 @@ export class Recorder implements Instrumentation {
     this.tail = this.tail.then(task, task).catch(() => {})
   }
 
-  /** Record one call. `result` is what the client returned, untouched. */
-  record(provider: string, shape: Shape, params: AnyRecord, result: unknown): void {
-    if (capturing > 0 && !this.forCapture) return
+  /**
+   * @internal Queue the events that come before a call (tool results, the new
+   * user message). Returns a getter for the event the call's answer links to.
+   */
+  begin(shape: Shape, params: AnyRecord): () => string | null {
     // Read the request now: apps often keep appending to the same messages
     // array before the background write runs.
     const { userText, results } = requestView(shape, params)
-    const model: string | null = params.model ?? null
     let parent: string | null = null
     this.enqueue(async () => {
       for (const [toolId, res] of results) {
@@ -372,7 +470,30 @@ export class Recorder implements Instrumentation {
         parent = (await this.write('user_message', { text: this.content(userText) }, null)) ?? parent
       }
     })
-    const onError = (err: unknown) => this.enqueue(() => this.write('llm_error', { provider, model, error: clip(String((err as Error)?.message ?? err)) }, parent).then(() => {}))
+    return () => parent
+  }
+
+  /** @internal Queue `llm_end` (+ tool calls) after everything before it. */
+  finish(provider: string, model: string | null, parsed: Parsed | null, parent: () => string | null, extra: AnyRecord = {}): void {
+    this.enqueue(() => this.after(provider, model, parsed, parent(), extra))
+  }
+
+  /** @internal Queue `llm_error`. */
+  fail(provider: string, model: string | null, err: unknown, parent: () => string | null, partial?: Parsed): void {
+    const data: AnyRecord = { provider, model: partial?.model ?? model, error: clip(String((err as Error)?.message ?? err)) }
+    if (partial) {
+      data.streamed = true
+      data.partial_output = this.content(partial.text)
+    }
+    this.enqueue(() => this.write('llm_error', data, parent()).then(() => {}))
+  }
+
+  /** Record one call. `result` is what the client returned, untouched. */
+  record(provider: string, shape: Shape, params: AnyRecord, result: unknown): void {
+    if (capturing > 0 && !this.forCapture) return
+    const model: string | null = params.model ?? null
+    const parent = this.begin(shape, params)
+    const onError = (err: unknown) => this.fail(provider, model, err, parent)
 
     // Handlers go straight on the client's own promise, at call time, so they
     // run before the caller's `await` resumes: the stream is wrapped before it
@@ -385,17 +506,8 @@ export class Recorder implements Instrumentation {
       thenable.then((stream) => {
         try {
           this.wrapStream(stream as AnyRecord, shape, model, (outcome, acc, err) => {
-            if (outcome === 'error') {
-              const partial = acc.result()
-              this.enqueue(() => this.write('llm_error', {
-                provider, model: partial.model ?? model, streamed: true,
-                error: clip(String((err as Error)?.message ?? err)), partial_output: this.content(partial.text),
-              }, parent).then(() => {}))
-            } else {
-              const extra: AnyRecord = { streamed: true }
-              if (outcome === 'truncated') extra.truncated = true
-              this.enqueue(() => this.after(provider, model, acc.result(), parent, extra))
-            }
+            if (outcome === 'error') this.fail(provider, model, err, parent, acc.result())
+            else this.finish(provider, model, acc.result(), parent, outcome === 'truncated' ? { streamed: true, truncated: true } : { streamed: true })
           })
         } catch (err) {
           console.warn(`zizkadb.instrument: could not wrap the stream: ${(err as Error)?.message ?? err}`)
@@ -411,7 +523,7 @@ export class Recorder implements Instrumentation {
       } catch (err) {
         console.warn(`zizkadb.instrument: could not read the ${shape} response: ${(err as Error)?.message ?? err}`)
       }
-      this.enqueue(() => this.after(provider, model, parsed, parent))
+      this.finish(provider, model, parsed, parent)
     }, onError)
   }
 
@@ -525,4 +637,111 @@ export function _instrument(recorder: Recorder, clients: unknown[]): Instrumenta
     console.warn('zizkadb.instrument: no OpenAI or Anthropic client found in `clients`; nothing to record')
   }
   return recorder
+}
+
+
+// ── Vercel AI SDK ─────────────────────────────────────────────────────────
+
+export interface MiddlewareOptions {
+  agent: string
+  /** Same as instrument(): `false` keeps prompt and output text out. */
+  captureContent?: boolean
+}
+
+/**
+ * Language-model middleware for the Vercel AI SDK, so every model you wrap is
+ * recorded, whatever its provider (OpenAI, Anthropic, Google, DeepSeek,
+ * Mistral, Groq, Ollama, ...):
+ *
+ *   import { wrapLanguageModel, generateText } from 'ai'
+ *   const model = wrapLanguageModel({ model: openai('gpt-4o'), middleware: zizkadbMiddleware(db, { agent: 'bot' }) })
+ *
+ * `generateText` / `streamText` then record `user_message` -> `llm_end` ->
+ * `tool_call` -> `tool_result` like `instrument()`, including multi-step tool
+ * loops. Works with AI SDK 4, 5 and 6 (model spec v1-v3). Inside `capture()`
+ * the events go to the test's in-memory run instead.
+ */
+export function zizkadbMiddleware(db: InstrumentTarget, options: MiddlewareOptions): AnyRecord {
+  const own = new Recorder(db, options.agent, options.captureContent !== false)
+  const recorder = (): Recorder | null => (capturing > 0 ? captureRecorder : own)
+  const modelId = (model: AnyRecord | undefined, params: AnyRecord): string | null => model?.modelId ?? params?.modelId ?? null
+  const providerOf = (model: AnyRecord | undefined): string => model?.provider ?? 'ai-sdk'
+
+  return {
+    specificationVersion: 'v3',
+    middlewareVersion: 'v2',
+
+    async wrapGenerate({ doGenerate, params, model }: { doGenerate: () => Promise<AnyRecord>; params: AnyRecord; model?: AnyRecord }) {
+      const rec = recorder()
+      if (!rec) return doGenerate()
+      const id = modelId(model, params)
+      const parent = rec.begin('ai_sdk', params)
+      let result: AnyRecord
+      try {
+        result = await doGenerate()
+      } catch (err) {
+        rec.fail(providerOf(model), id, err, parent)
+        throw err
+      }
+      let parsed: Parsed | null = null
+      try {
+        parsed = parseAiSdk(result, id)
+      } catch (err) {
+        console.warn(`zizkadb.instrument: could not read the AI SDK result: ${(err as Error)?.message ?? err}`)
+      }
+      rec.finish(providerOf(model), id, parsed, parent)
+      return result
+    },
+
+    async wrapStream({ doStream, params, model }: { doStream: () => Promise<AnyRecord>; params: AnyRecord; model?: AnyRecord }) {
+      const rec = recorder()
+      if (!rec) return doStream()
+      const id = modelId(model, params)
+      const provider = providerOf(model)
+      const parent = rec.begin('ai_sdk', params)
+      let res: AnyRecord
+      try {
+        res = await doStream()
+      } catch (err) {
+        rec.fail(provider, id, err, parent)
+        throw err
+      }
+      const acc = new StreamAccumulator('ai_sdk', id)
+      let done = false
+      let streamError: unknown
+      const end = (outcome: 'complete' | 'truncated' | 'error', err?: unknown) => {
+        if (done) return
+        done = true
+        if (outcome === 'error') rec.fail(provider, id, err, parent, acc.result())
+        else rec.finish(provider, id, acc.result(), parent, outcome === 'truncated' ? { streamed: true, truncated: true } : { streamed: true })
+      }
+      const reader = (res.stream as ReadableStream<unknown>).getReader()
+      const stream = new ReadableStream<unknown>({
+        async pull(controller) {
+          let step: ReadableStreamReadResult<unknown>
+          try {
+            step = await reader.read()
+          } catch (err) {
+            end('error', err)
+            controller.error(err)
+            return
+          }
+          if (step.done) {
+            end(streamError !== undefined ? 'error' : 'complete', streamError)
+            controller.close()
+            return
+          }
+          const part = step.value as AnyRecord
+          if (part?.type === 'error') streamError = part.error
+          acc.feed(part)
+          controller.enqueue(part)
+        },
+        cancel(reason) {
+          end('truncated')
+          return reader.cancel(reason)
+        },
+      })
+      return { ...res, stream }
+    },
+  }
 }
