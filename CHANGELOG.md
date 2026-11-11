@@ -7,7 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- **OpenClaw plugin** (`integrations/openclaw/`, npm `zizkadb-openclaw`, not yet published): records each OpenClaw turn as one causal chain (`user_message` → `tool_call` → `tool_result` → `llm_end` → `assistant_response`, plus `tool_error` / `agent_error`) with token usage, per conversation session. Observe-only, `captureContent: false` for metadata only, optional `zizkadb_why` and `zizkadb_search` tools. Tested inside a real OpenClaw 2026.11.3 gateway against a ZizkaDB server (`why()` complete, audit chain intact).
+- **OpenClaw plugin** 0.1.0 (`integrations/openclaw/`; ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`): records each OpenClaw turn as one causal chain (`user_message` → `tool_call` → `tool_result` → `llm_end` → `assistant_response`, plus `tool_error` / `agent_error`) with token usage, per conversation session. Observe-only, `captureContent: false` for metadata only, optional `zizkadb_why` and `zizkadb_search` tools. Tested inside a real OpenClaw 2026.11.3 gateway against a ZizkaDB server (`why()` complete, audit chain intact).
 
 ## [0.7.0] - 2026-11-11
 
