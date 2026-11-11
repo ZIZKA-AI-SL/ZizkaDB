@@ -32,7 +32,7 @@ const chain = await db.why(tool.eventId)
 | Field names | `snake_case` (`parent_id`, `event_id`) | `camelCase` (`parentId`, `eventId`) |
 | LangChain adapter | Yes (`ZizkaDBCallbackHandler`) | No |
 | CrewAI adapter | Yes (`ZizkaDBCrewLogger`) | No |
-| CLI | `zizkadb init` + analytics subcommands | No |
+| CLI | `zizkadb init` + analytics subcommands | `npx zizkadb-sdk test from-session` only (`src/cli.ts`) |
 | Analytics | `baseline()`, `tokenUsage()`, `tokenOptimization()` | Yes (Python + TS) |
 
 ---
@@ -48,7 +48,9 @@ const chain = await db.why(tool.eventId)
 
 - `src/index.ts` — `ZizkaDB` class and all public methods
 - `src/types.ts` — TypeScript type definitions
-- `src/instrument.ts` — `instrument(db, { agent, clients })`: auto-capture of OpenAI (chat + Responses API) and Anthropic client calls as linked events; patches the given client instances, returns the original promise, records in the background (`flush()`, `uninstrument()`)
+- `src/instrument.ts` — `instrument(db, { agent, clients })`: auto-capture of OpenAI (chat + Responses API) and Anthropic client calls as linked events; patches the given client instances, returns the original promise, records in the background (`flush()`, `uninstrument()`); `clients` may be classes (patches their resource prototypes)
+- `src/testing.ts` — `capture({ clients }, fn)`: in-memory recording for tests; other recorders stay quiet during it
+- `src/sessionTests.ts` + `src/cli.ts` — `npx zizkadb-sdk test from-session`: session snapshot + generated vitest test (Node-only: never import from `index.ts`, which must stay usable in browsers and edge runtimes)
 
 ---
 

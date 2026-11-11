@@ -27,7 +27,7 @@ def _openai_response(text=None, tool_calls=None):
 @pytest.fixture
 def providers(monkeypatch):
     """Install fake openai / anthropic / litellm modules; yield their scripted replies."""
-    replies: dict[str, list] = {"openai": [], "anthropic": [], "responses": []}
+    replies: dict[str, list] = {"openai": [], "anthropic": [], "responses": [], "anthropic_helper": []}
 
     class Completions:
         def create(self, **kwargs):
@@ -35,6 +35,9 @@ def providers(monkeypatch):
             if isinstance(reply, Exception):
                 raise reply
             return reply
+
+        def stream(self, **kwargs):  # like openai: the helper calls create(stream=True)
+            return list(self.create(stream=True, **kwargs))
 
     class AsyncCompletions:
         async def create(self, **kwargs):
@@ -44,9 +47,15 @@ def providers(monkeypatch):
         def create(self, **kwargs):
             return replies["anthropic"].pop(0)
 
+        def stream(self, **kwargs):  # like anthropic: posts directly, not via create()
+            return replies["anthropic_helper"].pop(0)
+
     class AsyncMessages:
         async def create(self, **kwargs):
             return replies["anthropic"].pop(0)
+
+        def stream(self, **kwargs):
+            return replies["anthropic_helper"].pop(0)
 
     class Responses:
         def create(self, **kwargs):
@@ -480,3 +489,109 @@ async def test_async_responses_api_with_message_list_input(providers, posted, db
         inst.uninstrument()
     assert [e["event"] for e in posted] == ["user_message", "llm_end"]
     assert posted[0]["data"]["text"] == "hello there" and posted[1]["data"]["output"] == "Hi!"
+
+
+class _FakeMessageStream:
+    """Like anthropic's MessageStream: a public snapshot of what arrived."""
+
+    def __init__(self, snapshot):
+        self._snapshot = snapshot
+
+    @property
+    def current_message_snapshot(self):
+        assert self._snapshot is not None
+        return self._snapshot
+
+    def get_final_text(self):
+        return "".join(b["text"] for b in self._snapshot["content"] if b["type"] == "text")
+
+
+class _FakeManager:
+    def __init__(self, snapshot, enter_error=None):
+        self.stream = _FakeMessageStream(snapshot)
+        self.enter_error = enter_error
+        self.exited = False
+
+    def __enter__(self):
+        if self.enter_error:
+            raise self.enter_error
+        return self.stream
+
+    def __exit__(self, *exc):
+        self.exited = True
+        return False
+
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, *exc):
+        return self.__exit__(*exc)
+
+
+_HELPER_SNAPSHOT = {
+    "model": "claude-test",
+    "stop_reason": "tool_use",
+    "content": [{"type": "text", "text": "Checking."}, {"type": "tool_use", "id": "tu_h", "name": "search", "input": {"q": "refund"}}],
+    "usage": {"input_tokens": 30, "output_tokens": 12},
+}
+
+
+def test_anthropic_stream_helper_is_recorded_on_exit(providers, posted, db):
+    manager = _FakeManager(_HELPER_SNAPSHOT)
+    providers.replies["anthropic_helper"].append(manager)
+    inst = zizkadb.instrument(db, agent="bot", providers=("anthropic",))
+    try:
+        with providers.anthropic.Messages().stream(model="claude-test", messages=[{"role": "user", "content": "refund?"}]) as stream:
+            assert stream.get_final_text() == "Checking."
+    finally:
+        inst.uninstrument()
+    assert manager.exited
+    assert [e["event"] for e in posted] == ["user_message", "llm_end", "tool_call"]
+    assert posted[1]["data"]["streamed"] is True and "truncated" not in posted[1]["data"]
+    assert posted[1]["data"]["token_usage"]["output_tokens"] == 12
+    assert posted[2]["data"] == {"tool": "search", "tool_call_id": "tu_h", "arguments": {"q": "refund"}}
+
+
+@pytest.mark.asyncio
+async def test_async_anthropic_stream_helper_left_early_is_truncated(providers, posted, db):
+    partial = dict(_HELPER_SNAPSHOT, stop_reason=None, content=[{"type": "text", "text": "Chec"}])
+    providers.replies["anthropic_helper"].append(_FakeManager(partial))
+    inst = zizkadb.instrument(db, agent="bot", providers=("anthropic",))
+    try:
+        async with providers.anthropic.AsyncMessages().stream(model="claude-test", messages=[{"role": "user", "content": "hi"}]):
+            pass
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_end"]
+    assert posted[1]["data"]["truncated"] is True and posted[1]["data"]["output"] == "Chec"
+
+
+def test_anthropic_stream_helper_errors(providers, posted, db):
+    providers.replies["anthropic_helper"] += [
+        _FakeManager(None, enter_error=RuntimeError("overloaded")),
+        _FakeManager(dict(_HELPER_SNAPSHOT, stop_reason=None, content=[{"type": "text", "text": "half"}])),
+    ]
+    inst = zizkadb.instrument(db, agent="bot", providers=("anthropic",))
+    try:
+        with pytest.raises(RuntimeError, match="overloaded"):
+            with providers.anthropic.Messages().stream(model="claude-test", messages=[{"role": "user", "content": "one"}]):
+                pass
+        with pytest.raises(ValueError, match="app bug"):
+            with providers.anthropic.Messages().stream(model="claude-test", messages=[{"role": "user", "content": "two"}]):
+                raise ValueError("app bug")
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_error", "user_message", "llm_error"]
+    assert "overloaded" in posted[1]["data"]["error"]
+    assert posted[3]["data"]["partial_output"] == "half"
+
+
+def test_openai_stream_helper_is_recorded_through_create(providers, posted, db):
+    providers.replies["openai"].append(_FakeStream([_oa_chunk("Hello "), _oa_chunk("there.")]))
+    inst = zizkadb.instrument(db, agent="bot")
+    try:
+        providers.openai.Completions().stream(model="gpt-test", messages=[{"role": "user", "content": "hi"}])
+    finally:
+        inst.uninstrument()
+    assert [e["event"] for e in posted] == ["user_message", "llm_end"]
+    assert posted[1]["data"]["output"] == "Hello there."

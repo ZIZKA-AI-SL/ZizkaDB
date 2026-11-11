@@ -39,8 +39,10 @@ are read as they pass and the events are written once the stream ends, with
 the full output, tool calls and token usage (OpenAI chat only sends usage
 when you set ``stream_options={"include_usage": True}``). A stream closed
 early is recorded with ``"truncated": True``; one that fails mid-way as
-``llm_error`` with the partial output. The ``.stream()`` helper methods are
-not recorded yet.
+``llm_error`` with the partial output. The ``.stream()`` helpers are covered
+too: OpenAI's (``chat.completions.stream``, ``responses.stream``) call
+``create()`` and are recorded through it; Anthropic's ``messages.stream`` is
+wrapped and recorded from its message snapshot when the ``with`` block exits.
 """
 
 from __future__ import annotations
@@ -80,6 +82,9 @@ _TARGETS: dict[str, list[tuple[str, str | None, str, str, str]]] = {
     "anthropic": [
         ("anthropic.resources.messages", "Messages", "create", "sync", "anthropic"),
         ("anthropic.resources.messages", "AsyncMessages", "create", "async", "anthropic"),
+        # messages.stream() posts directly instead of calling create()
+        ("anthropic.resources.messages", "Messages", "stream", "helper_sync", "anthropic"),
+        ("anthropic.resources.messages", "AsyncMessages", "stream", "helper_async", "anthropic"),
     ],
     "litellm": [
         ("litellm", None, "completion", "sync", "openai"),
@@ -607,6 +612,100 @@ class Instrumentation:
 
         return _AsyncStream(resp, acc, finish)
 
+    def _snapshot_outcome(self, stream: Any, exc: BaseException | None) -> tuple[str, _Parsed | None]:
+        """How a helper stream ended, and what it received, from its public snapshot."""
+        try:
+            snapshot = stream.current_message_snapshot if stream is not None else None
+        except Exception:  # nothing received yet
+            snapshot = None
+        parsed = _safe_parse("anthropic", snapshot, None) if snapshot is not None else None
+        if exc is not None:
+            return "error", parsed
+        complete = snapshot is not None and _get(snapshot, "stop_reason") is not None
+        return ("complete" if complete else "truncated"), parsed
+
+    def _helper_error_data(self, provider: str, kwargs: dict[str, Any], parsed: _Parsed | None, exc: BaseException | None) -> dict[str, Any]:
+        return {"provider": provider, "model": (parsed.model if parsed else None) or kwargs.get("model"), "streamed": True,
+                "error": _clip(repr(exc)), "partial_output": self._content(parsed.text if parsed else None)}
+
+    def wrap_helper_sync(self, original: Callable[..., Any], provider: str, shape: str) -> Callable[..., Any]:
+        """Wrap a ``.stream()`` helper that returns a context manager (Anthropic ``messages.stream``)."""
+        inst = self
+
+        class _Manager:
+            def __init__(self, inner: Any, kwargs: dict[str, Any]) -> None:
+                self._inner, self._kwargs, self._stream, self._parent = inner, kwargs, None, None
+
+            def __enter__(self) -> Any:
+                for event, data, tool_id in inst._before(self._kwargs, shape):
+                    eid = inst._write_sync(event, data, inst._tool_event(tool_id) if tool_id else None)
+                    self._parent = eid or self._parent
+                try:
+                    self._stream = self._inner.__enter__()
+                except Exception as exc:
+                    inst._write_sync("llm_error", inst._helper_error_data(provider, self._kwargs, None, exc), self._parent)
+                    raise
+                return self._stream
+
+            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+                try:
+                    outcome, parsed = inst._snapshot_outcome(self._stream, exc)
+                    if outcome == "error":
+                        inst._write_sync("llm_error", inst._helper_error_data(provider, self._kwargs, parsed, exc), self._parent)
+                    else:
+                        inst._after_sync(provider, self._kwargs, parsed, self._parent, streamed=True, truncated=outcome == "truncated")
+                except Exception as err:  # recording never affects the caller
+                    logger.warning("zizkadb.instrument: could not record a stream: %s", err)
+                return self._inner.__exit__(exc_type, exc, tb)
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._inner, name)
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return _Manager(original(*args, **kwargs), kwargs)
+
+        wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+        return wrapper
+
+    def wrap_helper_async(self, original: Callable[..., Any], provider: str, shape: str) -> Callable[..., Any]:
+        """Async counterpart of :meth:`wrap_helper_sync` (``async with ...stream()``)."""
+        inst = self
+
+        class _AsyncManager:
+            def __init__(self, inner: Any, kwargs: dict[str, Any]) -> None:
+                self._inner, self._kwargs, self._stream, self._parent = inner, kwargs, None, None
+
+            async def __aenter__(self) -> Any:
+                for event, data, tool_id in inst._before(self._kwargs, shape):
+                    eid = await inst._write_async(event, data, inst._tool_event(tool_id) if tool_id else None)
+                    self._parent = eid or self._parent
+                try:
+                    self._stream = await self._inner.__aenter__()
+                except Exception as exc:
+                    await inst._write_async("llm_error", inst._helper_error_data(provider, self._kwargs, None, exc), self._parent)
+                    raise
+                return self._stream
+
+            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+                try:
+                    outcome, parsed = inst._snapshot_outcome(self._stream, exc)
+                    if outcome == "error":
+                        await inst._write_async("llm_error", inst._helper_error_data(provider, self._kwargs, parsed, exc), self._parent)
+                    else:
+                        await inst._after_async(provider, self._kwargs, parsed, self._parent, streamed=True, truncated=outcome == "truncated")
+                except Exception as err:
+                    logger.warning("zizkadb.instrument: could not record a stream: %s", err)
+                return await self._inner.__aexit__(exc_type, exc, tb)
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._inner, name)
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return _AsyncManager(original(*args, **kwargs), kwargs)
+
+        wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+        return wrapper
+
     # -- wrappers -------------------------------------------------------------
 
     def wrap_sync(self, original: Callable[..., Any], provider: str, shape: str) -> Callable[..., Any]:
@@ -732,7 +831,12 @@ def instrument(
             original = getattr(owner, attr, None) if owner is not None else None
             if original is None:
                 continue
-            wrap = inst.wrap_async if kind == "async" else inst.wrap_sync
+            wrap = {
+                "sync": inst.wrap_sync,
+                "async": inst.wrap_async,
+                "helper_sync": inst.wrap_helper_sync,
+                "helper_async": inst.wrap_helper_async,
+            }[kind]
             setattr(owner, attr, wrap(original, provider, shape))
             inst._patches.append((owner, attr, original))
             patched.append(f"{provider}:{cls_name or module_path}.{attr}")

@@ -28,7 +28,9 @@
  * the full output, tool calls and token usage (OpenAI chat only sends usage
  * with `stream_options: { include_usage: true }`). A stream you stop early is
  * recorded with `truncated: true`; one that fails mid-way as `llm_error` with
- * the partial output. The `.stream()` helper methods are not recorded yet.
+ * the partial output. The `.stream()` helpers (`chat.completions.stream`,
+ * `responses.stream`, Anthropic `messages.stream`) call `create()` and are
+ * recorded through it.
  */
 
 type AnyRecord = Record<string, any>
@@ -47,7 +49,11 @@ export interface InstrumentTarget {
 export interface InstrumentOptions {
   /** Agent id the events are logged under. */
   agent: string
-  /** OpenAI / Anthropic client instances to record. */
+  /**
+   * OpenAI / Anthropic clients to record: instances (`new OpenAI()`), or the
+   * client classes themselves (`OpenAI`, `Anthropic`) to record every instance,
+   * including ones your code creates later.
+   */
   clients: unknown[]
   /**
    * Store prompt/output text and tool arguments (clipped to 4,000 characters).
@@ -279,7 +285,15 @@ class StreamAccumulator {
 
 // ── recording ─────────────────────────────────────────────────────────────
 
-class Recorder implements Instrumentation {
+/** Set while a `capture()` block runs: other recorders stay quiet so a test sends nothing to ZizkaDB. */
+let capturing = 0
+
+/** @internal Used by `capture()` in ./testing. */
+export function _setCapturing(on: boolean): void {
+  capturing += on ? 1 : -1
+}
+
+export class Recorder implements Instrumentation {
   private readonly toolEvents = new Map<string, string>()
   private readonly resultsSeen = new Set<string>()
   private tail: Promise<void> = Promise.resolve()
@@ -289,6 +303,8 @@ class Recorder implements Instrumentation {
     private readonly db: InstrumentTarget,
     readonly agent: string,
     private readonly captureContent: boolean,
+    /** @internal true for the in-memory recorder of `capture()` */
+    readonly forCapture = false,
   ) {}
 
   private content(value: unknown): unknown {
@@ -339,6 +355,7 @@ class Recorder implements Instrumentation {
 
   /** Record one call. `result` is what the client returned, untouched. */
   record(provider: string, shape: Shape, params: AnyRecord, result: unknown): void {
+    if (capturing > 0 && !this.forCapture) return
     // Read the request now: apps often keep appending to the same messages
     // array before the background write runs.
     const { userText, results } = requestView(shape, params)
@@ -484,9 +501,21 @@ class Recorder implements Instrumentation {
  * `uninstrument()`.
  */
 export function instrument(db: InstrumentTarget, options: InstrumentOptions): Instrumentation {
-  const recorder = new Recorder(db, options.agent, options.captureContent !== false)
-  for (const client of options.clients ?? []) {
+  return _instrument(new Recorder(db, options.agent, options.captureContent !== false), options.clients)
+}
+
+/** @internal Shared by instrument() and capture(). */
+export function _instrument(recorder: Recorder, clients: unknown[]): Instrumentation {
+  for (const client of clients ?? []) {
     const c = client as AnyRecord
+    if (typeof client === 'function') {
+      // A client class: patch its resource prototypes, so every instance is recorded.
+      const k = client as unknown as AnyRecord
+      if (k.Chat?.Completions?.prototype) recorder.wrap(k.Chat.Completions.prototype, 'openai', 'openai')
+      if (k.Responses?.prototype?.create) recorder.wrap(k.Responses.prototype, 'openai', 'openai_responses')
+      if (k.Messages?.prototype?.create && !k.Chat) recorder.wrap(k.Messages.prototype, 'anthropic', 'anthropic')
+      continue
+    }
     if (!c || typeof c !== 'object') continue
     if (c.chat?.completions) recorder.wrap(c.chat.completions, 'openai', 'openai')
     if (c.responses) recorder.wrap(c.responses, 'openai', 'openai_responses')

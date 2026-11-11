@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### TypeScript SDK
+
+- **`npx zizkadb-sdk test from-session <session_id> --agent <agent>`**: the TypeScript counterpart of the Python command. Writes a session snapshot and a **vitest** test that replays the inputs through your agent (`--entry src/agent.ts:fn`, `--clients openai,anthropic`) and checks the same tool path without errors.
+- **`capture({ clients }, fn)`**: records an agent's OpenAI / Anthropic calls in memory for tests; any `instrument()` in the app stays quiet meanwhile.
+- **`instrument()` accepts client classes** (`clients: [OpenAI, Anthropic]`), recording every instance, including ones created later.
+
+### Python SDK
+
+- **Anthropic `messages.stream()` is recorded** (sync and async): it posts directly instead of calling `create()`, so it is wrapped and recorded from its message snapshot when the `with` block exits (complete, `truncated`, or `llm_error`). The OpenAI `.stream()` helpers already go through `create()` and are recorded; both are now covered by tests and docs, in both SDKs.
+
 ### Python and TypeScript SDKs
 
 - **`instrument()` records streaming calls** (`stream=True` / `stream: true`) for OpenAI chat completions, the OpenAI Responses API, Anthropic messages and LiteLLM. The caller gets the provider's stream unchanged; chunks are read as they pass, and when the stream ends `llm_end` carries the full output and token usage and each streamed tool call becomes a `tool_call` event, linked like non-streaming calls. A stream closed early is recorded with `truncated: true`; one that fails mid-way as `llm_error` with the partial output. Previously streamed calls were recorded without output or tool calls. The `.stream()` helper methods are not covered yet.
