@@ -82,6 +82,26 @@ Then call OpenAI (chat completions or the Responses API), Anthropic or LiteLLM a
 - **Streaming** (`stream=True`) is recorded too: you get the provider's stream unchanged, and once it ends the events carry the full output, tool calls and token usage (for OpenAI chat, usage needs `stream_options={"include_usage": True}`). A stream closed early is marked `"truncated": true`; one that fails mid-way becomes `llm_error` with the partial output. The `.stream()` helpers are recorded too: OpenAI `chat.completions.stream()` / `responses.stream()` and Anthropic `messages.stream()` (recorded when its `with` block exits).
 - A failed write is logged as a warning; your LLM call is never affected. `inst.uninstrument()` restores the original methods.
 
+## Turn a bad session into a test
+
+```bash
+zizkadb test from-session <session_id> --agent my-bot --entry my_app.agent:answer
+pytest tests/test_session_<id>.py
+```
+
+Writes a snapshot of the session (`tests/zizkadb_sessions/<name>.json`: user inputs, tool path, final answer, errors) and a pytest test that replays the user inputs through your agent and checks it calls the same tools, in the same order, without errors. Without `--entry`, connect `run_agent()` in the generated file to your agent. If the recorded run was the bug, edit `EXPECTED_TOOL_CALLS` to the path the agent should take.
+
+The test runs inside `zizkadb.testing.capture()`, which records OpenAI / Anthropic / LiteLLM calls in memory (no ZizkaDB server needed). Use it in your own tests too:
+
+```python
+from zizkadb.testing import capture
+
+def test_refund_question():
+    with capture() as run:
+        my_agent("How long do refunds take?")
+    assert run.tool_calls == ["search_policies"] and not run.errors
+```
+
 ## Multi-agent apps (ZizkaDB Cloud)
 
 An API key works for one agent name. Running several agents — and agent-to-agent messaging between them — is a [ZizkaDB Cloud](https://db.zizka.ai) feature; create each agent and its key in the dashboard.

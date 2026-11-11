@@ -65,6 +65,7 @@ zizkadb init my-agent --template basic
 # Templates: basic | openai | langchain | crewai | mcp-cursor
 
 zizkadb why <event_id> [--depth N]
+zizkadb test from-session <session_id> --agent <agent> [--entry module:function] [--out tests] [--force]
 zizkadb baseline <agent> [--window 24h|7d|30d]
 zizkadb token-usage <agent> --from YYYY-MM-DD --to YYYY-MM-DD
 zizkadb token-opt <agent> --from YYYY-MM-DD --to YYYY-MM-DD

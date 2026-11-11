@@ -56,6 +56,7 @@ zizkadb init my-agent --template mcp-cursor
 | `context_for(agent, task)` | Prompt-ready memory block |
 | `forget(filter_key, filter_value)` | GDPR delete |
 | `baseline(agent)` | Behavioral drift signal |
+| `zizkadb.testing.capture()` | Record LLM and tool calls in memory inside a test (`run.tool_calls`, `run.errors`); used by `zizkadb test from-session` |
 | `agents()` | List agents |
 | `zizkadb.instrument(db, agent)` | Record every OpenAI / Anthropic / LiteLLM call, tool call and tool result with causal links and token usage, no `log()` calls needed |
 

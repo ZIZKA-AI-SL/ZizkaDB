@@ -285,7 +285,7 @@ zizkadb.instrument(ZizkaDB(host="http://localhost:8000"), agent="my-bot")
 # result is recorded with its cause, plus token usage. No db.log() needed.
 ```
 
-From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.md)**
+From the terminal: `zizkadb why <event_id>`, or turn a bad session into a pytest regression test with `zizkadb test from-session <session_id> --agent my-bot`. Full guide: **[CONNECT.md](CONNECT.md)**
 
 ---
 
