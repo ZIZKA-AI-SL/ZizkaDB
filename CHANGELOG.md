@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **OpenClaw plugin 0.1.1:** the optional `zizkadb_why` and `zizkadb_search` tools are limited to the conversation they run in (from OpenClaw's trusted tool context, not model arguments). Search asks the server for that conversation's events only; `why` answers "not found" for another conversation's event and drops foreign ancestors; no tools without a conversation. Results are labelled as untrusted historical data. Fixes the cross-conversation disclosure (MCP01) and stored prompt-injection (MCP06) findings of ClawHub's scan of 0.1.0. The tools were off by default; recording is unchanged.
+
 ### Added
 - **OpenClaw plugin** 0.1.0 (`integrations/openclaw/`; ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`): records each OpenClaw turn as one causal chain (`user_message` → `tool_call` → `tool_result` → `llm_end` → `assistant_response`, plus `tool_error` / `agent_error`) with token usage, per conversation session. Observe-only, `captureContent: false` for metadata only, optional `zizkadb_why` and `zizkadb_search` tools. Tested inside a real OpenClaw 2026.11.3 gateway against a ZizkaDB server (`why()` complete, audit chain intact).
 

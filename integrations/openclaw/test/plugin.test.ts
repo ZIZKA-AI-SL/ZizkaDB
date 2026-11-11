@@ -223,18 +223,13 @@ describe('plugin wiring', () => {
     expect(t.logs.warn.filter((m) => m.includes('not recording'))).toHaveLength(1)
   })
 
-  it('adds the optional why and search tools', async () => {
-    const { tools, db } = setup({ config: { apiKey: 'k', agent: 'support' } })
-    expect(tools.map((t) => [t.tool.name, t.opts.optional])).toEqual([
-      ['zizkadb_why', true],
-      ['zizkadb_search', true],
-    ])
-    const why = await tools[0].tool.execute('c1', { event_id: 'e5', depth: 3 })
-    expect(db.why).toHaveBeenCalledWith('e5', 3)
-    expect(why.details.chain[0]).toMatchObject({ event_id: 'e5', event: 'assistant_response' })
-    const found = await tools[1].tool.execute('c2', { query: 'refund' })
-    expect(db.search).toHaveBeenCalledWith({ query: 'refund', agent: 'support', limit: 10 })
-    expect(JSON.parse(found.content[0].text)[0].event_id).toBe('e1')
+  it('registers the tools as one optional, context-scoped factory', () => {
+    const { tools } = setup({ config: { apiKey: 'k', agent: 'support' } })
+    expect(tools).toHaveLength(1)
+    expect(typeof tools[0].tool).toBe('function')
+    expect(tools[0].opts).toEqual({ names: ['zizkadb_why', 'zizkadb_search'], optional: true })
+    expect(tools[0].tool({ sessionKey: 'agent:main:telegram:1' }).map((t: any) => t.name)).toEqual(['zizkadb_why', 'zizkadb_search'])
+    expect(tools[0].tool({})).toBeNull()
   })
 
   it('manifest, package.json and code agree', () => {
@@ -243,7 +238,7 @@ describe('plugin wiring', () => {
     expect(manifest.id).toBe(PLUGIN_ID)
     expect(plugin.id).toBe(PLUGIN_ID)
     const { tools } = setup()
-    expect(manifest.contracts.tools).toEqual(tools.map((t) => t.tool.name))
+    expect(manifest.contracts.tools.slice().sort()).toEqual(tools[0].opts.names.slice().sort())
     expect(Object.keys(manifest.configSchema.properties).sort()).toEqual(['agent', 'apiKey', 'captureContent', 'host'])
     expect(pkg.openclaw.extensions).toEqual(['./dist/index.js'])
     expect(pkg.files).toContain('openclaw.plugin.json')

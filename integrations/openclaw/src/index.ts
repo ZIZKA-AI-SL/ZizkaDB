@@ -7,7 +7,8 @@
  */
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry'
 import { ZizkaDB } from 'zizkadb-sdk'
-import { clip, Recorder, type LogTarget } from './recorder'
+import { Recorder, type LogTarget } from './recorder'
+import { createTools, TOOL_NAMES, type ToolsClient } from './tools'
 
 export const PLUGIN_ID = 'zizkadb'
 
@@ -38,10 +39,6 @@ function readConfig(raw: Record<string, unknown> | undefined): ZizkaDBPluginConf
 function env(name: string): string | undefined {
   const v = typeof process !== 'undefined' ? process.env?.[name] : undefined
   return v && v.trim() ? v.trim() : undefined
-}
-
-function text(value: unknown) {
-  return { content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }], details: value }
 }
 
 export function register(api: Api, makeClient: (config: ZizkaDBPluginConfig) => ZizkaDB = (c) => new ZizkaDB({ apiKey: c.apiKey, host: c.host })): Recorder | undefined {
@@ -103,58 +100,10 @@ export function register(api: Api, makeClient: (config: ZizkaDBPluginConfig) => 
     await recorder.flush()
   })
 
-  // Optional tools: the agent can look up its own record. Off unless the
-  // operator allows them in the agent's tool policy.
-  api.registerTool(
-    {
-      name: 'zizkadb_why',
-      label: 'ZizkaDB: why',
-      description: 'Explain an event in this agent\'s ZizkaDB audit trail: returns the causal chain (the earlier messages, tool calls and model outputs that led to it).',
-      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['event_id'],
-        properties: {
-          event_id: { type: 'string', minLength: 1, maxLength: 128, description: 'ZizkaDB event id' },
-          depth: { type: 'integer', minimum: 1, maximum: 50, description: 'How many steps back to walk (default 10)' },
-        },
-      },
-      async execute(_id: string, input: Record<string, unknown>) {
-        const client = db()
-        if (!client) throw new Error('ZizkaDB is not configured')
-        const chain = await client.why(String(input.event_id), typeof input.depth === 'number' ? input.depth : 10)
-        return text({
-          event_id: chain.eventId,
-          complete: chain.chainComplete ?? true,
-          chain: chain.chain.map((e) => ({ event_id: e.eventId, event: e.event, at: e.timestamp, data: clip(e.data) })),
-        })
-      },
-    },
-    { name: 'zizkadb_why', optional: true },
-  )
-  api.registerTool(
-    {
-      name: 'zizkadb_search',
-      label: 'ZizkaDB: search',
-      description: 'Search this agent\'s ZizkaDB audit trail for past events (messages, tool calls, model outputs).',
-      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['query'],
-        properties: {
-          query: { type: 'string', minLength: 1, maxLength: 1000 },
-          limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 10' },
-        },
-      },
-      async execute(_id: string, input: Record<string, unknown>) {
-        const client = db()
-        if (!client) throw new Error('ZizkaDB is not configured')
-        const events = await client.search({ query: String(input.query), agent, limit: typeof input.limit === 'number' ? input.limit : 10 })
-        return text(events.map((e) => ({ event_id: e.eventId, event: e.event, at: e.timestamp, session_id: e.sessionId, data: clip(e.data) })))
-      },
-    },
-    { name: 'zizkadb_search', optional: true },
-  )
+  // Optional tools (off unless allowed in the agent's tool policy). Each
+  // invocation gets tools scoped to its own conversation, taken from
+  // OpenClaw's trusted context; none are offered without one.
+  api.registerTool((ctx) => createTools(ctx, agent, db as () => ToolsClient | null), { names: [...TOOL_NAMES], optional: true })
 
   return recorder
 }
