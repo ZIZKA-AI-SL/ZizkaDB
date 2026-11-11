@@ -9,7 +9,7 @@ Official adapters for agent frameworks. Each package is optional — core SDK is
 | [crewai](crewai/) | PyPI **0.1.5** | `pip install zizkadb-crewai` | `crewai` | CrewAI crew logger |
 | [livekit](livekit/) | PyPI **0.2.3** | `pip install zizkadb-livekit` | `livekit` | LiveKit voice → Sessions + Events |
 | [langgraph](langgraph/) | PyPI **0.1.2** | `pip install zizkadb-langgraph` | `langgraph` | LangGraph node logging middleware |
-| [openclaw](openclaw/) | ClawHub `@zizka-ai/zizkadb` · npm **0.1.0** | `openclaw plugins install clawhub:@zizka-ai/zizkadb` | `typescript` | OpenClaw plugin: messages, tool calls, model outputs, token usage |
+| [openclaw](openclaw/) | ClawHub `@zizka-ai/zizkadb` · npm **0.1.1** | `openclaw plugins install clawhub:@zizka-ai/zizkadb` | `typescript` | OpenClaw plugin: messages, tool calls, model outputs, token usage |
 | [mcp](../mcp/) | PyPI **0.1.14** | `uvx zizkadb-mcp` | `mcp` | Cursor / Claude Desktop tools |
 | TypeScript SDK | npm **0.7.0** | `npm install zizkadb-sdk` | `typescript` | Node / Bun / Deno client |
 | Docker OSS | — | `bash scripts/quickstart.sh` | `docker` | Self-hosted stack |

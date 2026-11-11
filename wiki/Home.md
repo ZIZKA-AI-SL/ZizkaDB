@@ -13,7 +13,7 @@
 | PyPI CrewAI | [zizkadb-crewai](https://pypi.org/project/zizkadb-crewai/) **0.1.5** |
 | PyPI LiveKit | [zizkadb-livekit](https://pypi.org/project/zizkadb-livekit/) **0.2.3** |
 | npm SDK | [zizkadb-sdk](https://www.npmjs.com/package/zizkadb-sdk) **0.7.0** |
-| OpenClaw plugin | [ClawHub @zizka-ai/zizkadb](https://clawhub.ai/plugins/@zizka-ai/zizkadb) · [npm zizkadb-openclaw](https://www.npmjs.com/package/zizkadb-openclaw) **0.1.0** |
+| OpenClaw plugin | [ClawHub @zizka-ai/zizkadb](https://clawhub.ai/plugins/@zizka-ai/zizkadb) · [npm zizkadb-openclaw](https://www.npmjs.com/package/zizkadb-openclaw) **0.1.1** |
 | Docs site | [db.zizka.ai/docs](https://db.zizka.ai/docs) |
 | Managed cloud (optional) | [db.zizka.ai/signup](https://db.zizka.ai/signup) |
 

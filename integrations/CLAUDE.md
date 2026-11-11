@@ -14,7 +14,7 @@ Standalone adapter packages: **`zizkadb-langchain`**, **`zizkadb-crewai`**, **`z
 | `zizkadb-crewai` | `integrations/crewai/` | `ZizkaDBCrewLogger` | `0.1.5` |
 | `zizkadb-livekit` | `integrations/livekit/` | `ZizkaDBLiveKitObserver` | `0.2.3` |
 | `zizkadb-langgraph` | `integrations/langgraph/` | `ZizkaDBLangGraphMiddleware` | `0.1.2` |
-| `zizkadb-openclaw` (npm) / `@zizka-ai/zizkadb` (ClawHub) | `integrations/openclaw/` | OpenClaw plugin `zizkadb` | `0.1.0` |
+| `zizkadb-openclaw` (npm) / `@zizka-ai/zizkadb` (ClawHub) | `integrations/openclaw/` | OpenClaw plugin `zizkadb` | `0.1.1` |
 
 Install for users:
 ```bash
