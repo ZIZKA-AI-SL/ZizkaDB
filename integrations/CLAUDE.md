@@ -14,7 +14,7 @@ Standalone adapter packages: **`zizkadb-langchain`**, **`zizkadb-crewai`**, **`z
 | `zizkadb-crewai` | `integrations/crewai/` | `ZizkaDBCrewLogger` | `0.1.5` |
 | `zizkadb-livekit` | `integrations/livekit/` | `ZizkaDBLiveKitObserver` | `0.2.3` |
 | `zizkadb-langgraph` | `integrations/langgraph/` | `ZizkaDBLangGraphMiddleware` | `0.1.2` |
-| `zizkadb-langgraph` | `integrations/langgraph/` | `ZizkaDBLangGraphMiddleware` | `0.1.1` |
+| `zizkadb-openclaw` (npm, TypeScript) | `integrations/openclaw/` | OpenClaw plugin `zizkadb` | unreleased |
 
 Install for users:
 ```bash
@@ -105,6 +105,18 @@ to the root cause, so a crew run becomes a causal tree, not a flat log. See the 
 [`awesome-crewai` PR #91](https://github.com/crewAIInc/awesome-crewai/pull/91). Note: the historical
 `crewAIInc/crewAI-examples` repo is **archived** (read-only); `awesome-crewai` is the active home for
 third-party integrations.
+
+---
+
+## OpenClaw plugin
+
+TypeScript (ESM) OpenClaw plugin in `integrations/openclaw/`: `src/recorder.ts` turns hook events into one linked chain per OpenClaw turn (`runId`); `src/index.ts` registers the hooks and the optional `zizkadb_why` / `zizkadb_search` tools. It bundles `zizkadb-sdk` at build time and imports only types from `openclaw`.
+
+- Observe-only: hook handlers return nothing (never block or rewrite). Keep it that way.
+- Registers only when `api.registrationMode === "full"` (the live gateway); discovery loads must stay side-effect free.
+- `llm_input` / `llm_output` / `agent_end` need `plugins.entries.zizkadb.hooks.allowConversationAccess: true`.
+- `openclaw.plugin.json` (id, config schema, `contracts.tools`) must match the code; a test checks it.
+- Node 24.16+ (OpenClaw requirement): `npm install && npm run typecheck && npm test && npm run build`.
 
 ---
 

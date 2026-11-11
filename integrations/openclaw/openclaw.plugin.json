@@ -1,0 +1,44 @@
+{
+  "id": "zizkadb",
+  "name": "ZizkaDB",
+  "description": "Tamper-evident, causal audit trail of what your agent did and why: messages, tool calls, model outputs and token usage, linked cause to effect. Observe-only: never blocks or changes a message or tool call.",
+  "categories": ["security", "developer-tools"],
+  "enabledByDefault": false,
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": ["zizkadb_why", "zizkadb_search"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": { "type": "string" },
+      "host": { "type": "string" },
+      "agent": { "type": "string", "default": "openclaw" },
+      "captureContent": { "type": "boolean", "default": true }
+    }
+  },
+  "uiHints": {
+    "apiKey": {
+      "label": "API key",
+      "placeholder": "zizkadb_live_…",
+      "sensitive": true,
+      "help": "ZizkaDB Cloud key from db.zizka.ai → Settings. Leave empty for a self-hosted server, or set ZIZKADB_API_KEY."
+    },
+    "host": {
+      "label": "Self-hosted URL",
+      "placeholder": "http://localhost:8000",
+      "help": "Your own ZizkaDB server. Leave empty for ZizkaDB Cloud. Or set ZIZKADB_HOST."
+    },
+    "agent": {
+      "label": "Agent name",
+      "help": "Name this gateway's events are recorded under in ZizkaDB."
+    },
+    "captureContent": {
+      "label": "Record content",
+      "help": "Off: record which tools and models ran, token usage and errors, but not prompts, replies, tool arguments or results."
+    }
+  }
+}
