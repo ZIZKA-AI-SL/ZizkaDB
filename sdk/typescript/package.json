@@ -6,7 +6,7 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "bin": {
-    "zizkadb-sdk": "./dist/cli.js"
+    "zizkadb-sdk": "dist/cli.js"
   },
   "exports": {
     ".": {
