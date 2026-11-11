@@ -15,11 +15,19 @@ Then ask why any step happened: `db.why(event_id)` walks back to the message tha
 
 ## Install
 
+From [ClawHub](https://clawhub.ai):
+
 ```bash
-openclaw plugins install clawhub:zizka-ai/zizkadb
-# or from npm
-openclaw plugins install npm:zizkadb-openclaw
+openclaw plugins install clawhub:@zizka-ai/zizkadb
 ```
+
+Or from [npm](https://www.npmjs.com/package/zizkadb-openclaw). OpenClaw asks you to confirm installs from outside ClawHub, so add `--force`:
+
+```bash
+openclaw plugins install npm:zizkadb-openclaw --force
+```
+
+OpenClaw asks you to approve the plugin's permissions on install (in scripts, pass `--accept-capabilities`). Community plugins load once they are listed in `plugins.allow`, which the config below includes.
 
 ## Configure
 
@@ -28,6 +36,7 @@ Add the plugin's settings to `~/.openclaw/openclaw.json`, then restart the gatew
 ```json5
 {
   plugins: {
+    allow: ["zizkadb"],
     entries: {
       zizkadb: {
         enabled: true,

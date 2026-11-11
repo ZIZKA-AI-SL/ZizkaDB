@@ -2,7 +2,7 @@
   "id": "zizkadb",
   "name": "ZizkaDB",
   "description": "Tamper-evident, causal audit trail of what your agent did and why: messages, tool calls, model outputs and token usage, linked cause to effect. Observe-only: never blocks or changes a message or tool call.",
-  "categories": ["security", "developer-tools"],
+  "categories": ["security"],
   "enabledByDefault": false,
   "activation": {
     "onStartup": true

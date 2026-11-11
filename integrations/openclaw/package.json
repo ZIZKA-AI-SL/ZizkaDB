@@ -27,8 +27,11 @@
     "extensions": [
       "./dist/index.js"
     ],
+    "build": {
+      "openclawVersion": "2026.11.3"
+    },
     "install": {
-      "clawhubSpec": "clawhub:zizka-ai/zizkadb",
+      "clawhubSpec": "clawhub:@zizka-ai/zizkadb",
       "npmSpec": "zizkadb-openclaw",
       "defaultChoice": "clawhub",
       "minHostVersion": ">=2026.9.5"

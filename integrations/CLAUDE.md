@@ -14,7 +14,7 @@ Standalone adapter packages: **`zizkadb-langchain`**, **`zizkadb-crewai`**, **`z
 | `zizkadb-crewai` | `integrations/crewai/` | `ZizkaDBCrewLogger` | `0.1.5` |
 | `zizkadb-livekit` | `integrations/livekit/` | `ZizkaDBLiveKitObserver` | `0.2.3` |
 | `zizkadb-langgraph` | `integrations/langgraph/` | `ZizkaDBLangGraphMiddleware` | `0.1.2` |
-| `zizkadb-openclaw` (npm, TypeScript) | `integrations/openclaw/` | OpenClaw plugin `zizkadb` | unreleased |
+| `zizkadb-openclaw` (npm) / `@zizka-ai/zizkadb` (ClawHub) | `integrations/openclaw/` | OpenClaw plugin `zizkadb` | `0.1.0` |
 
 Install for users:
 ```bash
@@ -117,6 +117,7 @@ TypeScript (ESM) OpenClaw plugin in `integrations/openclaw/`: `src/recorder.ts` 
 - `llm_input` / `llm_output` / `agent_end` need `plugins.entries.zizkadb.hooks.allowConversationAccess: true`.
 - `openclaw.plugin.json` (id, config schema, `contracts.tools`) must match the code; a test checks it.
 - Node 24.16+ (OpenClaw requirement): `npm install && npm run typecheck && npm test && npm run build`.
+- Publish: npm as `zizkadb-openclaw`; ClawHub as `@zizka-ai/zizkadb` (ClawHub requires `package.json` `name` to equal the ClawHub name, so publish to ClawHub from a staged copy with `name` set to `@zizka-ai/zizkadb`; manifest must have exactly one category). `clawhub` needs Node 22+: `clawhub login` (device code), then `clawhub package publish <dir> --family code-plugin --name @zizka-ai/zizkadb --owner zizka-ai --source-repo ZIZKA-AI-SL/ZizkaDB --source-commit <sha> --source-path integrations/openclaw --wait`.
 
 ---
 
