@@ -1,6 +1,6 @@
 # zizkadb-sdk
 
-**npm:** [zizkadb-sdk 0.6.0](https://www.npmjs.com/package/zizkadb-sdk)
+**npm:** [zizkadb-sdk 0.7.0](https://www.npmjs.com/package/zizkadb-sdk)
 
 TypeScript SDK for [ZizkaDB](https://db.zizka.ai) — causal lineage, time travel, and semantic search for AI agents.
 

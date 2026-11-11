@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-11
+
+Released packages: `zizkadb-sdk` 0.7.0 (PyPI and npm), `zizkadb-mcp` 0.1.14, server images `v0.7.0`. The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.7.0. No server upgrade steps.
+
+**Highlights**
+
+- **One-line auto-capture.** `zizkadb.instrument(db, agent=...)` (Python) and `instrument(db, { agent, clients })` (TypeScript) record every LLM call, tool call and tool result as causally linked events with token usage, so `db.why()` works with no `db.log()` calls. Covers OpenAI (chat and Responses API) and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, Mistral, Cohere, AWS Bedrock, LiteLLM, the native `ollama` package, and in-process `llama-cpp-python` / `transformers`; the Vercel AI SDK through `zizkadbMiddleware`. Streaming included.
+- **Bad runs become regression tests.** `zizkadb test from-session` (pytest) and `npx zizkadb-sdk test from-session` (vitest) turn a recorded session into a test that checks the agent takes the same tool path without errors; `capture()` records agent calls in memory inside any test.
+- **CI runs are not installs.** The install ping says where it runs (`ci`, `container`, `machine`).
+
 ### Native SDKs and in-process models
 
 - **Python `instrument()`** now also records **Mistral** (`mistralai` v1 and v2+: `chat.complete`, `chat.stream`, async), **Cohere** (`ClientV2` / `AsyncClientV2` `chat`, `chat_stream`), **AWS Bedrock** through boto3 (`converse`, `converse_stream`; other AWS calls pass through untouched) and models run **in-process**: `llama-cpp-python` (`Llama.create_chat_completion`, streaming) and Hugging Face `transformers` text-generation pipelines. In-process libraries are patched only when the app imported them first, so `instrument()` never loads PyTorch or llama.cpp itself.
@@ -538,7 +548,8 @@ Production-hardening sprint merged to `main` (via stacked PRs #125–#139), incl
 
 See [GitHub releases](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) for tagged artifacts.
 
-[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/V0.5.0...v0.6.0
 [0.2.8]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.6...v0.2.7
