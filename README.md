@@ -469,17 +469,17 @@ The stack isn't running. Start it with the curl command above or `bash scripts/s
 
 ## Downloads
 
-All-time downloads of every ZizkaDB package. The total badge at the top is the sum of these, refreshed daily.
+All-time downloads of every ZizkaDB package, refreshed daily. The total badge at the top is the sum of these.
 
 | Package | Registry | Downloads | Source |
 | --- | --- | --- | --- |
-| `zizkadb-sdk` (Python SDK) | PyPI | [![zizkadb-sdk](https://img.shields.io/pepy/dt/zizkadb-sdk?label=downloads)](https://pepy.tech/projects/zizkadb-sdk) | [pepy.tech](https://pepy.tech/projects/zizkadb-sdk) · [pypi.org](https://pypi.org/project/zizkadb-sdk/) |
-| `zizkadb-mcp` (MCP server) | PyPI | [![zizkadb-mcp](https://img.shields.io/pepy/dt/zizkadb-mcp?label=downloads)](https://pepy.tech/projects/zizkadb-mcp) | [pepy.tech](https://pepy.tech/projects/zizkadb-mcp) · [pypi.org](https://pypi.org/project/zizkadb-mcp/) |
-| `zizkadb-langchain` | PyPI | [![zizkadb-langchain](https://img.shields.io/pepy/dt/zizkadb-langchain?label=downloads)](https://pepy.tech/projects/zizkadb-langchain) | [pepy.tech](https://pepy.tech/projects/zizkadb-langchain) · [pypi.org](https://pypi.org/project/zizkadb-langchain/) |
-| `zizkadb-crewai` | PyPI | [![zizkadb-crewai](https://img.shields.io/pepy/dt/zizkadb-crewai?label=downloads)](https://pepy.tech/projects/zizkadb-crewai) | [pepy.tech](https://pepy.tech/projects/zizkadb-crewai) · [pypi.org](https://pypi.org/project/zizkadb-crewai/) |
-| `zizkadb-sdk` (TypeScript SDK) | npm | [![zizkadb-sdk npm](https://img.shields.io/npm/d18m/zizkadb-sdk?label=downloads)](https://npm-stat.com/charts.html?package=zizkadb-sdk) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-sdk) · [npmjs.com](https://www.npmjs.com/package/zizkadb-sdk) |
-| `@zizka-ai/zizkadb` (OpenClaw plugin) | ClawHub | [![zizkadb ClawHub](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fclawhub.ai%2Fapi%2Fv1%2Fpackages%2F%2540zizka-ai%252Fzizkadb&query=%24.package.stats.downloads&label=downloads)](https://clawhub.ai/plugins/@zizka-ai/zizkadb) | [clawhub.ai](https://clawhub.ai/plugins/@zizka-ai/zizkadb) |
-| `zizkadb-openclaw` (OpenClaw plugin) | npm | [![zizkadb-openclaw npm](https://img.shields.io/npm/d18m/zizkadb-openclaw?label=downloads)](https://npm-stat.com/charts.html?package=zizkadb-openclaw) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-openclaw) · [npmjs.com](https://www.npmjs.com/package/zizkadb-openclaw) |
+| `zizkadb-sdk` (Python SDK) | PyPI | [![zizkadb-sdk](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-sdk.json)](https://pepy.tech/projects/zizkadb-sdk) | [pepy.tech](https://pepy.tech/projects/zizkadb-sdk) · [pypi.org](https://pypi.org/project/zizkadb-sdk/) |
+| `zizkadb-mcp` (MCP server) | PyPI | [![zizkadb-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-mcp.json)](https://pepy.tech/projects/zizkadb-mcp) | [pepy.tech](https://pepy.tech/projects/zizkadb-mcp) · [pypi.org](https://pypi.org/project/zizkadb-mcp/) |
+| `zizkadb-langchain` | PyPI | [![zizkadb-langchain](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-langchain.json)](https://pepy.tech/projects/zizkadb-langchain) | [pepy.tech](https://pepy.tech/projects/zizkadb-langchain) · [pypi.org](https://pypi.org/project/zizkadb-langchain/) |
+| `zizkadb-crewai` | PyPI | [![zizkadb-crewai](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-crewai.json)](https://pepy.tech/projects/zizkadb-crewai) | [pepy.tech](https://pepy.tech/projects/zizkadb-crewai) · [pypi.org](https://pypi.org/project/zizkadb-crewai/) |
+| `zizkadb-sdk` (TypeScript SDK) | npm | [![zizkadb-sdk npm](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-npm-zizkadb-sdk.json)](https://npm-stat.com/charts.html?package=zizkadb-sdk) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-sdk) · [npmjs.com](https://www.npmjs.com/package/zizkadb-sdk) |
+| `@zizka-ai/zizkadb` (OpenClaw plugin) | ClawHub | [![zizkadb ClawHub](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-clawhub-zizka-ai-zizkadb.json)](https://clawhub.ai/plugins/@zizka-ai/zizkadb) | [clawhub.ai](https://clawhub.ai/plugins/@zizka-ai/zizkadb) |
+| `zizkadb-openclaw` (OpenClaw plugin) | npm | [![zizkadb-openclaw npm](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-npm-zizkadb-openclaw.json)](https://npm-stat.com/charts.html?package=zizkadb-openclaw) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-openclaw) · [npmjs.com](https://www.npmjs.com/package/zizkadb-openclaw) |
 
 ---
 
