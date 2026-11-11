@@ -61,6 +61,63 @@ async with db:
     chain.print()
 ```
 
+## Auto-capture LLM calls (one line)
+
+```python
+import zizkadb
+from zizkadb import ZizkaDB
+
+db = ZizkaDB("zizkadb_live_xxxx")
+zizkadb.instrument(db, agent="my-bot")
+```
+
+Then call your model as usual (sync or async). Each call is recorded as causally linked events, so `db.why()` works without any `db.log()`:
+
+`user_message` → `llm_end` (model, output, `token_usage`) → `tool_call` → `tool_result` → `llm_end` …
+
+| You call models through | Covered |
+| --- | --- |
+| `openai` (chat completions, Responses API) | OpenAI, Azure OpenAI, and every OpenAI-compatible API: **DeepSeek, GLM (Zhipu), Kimi (Moonshot)**, Qwen, Mistral, Groq, Together, Fireworks, OpenRouter, xAI, and local servers (**Ollama**, vLLM, LM Studio, llama.cpp, TGI) |
+| `anthropic` (messages, `messages.stream`) | Claude, including on AWS Bedrock and Google Vertex |
+| `google-genai` (`models.generate_content`, `generate_content_stream`, chats) | Gemini |
+| `ollama` (native package: `ollama.chat`, `Client`, `AsyncClient`) | any local Ollama model |
+| `zai-sdk` / `zhipuai` | GLM through Zhipu's own SDK |
+| `mistralai` (`chat.complete`, `chat.stream`, async) | Mistral |
+| `cohere` (`ClientV2.chat`, `chat_stream`, async) | Cohere Command |
+| `boto3` `bedrock-runtime` (`converse`, `converse_stream`) | every model on AWS Bedrock (Claude, Llama, Mistral, Nova, ...) |
+| `litellm` | 100+ providers behind LiteLLM (Vertex, Hugging Face, ...) |
+| `llama-cpp-python` (`Llama.create_chat_completion`) | GGUF models run in your process |
+| `transformers` (`pipeline("text-generation")`) | Hugging Face models run in your process |
+
+Reasoning models are covered too: the thinking text (`reasoning_content` from DeepSeek, GLM and Kimi; Gemini thoughts; Ollama `thinking`) lands in `llm_end` as `reasoning`, and cached and reasoning tokens are read from each provider's own usage fields. In-process models are recorded when their library is imported before `instrument()` runs (it never imports PyTorch or llama.cpp itself, so startup stays fast). Calls below those entry points (a raw `model.generate()` on tensors) are not recorded: log them with `db.log()`.
+
+- Tool results are linked to the tool call that asked for them (OpenAI `role="tool"` or Responses API `function_call_output`, Anthropic `tool_result`), each recorded once even though chat APIs resend the history.
+- Inside `async with db.track(agent="my-bot")` the events share that session.
+- `capture_content=False` stores only models, tool names, token usage and the links, no prompt or output text. Text is otherwise clipped to 4,000 characters.
+- Tools without call ids (the native `ollama` package, some Gemini calls) are matched to their call by tool name.
+- **Streaming** (`stream=True`) is recorded too: you get the provider's stream unchanged, and once it ends the events carry the full output, tool calls and token usage (for OpenAI chat, usage needs `stream_options={"include_usage": True}`). A stream closed early is marked `"truncated": true`; one that fails mid-way becomes `llm_error` with the partial output. The `.stream()` helpers are recorded too: OpenAI `chat.completions.stream()` / `responses.stream()` and Anthropic `messages.stream()` (recorded when its `with` block exits).
+- A failed write is logged as a warning; your LLM call is never affected. `inst.uninstrument()` restores the original methods.
+
+## Turn a bad session into a test
+
+```bash
+zizkadb test from-session <session_id> --agent my-bot --entry my_app.agent:answer
+pytest tests/test_session_<id>.py
+```
+
+Writes a snapshot of the session (`tests/zizkadb_sessions/<name>.json`: user inputs, tool path, final answer, errors) and a pytest test that replays the user inputs through your agent and checks it calls the same tools, in the same order, without errors. Without `--entry`, connect `run_agent()` in the generated file to your agent. If the recorded run was the bug, edit `EXPECTED_TOOL_CALLS` to the path the agent should take.
+
+The test runs inside `zizkadb.testing.capture()`, which records OpenAI / Anthropic / LiteLLM calls in memory (no ZizkaDB server needed). Use it in your own tests too:
+
+```python
+from zizkadb.testing import capture
+
+def test_refund_question():
+    with capture() as run:
+        my_agent("How long do refunds take?")
+    assert run.tool_calls == ["search_policies"] and not run.errors
+```
+
 ## Multi-agent apps (ZizkaDB Cloud)
 
 An API key works for one agent name. Running several agents — and agent-to-agent messaging between them — is a [ZizkaDB Cloud](https://db.zizka.ai) feature; create each agent and its key in the dashboard.

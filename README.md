@@ -9,7 +9,7 @@
 Every agent decision linked to its cause. **Causal agent memory**, a **tamper-evident audit log** and **time-travel debugging**,<br/>
 in one open-source database on Postgres. Built for **EU AI Act Article 12** record-keeping.
 
-Keyword + vector search · Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
+Keyword + vector search · Agent drift measurement · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
 **[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations-langchain-langgraph-crewai-livekit-mcp)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
 
@@ -28,14 +28,14 @@ Keyword + vector search · Drift detection · MCP server · Python & TypeScript 
 
 </div>
 
-Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed. Observability platforms show you what happened; ZizkaDB is an **AI agent auditability platform** that proves why, through **causal lineage**, from **agent debugging** to **AI compliance**.
+Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed. Observability platforms show you what happened; ZizkaDB is an **AI agent auditability platform** that proves why, through **causal lineage**, from **agent debugging** to **AI compliance**. Under the hood it is an **agentic database**: an operational database for AI agents in which every event is SHA-256 checksummed and hash-chained, so its record works as **cryptographic telemetry for AI agents** that any **agent audit** can verify.
 
 - **Causal lineage, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
 - **Time-travel debugging and session replay.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment, and you can replay any session step by step.
 - **Provable history.** Every event has a checksum and is hash-chained to the one before it, so `db.verify_chain(agent)` proves nothing was edited, removed or reordered. GDPR deletions leave a content-free tombstone. A verifiable record for EU AI Act Article 12.
 - **Causal agent memory for the next run.** `db.context_for(agent, task)` returns the relevant past as a prompt block, ranked by relevance, importance and recency; a new fact can replace an old one (`supersedes`). Keyword search works with no OpenAI key, hybrid with embeddings, or embed locally.
 - **Built database.** Idempotent and batch writes, retention, export/import, read-only and expiring keys, Prometheus metrics, backup and restore scripts.
-- **Drift detection.** See when an agent's behavior shifts from its baseline.
+- **Agent drift measurement.** `db.baseline(agent)` scores how far an agent's recent sessions have moved from its baseline (0 = stable), so you catch **agent drift** before your users do.
 - **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure. Self-hosted runs **one agent with one API key**; multiple agents, agent fleets and agent-to-agent messaging are on Cloud.
 
 **In plain words:** ZizkaDB is a flight recorder for AI agents. It records every step an agent takes and which step led to it, so when an agent does something unexpected, you can see exactly why.
@@ -270,9 +270,22 @@ const tool = await db.log({ agent: 'my-bot', event: 'tool_call', data: { tool: '
 ;(await db.why(tool.eventId)).print()
 ```
 
+Or record every LLM call: `instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })`, or wrap any Vercel AI SDK model with `zizkadbMiddleware(db, { agent: 'my-bot' })`.
+
 </details>
 
-From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.md)**
+**Or record every LLM call with one line** (Python): OpenAI and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, Mistral, Cohere, AWS Bedrock, the native `ollama` package, LiteLLM, and models run in-process with `llama-cpp-python` or Hugging Face `transformers`:
+
+```python
+import zizkadb
+from zizkadb import ZizkaDB
+
+zizkadb.instrument(ZizkaDB(host="http://localhost:8000"), agent="my-bot")
+# Use OpenAI, Anthropic or LiteLLM as usual: every call, tool call and tool
+# result is recorded with its cause, plus token usage. No db.log() needed.
+```
+
+From the terminal: `zizkadb why <event_id>`, or turn a bad session into a pytest regression test with `zizkadb test from-session <session_id> --agent my-bot`. Full guide: **[CONNECT.md](CONNECT.md)**
 
 ---
 
@@ -297,15 +310,15 @@ Use ZizkaDB to **audit AI agents** in production, debug them from cause to effec
 
 ### Audit trail, agent auditability and EU AI Act Article 12
 
-Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record:
+Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record, so an agent audit can check exactly what each agent did and why:
 
 - **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum over its content and audit fields (agent, session, parent, timestamp, sequence), and `GET /v1/events/verify` reports any row whose fields no longer match. Events are also hash-chained per agent, so `GET /v1/events/chain` proves no event was removed, inserted or reordered (GDPR deletions leave a content-free tombstone).
 - **Causally linked history.** Each decision points to the event that caused it, so an auditor can follow the full chain.
 - **Session replay.** Step through any past session event by event.
 - **Time-travel debugging.** Rebuild exactly what the agent knew at any moment with `db.at()`.
-- **Drift detection.** `db.baseline()` flags when an agent starts behaving differently from its history.
+- **Agent drift measurement.** `db.baseline()` gives a drift score and flags when an agent starts behaving differently from its history.
 
-ZizkaDB supports your record-keeping obligations; it doesn't make a system compliant on its own.
+ZizkaDB supports your record-keeping obligations under EU AI Act Article 12 and is one building block of **EU AI Act compliance**; it doesn't make a system compliant on its own.
 
 <p align="center">
   <a href="https://db.zizka.ai"><img src="docs/assets/readme-hero-dashboard.png" alt="ZizkaDB dashboard: causal chain of an AI agent decision, tamper-evident audit log and agent memory" width="900"/></a>
@@ -411,11 +424,14 @@ No. Logging, `why()`, time travel, keyword search and `context_for()` work witho
 **How is ZizkaDB different from an agent memory layer like Mem0?**  
 A memory layer stores facts to recall. ZizkaDB stores what the agent did and *why*, linked step by step, and serves the relevant part back as memory (`context_for()`). The same record is a tamper-evident audit log, so memory, debugging and compliance come from one source.
 
+**Is ZizkaDB an agentic database?**  
+Yes. ZizkaDB is an agentic database: an operational database for AI agents rather than a general-purpose store. Its records are built for agent auditability: causal links, SHA-256 checksums and a hash chain, which together act as cryptographic telemetry for AI agents.
+
 **Is ZizkaDB an observability tool?**  
 No. Observability and LLMOps tools such as Langfuse or LangSmith show you span trees of what happened. ZizkaDB is an auditability platform: every event points to the event that caused it, `db.why()` returns the chain, and `db.verify_chain()` proves the record was never changed. It works next to an observability tool if you already have one.
 
 **Can I use ZizkaDB as an audit log for the EU AI Act (Article 12)?**  
-Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations; it doesn't make a system compliant on its own.
+Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations and is part of EU AI Act compliance work; it doesn't make a system compliant on its own.
 
 **How do I prove the logs weren't changed?**  
 `db.verify_chain(agent)` (or `GET /v1/events/chain`) rechecks every checksum and link and returns the chain head. Store the head somewhere else; checking again later from that head proves nothing before it was rewritten.

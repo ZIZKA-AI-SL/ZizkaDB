@@ -6,6 +6,43 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Native SDKs and in-process models
+
+- **Python `instrument()`** now also records **Mistral** (`mistralai` v1 and v2+: `chat.complete`, `chat.stream`, async), **Cohere** (`ClientV2` / `AsyncClientV2` `chat`, `chat_stream`), **AWS Bedrock** through boto3 (`converse`, `converse_stream`; other AWS calls pass through untouched) and models run **in-process**: `llama-cpp-python` (`Llama.create_chat_completion`, streaming) and Hugging Face `transformers` text-generation pipelines. In-process libraries are patched only when the app imported them first, so `instrument()` never loads PyTorch or llama.cpp itself.
+- **TypeScript `instrument()`** now also records **Mistral** (`@mistralai/mistralai`), **Cohere** (`cohere-ai` `CohereClientV2`) and **AWS Bedrock** (`@aws-sdk/client-bedrock-runtime` Converse / ConverseStream commands).
+- Recorded tool results and arguments are converted to plain JSON first, so SDK objects (Cohere documents, pydantic models) never break a write.
+
+### More providers (Python and TypeScript SDKs)
+
+- **Python `instrument()`** now also records **Google Gemini** (`google-genai`: `generate_content`, `generate_content_stream`, chats; sync and async), the **native `ollama` package** (`ollama.chat`, `Client`, `AsyncClient`, streaming) and **Zhipu's SDKs** (`zai-sdk`, `zhipuai`). Tools without call ids (ollama, some Gemini calls) are matched to their call by tool name.
+- **TypeScript `zizkadbMiddleware(db, { agent })`** for the **Vercel AI SDK**: wrap any AI SDK model (Gemini, OpenAI, Anthropic, DeepSeek, Mistral, Groq, Ollama, ...) and `generateText` / `streamText` are recorded, including multi-step tool loops. AI SDK 4, 5 and 6 (model spec v1-v3); inside `capture()` the events go to the test run.
+- **OpenAI-compatible providers (DeepSeek, GLM, Kimi, ...) in both SDKs**: reasoning text (`reasoning_content`) is recorded as `reasoning` on `llm_end` (also Gemini thoughts and ollama `thinking`), and cached tokens are read from each provider's field (`prompt_cache_hit_tokens`, `cached_tokens`, `prompt_tokens_details.cached_tokens`) along with reasoning tokens. `capture_content=False` keeps reasoning out too.
+
+### TypeScript SDK
+
+- **`npx zizkadb-sdk test from-session <session_id> --agent <agent>`**: the TypeScript counterpart of the Python command. Writes a session snapshot and a **vitest** test that replays the inputs through your agent (`--entry src/agent.ts:fn`, `--clients openai,anthropic`) and checks the same tool path without errors.
+- **`capture({ clients }, fn)`**: records an agent's OpenAI / Anthropic calls in memory for tests; any `instrument()` in the app stays quiet meanwhile.
+- **`instrument()` accepts client classes** (`clients: [OpenAI, Anthropic]`), recording every instance, including ones created later.
+
+### Python SDK
+
+- **Anthropic `messages.stream()` is recorded** (sync and async): it posts directly instead of calling `create()`, so it is wrapped and recorded from its message snapshot when the `with` block exits (complete, `truncated`, or `llm_error`). The OpenAI `.stream()` helpers already go through `create()` and are recorded; both are now covered by tests and docs, in both SDKs.
+
+### Python and TypeScript SDKs
+
+- **`instrument()` records streaming calls** (`stream=True` / `stream: true`) for OpenAI chat completions, the OpenAI Responses API, Anthropic messages and LiteLLM. The caller gets the provider's stream unchanged; chunks are read as they pass, and when the stream ends `llm_end` carries the full output and token usage and each streamed tool call becomes a `tool_call` event, linked like non-streaming calls. A stream closed early is recorded with `truncated: true`; one that fails mid-way as `llm_error` with the partial output. Previously streamed calls were recorded without output or tool calls. The `.stream()` helper methods are not covered yet.
+
+### TypeScript SDK
+
+- **`instrument(db, { agent, clients })`: one-line auto-capture**, matching the Python SDK. Records every OpenAI (`chat.completions.create`, `responses.create`) and Anthropic (`messages.create`) call on the given clients as causally linked events: `user_message` → `llm_end` (with `token_usage`) → `tool_call` → `tool_result`. The call returns the client's own promise (`.withResponse()` keeps working); recording runs in the background, never changes the result or error, and `flush()` waits for it. `captureContent: false` keeps text out.
+
+### Python SDK
+
+- **`zizkadb.instrument()` covers the OpenAI Responses API** (`client.responses.create`, sync and async): string or item-list `input`, `function_call` outputs as `tool_call` events, `function_call_output` items as `tool_result` events linked to their call, and `token_usage` including cached and reasoning tokens.
+
+- **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.
+- **`zizkadb test from-session <session_id> --agent <agent>`: a recorded session becomes a pytest regression test.** It writes a snapshot (user inputs, tool path, final answer, errors) and a test that replays the inputs through your agent (`--entry module:function`) and checks the same tool path without errors. Tests run inside the new `zizkadb.testing.capture()`, which records LLM and tool calls in memory with no server.
+
 ### Telemetry
 
 - The install ping from the Python and TypeScript SDKs, the MCP server and `scripts/telemetry-install-ping.sh` now also says where it runs: `ci`, `container` or `machine`. It is `ci` when a CI service variable such as `CI` or `GITHUB_ACTIONS` is set; only the label is sent. ZizkaDB Cloud uses it to leave CI runs out of install counts. Details in [docs/telemetry.md](docs/telemetry.md).

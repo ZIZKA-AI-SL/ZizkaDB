@@ -2,6 +2,8 @@
 
 ZizkaDB is a causal database for AI agents. Every event records the event that caused it (causal lineage), which powers `db.why()`, time-travel debugging with `db.at()`, session replay, and a hash-chained, tamper-evident audit log.
 
+It is an agentic database: each event carries a SHA-256 checksum over its content and audit fields and is hash-chained per agent, so the stored record is cryptographic telemetry for AI agents. That is what makes agent auditability and EU AI Act Article 12 record-keeping possible. Agent drift measurement (`GET /v1/agents/{agent_id}/baseline`) compares recent sessions with the agent's history.
+
 ## Stack
 
 | Layer | Technology |
