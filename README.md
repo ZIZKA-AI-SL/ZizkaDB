@@ -270,6 +270,8 @@ const tool = await db.log({ agent: 'my-bot', event: 'tool_call', data: { tool: '
 ;(await db.why(tool.eventId)).print()
 ```
 
+Or record every LLM call: `instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })`.
+
 </details>
 
 **Or record every LLM call with one line** (Python; OpenAI, Anthropic, LiteLLM, and OpenAI-compatible servers such as Ollama and vLLM):

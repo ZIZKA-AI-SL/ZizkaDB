@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### TypeScript SDK
+
+- **`instrument(db, { agent, clients })`: one-line auto-capture**, matching the Python SDK. Records every OpenAI (`chat.completions.create`, `responses.create`) and Anthropic (`messages.create`) call on the given clients as causally linked events: `user_message` → `llm_end` (with `token_usage`) → `tool_call` → `tool_result`. The call returns the client's own promise (`.withResponse()` keeps working); recording runs in the background, never changes the result or error, and `flush()` waits for it. `captureContent: false` keeps text out.
+
 ### Python SDK
 
 - **`zizkadb.instrument()` covers the OpenAI Responses API** (`client.responses.create`, sync and async): string or item-list `input`, `function_call` outputs as `tool_call` events, `function_call_output` items as `tool_result` events linked to their call, and `token_usage` including cached and reasoning tokens.
