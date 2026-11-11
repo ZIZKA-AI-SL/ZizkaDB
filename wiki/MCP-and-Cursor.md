@@ -1,6 +1,6 @@
 # MCP and Cursor
 
-**Package:** `zizkadb-mcp` on PyPI (**0.1.13**)  
+**Package:** `zizkadb-mcp` on PyPI (**0.1.14**)  
 **Run:** `uvx zizkadb-mcp`
 
 ## Install uv (for uvx)
