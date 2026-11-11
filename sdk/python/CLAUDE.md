@@ -46,7 +46,7 @@ asyncio.run(main())
 | `db.token_optimization(agent, ...)` | Token optimization recommendations | No |
 | `db.forget(key, value)` | GDPR delete — remove events matching a value | No |
 | `db.agents()` | List all agents in the project | No |
-| `zizkadb.instrument(db, agent, providers?, capture_content?)` | Auto-capture OpenAI / Anthropic / LiteLLM calls as linked events (`zizkadb/instrumentation.py`); returns a handle with `.uninstrument()` | No |
+| `zizkadb.instrument(db, agent, providers?, capture_content?)` | Auto-capture LLM calls as linked events (`zizkadb/instrumentation.py`): providers `openai` (+ every OpenAI-compatible API), `anthropic`, `gemini` (google-genai), `ollama` (native), `zhipu` (zai-sdk / zhipuai), `mistral`, `cohere`, `bedrock` (boto3 Converse via `BaseClient._make_api_call`), `litellm`, and in-process `llama_cpp` / `transformers` (patched only if already imported: never import heavy libraries from `instrument()`); returns a handle with `.uninstrument()` | No |
 
 ---
 

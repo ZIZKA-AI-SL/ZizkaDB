@@ -49,8 +49,8 @@ import packageJson from '../package.json'
 
 export * from './types'
 export { LineageContext } from './context'
-export { instrument } from './instrument'
-export type { Instrumentation, InstrumentOptions, InstrumentTarget } from './instrument'
+export { instrument, zizkadbMiddleware } from './instrument'
+export type { Instrumentation, InstrumentOptions, InstrumentTarget, MiddlewareOptions } from './instrument'
 export { capture, CapturedRun } from './testing'
 export type { CapturedEvent, CaptureOptions } from './testing'
 

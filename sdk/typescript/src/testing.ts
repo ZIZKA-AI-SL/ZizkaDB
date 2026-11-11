@@ -61,8 +61,12 @@ export class CapturedRun {
 }
 
 export interface CaptureOptions {
-  /** Client classes (`OpenAI`, `Anthropic`) or instances the agent uses. */
-  clients: unknown[]
+  /**
+   * Client classes (`OpenAI`, `Anthropic`) or instances the agent uses. Models
+   * wrapped with `zizkadbMiddleware` (Vercel AI SDK) are captured without
+   * being listed here.
+   */
+  clients?: unknown[]
   agent?: string
 }
 
@@ -77,8 +81,9 @@ export async function capture(options: CaptureOptions, fn: () => unknown | Promi
       return { eventId }
     },
   }
-  const inst = _instrument(new Recorder(memory, options.agent ?? 'test-agent', true, true), options.clients)
-  _setCapturing(true)
+  const recorder = new Recorder(memory, options.agent ?? 'test-agent', true, true)
+  const inst = _instrument(recorder, options.clients ?? [])
+  _setCapturing(true, recorder)
   try {
     await fn()
   } finally {

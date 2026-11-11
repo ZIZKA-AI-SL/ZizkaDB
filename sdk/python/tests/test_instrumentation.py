@@ -428,8 +428,12 @@ def test_uninstrument_restores_originals(providers, db):
 
 
 def test_missing_providers_are_skipped(monkeypatch, db, caplog):
-    for name in ("openai", "openai.resources.chat.completions", "anthropic", "anthropic.resources.messages", "litellm"):
-        monkeypatch.setitem(sys.modules, name, None)  # import raises ImportError
+    from zizkadb import instrumentation
+    for targets in instrumentation._TARGETS.values():
+        for module_path, *_ in targets:
+            monkeypatch.setitem(sys.modules, module_path, None)  # import raises ImportError
+    for root in instrumentation._ONLY_IF_IMPORTED.values():
+        monkeypatch.delitem(sys.modules, root, raising=False)
     inst = zizkadb.instrument(db, agent="bot")
     inst.uninstrument()
     assert "nothing to record" in caplog.text
