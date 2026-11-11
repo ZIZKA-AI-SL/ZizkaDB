@@ -43,6 +43,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.
 - **`zizkadb test from-session <session_id> --agent <agent>`: a recorded session becomes a pytest regression test.** It writes a snapshot (user inputs, tool path, final answer, errors) and a test that replays the inputs through your agent (`--entry module:function`) and checks the same tool path without errors. Tests run inside the new `zizkadb.testing.capture()`, which records LLM and tool calls in memory with no server.
 
+### Telemetry
+
+- The install ping from the Python and TypeScript SDKs, the MCP server and `scripts/telemetry-install-ping.sh` now also says where it runs: `ci`, `container` or `machine`. It is `ci` when a CI service variable such as `CI` or `GITHUB_ACTIONS` is set; only the label is sent. ZizkaDB Cloud uses it to leave CI runs out of install counts. Details in [docs/telemetry.md](docs/telemetry.md).
+- The repo's own test runs no longer ping: `integration.yml`, `publish-images.yml`, `smoke-test.sh`, `smoke-example.sh`, `run-golden-path.sh` and `verify-release.sh` set `ZIZKADB_TELEMETRY=false` (an explicit value still wins). `ci.yml` and `golden-path.yml` already did.
+
 ## [0.6.0] - 2026-11-07
 
 > **Upgrading a self-hosted server? Check `JWT_SECRET` first.** 0.6.0 refuses to start in production if `JWT_SECRET` is one of the sample values the docs used to show. Run `scripts/init-secrets.sh` (or set a new random `JWT_SECRET`) **before** upgrading. After the change, users sign in again, saved BYOK embedding keys must be re-entered, and unsubscribe links in emails already sent stop working. Details under "Self-hosted secrets" below.

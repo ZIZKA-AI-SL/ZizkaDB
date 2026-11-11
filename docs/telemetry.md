@@ -35,6 +35,7 @@ Each package sends one anonymous ping per process, the first time it is used, to
   - The package name and version.
   - The Python or Node version and the operating system.
   - Whether the client points at ZizkaDB Cloud or a self-hosted server.
+  - Where it runs: `ci`, `container` or `machine`. It is `ci` when a CI service variable is set (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL` and similar), and `container` inside Docker or Kubernetes. Only the label is sent, never the variables' values. ZizkaDB Cloud does not count CI runs as installs.
 - **Never sent:** API keys, agent names, event data or the server address.
 - **Stored by the receiving server:** the fields above, a first-seen and last-seen time, a ping count, and a country code. The country code is derived from the request; the IP address itself is not stored.
 - **Turn off:** set `ZIZKADB_TELEMETRY=false` (or `0`, `no`, `off`) in the environment of the process that uses the SDK.
@@ -47,6 +48,7 @@ Each package sends one anonymous ping per process, the first time it is used, to
 - `sdk=docker`
 - the version label
 - the operating system
+- where it runs (`ci`, `container` or `machine`), detected the same way as in the SDKs
 
 To turn it off, run either script with `ZIZKADB_TELEMETRY=false`.
 

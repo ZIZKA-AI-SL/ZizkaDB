@@ -2,6 +2,9 @@
 # Pre-push verification: CLI, packages, syntax, dashboard build, optional API smoke.
 set -euo pipefail
 
+# Test runs are not installs: no telemetry ping unless asked for.
+export ZIZKADB_TELEMETRY="${ZIZKADB_TELEMETRY:-false}"
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 FAIL=0
