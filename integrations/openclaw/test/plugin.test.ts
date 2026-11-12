@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import plugin, { PLUGIN_ID, register } from '../src/index'
 import { clip } from '../src/recorder'
+import { PLUGIN_VERSION } from '../src/telemetry'
+
+// No real install pings from the test run.
+process.env.ZIZKADB_TELEMETRY = 'false'
 
 type Logged = { id: string; agent: string; event: string; data: Record<string, any>; parentId?: string; sessionId?: string; metadata?: Record<string, unknown> }
 
@@ -236,6 +240,7 @@ describe('plugin wiring', () => {
     const manifest = JSON.parse(readFileSync(new URL('../openclaw.plugin.json', import.meta.url), 'utf8'))
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(manifest.id).toBe(PLUGIN_ID)
+    expect(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version).toBe(PLUGIN_VERSION)
     expect(plugin.id).toBe(PLUGIN_ID)
     const { tools } = setup()
     expect(manifest.contracts.tools.slice().sort()).toEqual(tools[0].opts.names.slice().sort())

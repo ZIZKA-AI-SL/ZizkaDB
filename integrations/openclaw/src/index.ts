@@ -9,6 +9,7 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry'
 import { ZizkaDB } from 'zizkadb-sdk'
 import { Recorder, type LogTarget } from './recorder'
 import { createTools, TOOL_NAMES, type ToolsClient } from './tools'
+import { sendInstallPing } from './telemetry'
 
 export const PLUGIN_ID = 'zizkadb'
 
@@ -41,7 +42,11 @@ function env(name: string): string | undefined {
   return v && v.trim() ? v.trim() : undefined
 }
 
-export function register(api: Api, makeClient: (config: ZizkaDBPluginConfig) => ZizkaDB = (c) => new ZizkaDB({ apiKey: c.apiKey, host: c.host })): Recorder | undefined {
+export function register(
+  api: Api,
+  makeClient: (config: ZizkaDBPluginConfig) => ZizkaDB = (c) => new ZizkaDB({ apiKey: c.apiKey, host: c.host }),
+  ping: (mode: 'cloud' | 'self-hosted') => void = sendInstallPing,
+): Recorder | undefined {
   // Metadata scans (discovery, setup, CLI help) load the plugin too: only the
   // running gateway records.
   if (api.registrationMode !== 'full') return undefined
@@ -54,6 +59,8 @@ export function register(api: Api, makeClient: (config: ZizkaDBPluginConfig) => 
     if (client !== undefined) return client
     try {
       client = makeClient(config)
+      // Anonymous install count, like every ZizkaDB package (ZIZKADB_TELEMETRY=false turns it off).
+      ping(config.host || env('ZIZKADB_HOST') ? 'self-hosted' : 'cloud')
     } catch (err) {
       api.logger.warn(`zizkadb: not recording: ${(err as Error)?.message ?? err}. Set apiKey (or ZIZKADB_API_KEY) for ZizkaDB Cloud, or host for a self-hosted server.`)
       client = null
