@@ -1,6 +1,6 @@
 {
   "name": "zizkadb-openclaw",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OpenClaw plugin: tamper-evident, causal audit trail of what your agent did and why (messages, tool calls, model outputs, token usage) in ZizkaDB",
   "type": "module",
   "main": "./dist/index.js",

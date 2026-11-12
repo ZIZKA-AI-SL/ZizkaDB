@@ -85,6 +85,10 @@ The plugin also adds two tools, off until you allow them:
 
 **Each tool sees only the conversation it runs in.** The scope comes from OpenClaw's trusted tool context (the conversation's session key), never from the model's arguments, so one user of a shared bot cannot read another user's records: search asks the server for this conversation's events only, `zizkadb_why` answers "not found" for an event of another conversation and leaves out ancestors from other conversations, and without a conversation the tools are not offered at all. Results are labelled as untrusted historical data, so text someone typed earlier is returned as data, not as instructions. For agent-wide audits use the ZizkaDB dashboard or the SDK with your own key.
 
+## Telemetry
+
+Like every ZizkaDB package, the plugin sends one anonymous install ping per gateway process, the first time it connects to ZizkaDB, to `https://db.zizka.ai/v1/telemetry`. It contains a random install id (`~/.zizkadb/install_id`), the plugin version, the Node version and OS, cloud or self-hosted, and whether it runs in CI, a container or on a machine. It never contains keys, agent names, events or your server address. Set `ZIZKADB_TELEMETRY=false` to turn it off. Details: [docs/telemetry.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/docs/telemetry.md).
+
 ## Trace a turn
 
 ```ts
