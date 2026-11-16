@@ -439,7 +439,7 @@ No. Observability and LLMOps tools such as Langfuse or LangSmith show you span t
 Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations and is part of EU AI Act compliance work; it doesn't make a system compliant on its own.
 
 **How do I prove the logs weren't changed?**  
-`db.verify_chain(agent)` (or `GET /v1/events/chain`) rechecks every checksum and link and returns the chain head. Store the head somewhere else; checking again later from that head proves nothing before it was rewritten.
+`db.verify_chain(agent)` (or `GET /v1/events/chain`) rechecks every checksum and link and returns the chain head. Store the head somewhere else; checking again later from that head proves nothing before it was rewritten. To keep that copy out of reach of whoever controls the database, timestamp it and give a copy to someone else: [docs/integrate/anchor-chain-head.md](docs/integrate/anchor-chain-head.md).
 
 **My server's login page asks for an admin token. Where is it?**  
 A server install generates one on first start. Single container: `docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Full stack: the `SELFHOST_ADMIN_TOKEN` you set in `infra/.env`. After signing in, create your API key in **Settings**.

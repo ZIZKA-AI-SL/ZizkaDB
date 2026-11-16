@@ -307,7 +307,7 @@ hits = await db.search("refund order 1234", agent="my-bot")
 
 # Audit: prove nothing was edited, removed or reordered
 check = await db.verify_chain("my-bot")
-print(check["intact"], check["chain_head"])     # store the head elsewhere as an anchor
+print(check["intact"], check["chain_head"])     # store the head elsewhere as an anchor: docs/integrate/anchor-chain-head.md
 
 # Read everything, or move it to another instance
 async for event in db.iter_events("my-bot"):

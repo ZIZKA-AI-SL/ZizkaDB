@@ -34,7 +34,7 @@ PR #310 added a hash chain to close the ordering gap. The first draft of this AD
 
 - `GET /v1/events/chain?agent=…` uses `get_tenant` plus `assert_agent_allowed`, so API keys can call it and scoped keys only see their own agent.
 - It walks events and tombstones merged by `sequence_no`, in pages of 2,000. It rechecks each event's checksum and link, and returns `intact`, a summary, up to 100 problems and `chain_head`.
-- **Anchoring.** A caller stores `chain_head` outside ZizkaDB and later passes `after_seq` and `anchor`. That proves nothing before the stored head was rewritten.
+- **Anchoring.** A caller stores `chain_head` outside ZizkaDB and later passes `after_seq` and `anchor`. That proves nothing before the stored head was rewritten. [docs/integrate/anchor-chain-head.md](../integrate/anchor-chain-head.md) shows how to keep that copy beyond the database operator's reach (an RFC 3161 timestamp and a copy held by another party).
 - **SDKs.** Python `verify_chain()` and TypeScript `verifyChain()` wrap it. Log results carry `chain_hash`.
 
 ### Known gaps in the shipped design
