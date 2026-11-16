@@ -71,6 +71,23 @@ describe('ZizkaDB constructor', () => {
     expect(db).toBeInstanceOf(ZizkaDB)
   })
 
+  it('does not treat remote hostnames containing localhost as local', () => {
+    const envNames = ['ZIZKADB_API_KEY', 'AGENTDB_API_KEY', 'DEV_API_KEY']
+    const saved = new Map(envNames.map(name => [name, process.env[name]]))
+    for (const name of envNames) delete process.env[name]
+
+    try {
+      expect(() => new ZizkaDB({ host: 'https://localhost.example.com' }))
+        .toThrow('Cloud host requires an apiKey')
+    } finally {
+      for (const name of envNames) {
+        const value = saved.get(name)
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
   it('uses ZIZKADB_API_KEY env var when set', () => {
     process.env.ZIZKADB_API_KEY = 'zizkadb_env_key'
     try {

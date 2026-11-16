@@ -45,3 +45,11 @@ async def test_run_support_order_delay_demo(monkeypatch):
     assert event_id == "e3"
     assert mock_db.log.call_count == 3
     mock_db.why.assert_awaited_once_with("e3")
+
+
+def test_dashboard_activity_url_uses_cloud_for_remote_hostname_containing_localhost():
+    from zizkadb.demo_run import dashboard_activity_url
+
+    assert dashboard_activity_url("https://localhost.example.com") == (
+        "https://db.zizka.ai/dashboard/activity?agent=support-bot"
+    )

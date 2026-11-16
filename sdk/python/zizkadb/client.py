@@ -24,13 +24,14 @@ Usage:
     state = await db.at(agent="my-bot", timestamp=datetime(2026, 5, 1))
 """
 
+import ipaddress
 import json
 import os
 import sys
 import httpx
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, AsyncIterator
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 if TYPE_CHECKING:
     from .session_scope import SessionScope
@@ -45,8 +46,24 @@ DEFAULT_DEV_API_KEY = "zizkadb_dev_local"
 
 
 def _is_local_host(host: str) -> bool:
-    h = host.lower()
-    return "localhost" in h or "127.0.0.1" in h or "0.0.0.0" in h
+    try:
+        hostname = urlsplit(host).hostname
+    except ValueError:
+        return False
+    if hostname is None:
+        return False
+
+    hostname = hostname.rstrip(".").lower()
+    if (
+        hostname == "localhost"
+        or hostname.endswith(".localhost")
+        or hostname == "0.0.0.0"
+    ):
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _api_key_from_env() -> str | None:

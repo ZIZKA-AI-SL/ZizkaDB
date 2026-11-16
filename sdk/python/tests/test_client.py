@@ -166,16 +166,44 @@ def test_error_mapping(monkeypatch, status, payload, error_type):
         asyncio.run(_close(db))
 
 
-def test_localhost_auto_injects_dev_key(monkeypatch):
+@pytest.mark.parametrize(
+    "host",
+    [
+        "http://localhost:8000",
+        "http://api.localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.2:8000",
+        "http://[::1]:8000",
+        "http://0.0.0.0:8000",
+    ],
+)
+def test_local_hosts_auto_inject_dev_key(monkeypatch, host):
     _prevent_telemetry(monkeypatch)
     monkeypatch.delenv("ZIZKADB_API_KEY", raising=False)
     monkeypatch.delenv("AGENTDB_API_KEY", raising=False)
     monkeypatch.delenv("DEV_API_KEY", raising=False)
 
-    db = ZizkaDB(host="http://localhost:8000")
+    db = ZizkaDB(host=host)
 
     assert db._api_key == "zizkadb_dev_local"
     assert db._headers()["Authorization"] == "Bearer zizkadb_dev_local"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "https://localhost.example.com",
+        "https://api-127.0.0.1.example.com",
+        "https://api-0.0.0.0.example.com",
+    ],
+)
+def test_remote_hosts_containing_local_addresses_do_not_get_dev_key(monkeypatch, host):
+    _prevent_telemetry(monkeypatch)
+    for var in ("ZIZKADB_API_KEY", "AGENTDB_API_KEY", "DEV_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    with pytest.raises(ZizkaDBError, match="Cloud host requires an API key"):
+        ZizkaDB(host=host)
 
 
 def test_api_key_with_zizkadb_host_env_uses_that_host(monkeypatch):
