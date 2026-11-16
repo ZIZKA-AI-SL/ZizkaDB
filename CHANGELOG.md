@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+- **Anchoring the chain head** (`docs/integrate/anchor-chain-head.md`): how to keep `chain_head` outside the database operator's reach (an RFC 3161 timestamp from a timestamp authority, with copies held by another party) and check later from it with `after_seq` / `anchor`. Tested: deleting the newest events and moving the recorded head back passes a full check but fails the anchored check with `anchor_mismatch`. Linked from the README FAQ, CONNECT.md, ADR-009 and the security assessment.
+
 ### Changed
 - **OpenClaw plugin 0.1.2:** sends the anonymous install ping every ZizkaDB package sends, as its own package (`sdk: "openclaw"`), once per gateway process when it first connects to ZizkaDB. Before, the plugin was only counted through the bundled TypeScript SDK. Same fields as the SDKs, nothing new collected; `ZIZKADB_TELEMETRY=false` turns it off. Documented in the plugin README and `docs/telemetry.md`.
 
