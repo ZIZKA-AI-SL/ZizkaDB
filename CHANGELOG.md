@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **OpenClaw plugin 0.1.2:** sends the anonymous install ping every ZizkaDB package sends, as its own package (`sdk: "openclaw"`), once per gateway process when it first connects to ZizkaDB. Before, the plugin was only counted through the bundled TypeScript SDK. Same fields as the SDKs, nothing new collected; `ZIZKADB_TELEMETRY=false` turns it off. Documented in the plugin README and `docs/telemetry.md`.
 
 ### Security
+- **OpenClaw plugin dev dependencies:** `undici` 6.28.0 → 6.29.1 (TLS certificate validation bypass and denial of service; GHSA alerts #105, #108, #109) and `zod` 4.6.5 → 4.6.7 (memory exhaustion, GHSA-mrhx-c7xc-m3w5), through `overrides` in `integrations/openclaw/package.json`. Both came only from the `openclaw` dev dependency (via its bundled `npm`); the published plugin bundles neither, so installed plugins are unaffected and need no update.
 - **OpenClaw plugin 0.1.1:** the optional `zizkadb_why` and `zizkadb_search` tools are limited to the conversation they run in (from OpenClaw's trusted tool context, not model arguments). Search asks the server for that conversation's events only; `why` answers "not found" for another conversation's event and drops foreign ancestors; no tools without a conversation. Results are labelled as untrusted historical data. Fixes the cross-conversation disclosure (MCP01) and stored prompt-injection (MCP06) findings of ClawHub's scan of 0.1.0. The tools were off by default; recording is unchanged.
 
 ### Added
