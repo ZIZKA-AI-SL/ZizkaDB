@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **OpenClaw plugin dev dependencies:** `undici` 6.28.0 → 6.29.1 (TLS certificate validation bypass and denial of service; GHSA alerts #105, #108, #109) and `zod` 4.6.5 → 4.6.7 (memory exhaustion, GHSA-mrhx-c7xc-m3w5), through `overrides` in `integrations/openclaw/package.json`. Both came only from the `openclaw` dev dependency (via its bundled `npm`); the published plugin bundles neither, so installed plugins are unaffected and need no update.
+
 ### Changed
 - **OpenClaw plugin 0.1.2:** sends the anonymous install ping every ZizkaDB package sends, as its own package (`sdk: "openclaw"`), once per gateway process when it first connects to ZizkaDB. Before, the plugin was only counted through the bundled TypeScript SDK. Same fields as the SDKs, nothing new collected; `ZIZKADB_TELEMETRY=false` turns it off. Documented in the plugin README and `docs/telemetry.md`.
 
