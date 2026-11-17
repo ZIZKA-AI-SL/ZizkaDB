@@ -25,7 +25,7 @@ from services.rate_limiter import (
     SlidingWindowStrategy,
     check_rate_fail_open,
 )
-from services import reports, token_optimization, token_usage
+from services import reports, timeline, token_optimization, token_usage
 from services.actions import action_breakdown, action_distribution
 from services.agent_limits import assert_agent_slot, lock_agent_row
 from services import token_optimization_config
@@ -568,6 +568,30 @@ async def agent_report(
     return await reports.build_report(
         pool, tenant["tenant_id"], agent_id, from_dt, to_dt, granularity
     )
+
+
+@router.get("/{agent_id}/timeline")
+async def agent_timeline(
+    agent_id: str,
+    from_: str = Query(..., alias="from", description="ISO-8601 start of the window"),
+    to: str = Query(..., description="ISO-8601 end of the window (exclusive)"),
+    tenant: dict = Depends(get_tenant),
+):
+    """Event timeline for one agent: counts per time bucket and event type,
+    every error event individually, and every event when the window holds few
+    enough. Drives the dashboard's timeline graph. See services/timeline.py.
+    """
+    agent_id = _validate_agent_id(agent_id)
+    await assert_agent_allowed(tenant, agent_id)
+
+    try:
+        from_dt = reports.parse_utc_naive(from_, "from")
+        to_dt = reports.parse_utc_naive(to, "to")
+        reports.validate_range(from_dt, to_dt)
+    except ValueError as exc:
+        raise bad_request(detail=str(exc))
+
+    return await timeline.build_timeline(get_pool(), tenant["tenant_id"], agent_id, from_dt, to_dt)
 
 
 @router.get("/{agent_id}/token-usage")

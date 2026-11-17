@@ -563,6 +563,7 @@ Router prefixes are mounted in `core/main.py:66-79`.
 | `getAgentStats` | GET `/v1/agents/{id}/stats` (incl. `top_actions`: per-tool/API calls + error rate, `services/actions.py`) | `agents.py:239` |
 | `getAgentSessions` | GET `/v1/agents/{id}/sessions` | `agents.py:280` |
 | `getAgentBaseline` | GET `/v1/agents/{id}/baseline` (each window has `actions` + `action_distribution`; `?window=24h\|7d\|30d` splits by time in SQL and every response echoes `window`; no session inside the window → `no_current_data` (as `/behavior-change`), no session that ended earlier → `warming_up`; labels in `BehaviorPanel` follow `baseline.window`) | `agents.py:804` |
+| `getAgentTimeline` | GET `/v1/agents/{id}/timeline?from=&to=` (counts per time bucket and event type; every event when ≤ 1,500 in the window; error events always individually, newest 1,000) | `agents.py` → `services/timeline.py` |
 | `getAgentReport` | GET `/v1/agents/{id}/report?from=&to=&granularity=` (incl. `actions`, rendered by `components/dashboard/ActionsTable.tsx`) | `agents.py` → `services/reports.py` |
 | `getAgentTokenUsage` | GET `/v1/agents/{id}/token-usage?from=&to=&granularity=` | `agents.py` → `services/token_usage.py` + `services/pricing.py` |
 | `getAgentTokenOptimization` | GET `/v1/agents/{id}/token-optimization?from=&to=&granularity=` | `agents.py` → `services/token_optimization.py` |
@@ -778,6 +779,13 @@ Replaces the old agents home + agent-detail Events/Sessions/Time Travel tabs.
 - **Segments:** `Events` (default) · `Sessions` · `Time Travel`, a local segmented control (not routes — they share the same agent and header).
 - **Branches:** agents loading → `Skeleton`; agents error → `ErrorState`; **zero agents → `EmptyState` + `GettingStartedChecklist`** (fresh install must not show a broken page); otherwise header stat strip + segments.
 - **Stale `?agent=`:** `invalidAgent` renders an inline notice and falls back to the first agent rather than blanking.
+
+**Event timeline (`components/dashboard/timeline/*`)** — the **Event timeline** button in the Activity header toggles `EventTimelinePanel` (keyed by agent, so switching agent starts fresh) above the segments.
+- **Data:** `useAgentTimeline(agentId, range)` → `GET /v1/agents/{id}/timeline` for the chosen window, and a second call for the overview (the last 30 days, widened to include the window). Results are kept per request key, so a slow response for an old window never overwrites a newer one, and the previous graph stays visible while the next loads.
+- **Graph (`TimelineChart`):** inline SVG, no chart library. Activity strip (events per bucket, red spikes sized by errors) over one lane per event type (`laneOrder`: by volume, error types last), colours from `typeColor` (errors always `colors.danger`). Bucket size comes from the server (`bucket_seconds`, ≤ ~120 buckets). When the window holds more than `point_limit` events, ordinary events are grouped into bubbles per bucket (click to zoom into that bucket); **errors are always drawn one by one**. An event counts as an error by the reports rule (type contains error/fail, or `data.error`), so a `tool_result` with an `error` key is a red dot in its own lane.
+- **Choosing the window:** presets 1h / 24h / 7 days / 30 days, `datetime-local` From/To, dragging across the graph (zoom in), and `OverviewStrip` (drag the window, its edges, or draw a new one; commits on pointer-up). `Zoom out` steps back through the last 20 windows. `clampRange` keeps windows between 5 minutes and the server's 366-day limit.
+- **Clicking a dot (`EventInspector`):** `useTimelineEventDetail` loads the why chain (`getWhyChain`) and the event's chat (`getSessionTimeline`) in parallel: chat id, step N of M, the causal chain, the chat with the event highlighted, the recorded data, `Zoom to this chat`, and the `zizkadb test from-session <session> --agent <agent>` command. Errors are keyboard-focusable; ordinary dots are click-only so a busy window isn't hundreds of tab stops.
+- Pure helpers (ticks, presets, colours, clamping) live in `lib/timeline.ts` with tests.
 
 **Events segment (`components/dashboard/EventsSegment.tsx`)**
 - `PAGE_SIZE = 50`; `hasMore = rows.length === PAGE_SIZE`; `loadMore` **appends** at `offset = (page-1)*50`.
