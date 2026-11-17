@@ -7,6 +7,7 @@ import { formatClockSeconds, formatDateTime, typeColor, type TimeRange } from '@
 import { JsonBlock, LoadingLine, MetaRow } from '@/components/ui'
 import { useTimelineEventDetail } from '@/hooks/useAgentTimeline'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
+import { agentVersionOf, firstFailure, modelOf, writerLabel } from '@/lib/responsibility'
 
 const PREVIEW_KEYS = ['text', 'content', 'message', 'output', 'error', 'prompt', 'result']
 
@@ -62,6 +63,8 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
 
   const full = chain?.chain[chain.chain.length - 1]
   const event = full && full.event_id === selected.event_id ? full : null
+  const failure = chain ? firstFailure(chain.chain) : null
+  const multiAgent = chain ? new Set(chain.chain.map((c) => c.agent)).size > 1 : false
   const position = chat ? chat.findIndex((e) => e.event_id === selected.event_id) : -1
   const color = selected.is_error ? colors.danger : typeColor(selected.event)
   const testCommand = selected.session_id
@@ -121,6 +124,27 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
         </p>
       )}
 
+      {event && (
+        <div className="flex flex-col gap-1.5">
+          <Section title="Responsibility" />
+          <MetaRow label="agent" value={event.agent} />
+          <MetaRow label="written by" value={writerLabel(event.metadata)} />
+          {modelOf(event) && <MetaRow label="model" value={modelOf(event)} />}
+          {agentVersionOf(event.metadata) && <MetaRow label="agent version" value={agentVersionOf(event.metadata)} />}
+          {failure && (
+            <p className="text-xs mt-1" style={{ color: colors.text }}>
+              <span style={{ color: colors.danger, fontWeight: 600 }}>First went wrong:</span>{' '}
+              <span className="font-mono">{failure.event}</span> in agent{' '}
+              <span className="font-mono">{failure.agent}</span>
+              {failure.event_id !== selected.event_id && <> at {formatClockSeconds(new Date(failure.timestamp).getTime())}</>}
+              {' · '}
+              {writerLabel(failure.metadata)}
+              {modelOf(failure) && <> · {modelOf(failure)}</>}
+            </p>
+          )}
+        </div>
+      )}
+
       {chain && (
         <div className="flex flex-col gap-2">
           <Section title="Why it happened" />
@@ -129,8 +153,14 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
               <li key={c.event_id} className="flex gap-2.5 text-xs">
                 <Dot type={c.event} error={c.event_id === selected.event_id && selected.is_error} />
                 <div className="min-w-0">
+                  {multiAgent && (
+                    <span className="font-mono" style={{ color: colors.textMuted }}>{c.agent} · </span>
+                  )}
                   <span className="font-mono" style={{ color: colors.text }}>{eventLabel(c)}</span>{' '}
                   <span style={{ color: colors.textFaint }}>{formatClockSeconds(new Date(c.timestamp).getTime())}</span>
+                  {failure && c.event_id === failure.event_id && (
+                    <span className="ml-1.5 text-[10px] font-semibold uppercase" style={{ color: colors.danger }}>first failure</span>
+                  )}
                   {eventPreview(c) && (
                     <div className="break-words" style={{ color: colors.textMuted }}>{eventPreview(c)}</div>
                   )}
@@ -138,6 +168,12 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
               </li>
             ))}
           </ol>
+          {chain.continues_in && (
+            <p className="text-xs" style={{ color: colors.warning }}>
+              The cause continues in agent <span className="font-mono">{chain.continues_in.agent}</span> (event{' '}
+              <span className="font-mono">{chain.continues_in.event_id}</span>), which this key can’t read. Open it from a dashboard login to see the whole chain.
+            </p>
+          )}
           {chain.orphan && (
             <p className="text-xs" style={{ color: colors.textFaint }}>
               This event has no recorded cause (no parent_id).

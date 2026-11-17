@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
+from services.writer import writer_of
 from services.exceptions import bad_request, conflict, not_found, service_unavailable
 from pydantic import BaseModel, Field
 
@@ -415,6 +416,7 @@ async def test_agent_event(
         agent=agent_id,
         event="connection_test",
         data={"source": "dashboard_agent_page", "ok": True},
+        written_by=writer_of(tenant),
     )
     return {
         **result,
