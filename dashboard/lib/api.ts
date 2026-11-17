@@ -194,6 +194,8 @@ export interface AgentEvent {
   session_id: string | null
   sequence_no: number
   index_status?: 'pending' | 'indexed' | 'failed' | 'dead' | 'skipped'
+  /** Includes `written_by`, the credential that wrote the event (sealed by the server). */
+  metadata?: Record<string, unknown> | null
 }
 
 /** One tool or API an agent called, with its call count and error rate. */
@@ -222,6 +224,8 @@ export interface WhyChain {
   orphan?: boolean
   depth_truncated?: boolean
   scoped_agent_limited?: boolean
+  /** For a key scoped to one agent: where the chain continues in another agent (id only). */
+  continues_in?: { agent: string; event_id: string } | null
   event_id: string
   chain_length: number
   chain: AgentEvent[]

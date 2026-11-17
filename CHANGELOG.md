@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **why() for a key scoped to one agent no longer reports a cut-off chain as complete.** When the cause was recorded by another agent, the response now says `scoped_agent_limited: true`, `chain_complete: false`, and `continues_in: {agent, event_id}` (no content), for `GET /v1/events/{id}/why` and `GET /v1/sessions/{session}/why/{id}`. Dashboard sessions still see the whole chain.
+
 ### Documentation
 - **Anchoring the chain head** (`docs/integrate/anchor-chain-head.md`): how to keep `chain_head` outside the database operator's reach (an RFC 3161 timestamp from a timestamp authority, with copies held by another party) and check later from it with `after_seq` / `anchor`. Tested: deleting the newest events and moving the recorded head back passes a full check but fails the anchored check with `anchor_mismatch`. Linked from the README FAQ, CONNECT.md, ADR-009 and the security assessment.
 
@@ -17,6 +20,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **OpenClaw plugin 0.1.1:** the optional `zizkadb_why` and `zizkadb_search` tools are limited to the conversation they run in (from OpenClaw's trusted tool context, not model arguments). Search asks the server for that conversation's events only; `why` answers "not found" for another conversation's event and drops foreign ancestors; no tools without a conversation. Results are labelled as untrusted historical data. Fixes the cross-conversation disclosure (MCP01) and stored prompt-injection (MCP06) findings of ClawHub's scan of 0.1.0. The tools were off by default; recording is unchanged.
 
 ### Added
+- **Every event records who wrote it.** The server stores the credential behind each write as `metadata.written_by` (`api_key` with key id and prefix, `dashboard` with the user id, or `dev_key`). A client cannot set or change it, and the event checksum and the agent's hash chain cover it, so changing it afterwards fails `verify`. Imports keep the original writer as `written_by_original`. Events written before this release have no `written_by`.
+- **Responsibility in the event timeline:** the details panel shows the agent, who wrote the event, the model and the agent version, and marks where the causal chain first went wrong (agent, writer and model of that step). Chains that cross agents name the agent of each step.
 - **Event timeline in the dashboard:** an **Event timeline** button on Activity opens a graph of the agent's events against time, one colour per event type, errors as red dots with red spikes in the activity strip. Choose the window with 1h / 24h / 7 days / 30 days, exact From/To dates, a draggable 30-day overview strip, or by dragging across the graph. Clicking a dot shows its chat and step, the why chain, the chat with the event highlighted, the recorded data and the `zizkadb test from-session` command. Backed by a new endpoint, `GET /v1/agents/{agent}/timeline?from=&to=` (any key or session that can read the agent): counts per time bucket and event type, every event when the window holds at most 1,500, and error events always individually, so grouping never hides a failure.
 - **OpenClaw plugin** 0.1.0 (`integrations/openclaw/`; ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`): records each OpenClaw turn as one causal chain (`user_message` → `tool_call` → `tool_result` → `llm_end` → `assistant_response`, plus `tool_error` / `agent_error`) with token usage, per conversation session. Observe-only, `captureContent: false` for metadata only, optional `zizkadb_why` and `zizkadb_search` tools. Tested inside a real OpenClaw 2026.11.3 gateway against a ZizkaDB server (`why()` complete, audit chain intact).
 
