@@ -279,6 +279,43 @@ export async function getEvents(
   return Array.isArray(data) ? data : data.events ?? []
 }
 
+/** One event on the timeline graph: no payload, just where and what. */
+export interface TimelineEvent {
+  event_id: string
+  timestamp: string
+  event: string
+  session_id: string | null
+  parent_id: string | null
+  is_error: boolean
+}
+
+export interface AgentTimeline {
+  agent: string
+  from: string
+  to: string
+  bucket_seconds: number
+  total: number
+  error_total: number
+  types: { event: string; count: number; errors: number }[]
+  buckets: { start: string; total: number; errors: number; by_type: Record<string, number> }[]
+  /** Every event in the window, or null when there are more than point_limit. */
+  events: TimelineEvent[] | null
+  /** The window's error events, always individually (newest kept when capped). */
+  errors: TimelineEvent[]
+  errors_truncated: boolean
+  point_limit: number
+}
+
+export async function getAgentTimeline(
+  token: string,
+  agentId: string,
+  from: string,
+  to: string,
+): Promise<AgentTimeline> {
+  const qs = new URLSearchParams({ from, to }).toString()
+  return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}/timeline?${qs}`, token)
+}
+
 export async function getWhyChain(token: string, eventId: string): Promise<WhyChain> {
   return apiFetch(`/v1/events/${encodeURIComponent(eventId)}/why`, token)
 }
