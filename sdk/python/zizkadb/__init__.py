@@ -1,5 +1,6 @@
 from .client import ZizkaDB
 from .context import LineageContext
+from .handoff import HANDOFF_HEADER, Handoff, HandoffContext, HandoffToken, token_from_headers
 from .instrumentation import Instrumentation, instrument
 from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
 
@@ -13,6 +14,11 @@ except Exception:
 __all__ = [
     "ZizkaDB",
     "LineageContext",
+    "Handoff",
+    "HandoffContext",
+    "HandoffToken",
+    "HANDOFF_HEADER",
+    "token_from_headers",
     "instrument",
     "Instrumentation",
     "ZizkaDBError",

@@ -45,6 +45,11 @@ export class LineageContext {
     this.state.forkParentId = null
   }
 
+  /** @internal Start the chain from an existing event (used by continueFrom). */
+  startFrom(eventId: string): void {
+    this.state.lastEventId = eventId
+  }
+
   async run<T>(fn: () => Promise<T>): Promise<T> {
     return storage.run(this.state, fn)
   }

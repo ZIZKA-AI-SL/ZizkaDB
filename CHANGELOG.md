@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (SDKs and MCP)
+- **Agent-to-agent handoffs:** `db.handoff()` / `db.continue_from()` (Python), `handoff()` / `continueFrom()` (TypeScript) and the MCP tools `send_handoff` / `continue_handoff` record a message to another agent and carry a `zdbh1.` token (ids only, same format in every SDK) so the receiver's events link back to it across processes, frameworks and LLMs. Uses `/v1/a2a/messages` on ZizkaDB Cloud, an `a2a.message` event elsewhere. See `docs/integrate/handoffs.md`.
+- **Agent version:** `agent_version` / `agentVersion` / `ZIZKADB_AGENT_VERSION` records `metadata.agent_version` on every event, including auto-capture.
+
 ### Documentation
 - **Anchoring the chain head** (`docs/integrate/anchor-chain-head.md`): how to keep `chain_head` outside the database operator's reach (an RFC 3161 timestamp from a timestamp authority, with copies held by another party) and check later from it with `after_seq` / `anchor`. Tested: deleting the newest events and moving the recorded head back passes a full check but fails the anchored check with `anchor_mismatch`. Linked from the README FAQ, CONNECT.md, ADR-009 and the security assessment.
 

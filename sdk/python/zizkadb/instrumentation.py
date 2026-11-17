@@ -848,7 +848,7 @@ class Instrumentation:
             "data": data,
             "parent_id": parent,
             "session_id": session,
-            "metadata": {"source": "zizkadb.instrument"},
+            "metadata": self._db._stamp({"source": "zizkadb.instrument"}),
         }
 
     def _write_sync(self, event: str, data: dict[str, Any], parent_id: str | None) -> str | None:
