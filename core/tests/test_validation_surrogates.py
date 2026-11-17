@@ -12,12 +12,15 @@ The ``data``/``metadata`` cases below cover issue #408 (follow-up to
 #390, requested by the maintainer): a lone surrogate inside ``data`` or
 ``metadata`` must be a 400 naming the field, not a 500 from the
 ``::jsonb`` cast. ``validate_event_payload()`` already walks both
-recursively (``_check_value``, added in #229); these tests lock that
+recursively (``check_storable``, added in #229); these tests lock that
 behaviour in at the HTTP level.
 """
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
+from api.deps import require_dashboard_session
 from main import app
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -133,12 +136,8 @@ def test_lone_surrogate_in_batch_data_returns_per_item_400():
 # --- POST /v1/agents metadata (follow-up to #409, per maintainer invite) ---
 # create_agent() inserts body.metadata with a ``::jsonb`` cast and no
 # validation, so a lone surrogate in agent metadata used to 500 at the
-# cast. The same _check_value() the event path uses must reject it with
+# cast. The same check_storable() the event path uses must reject it with
 # a 400 naming the field, before any row is touched.
-
-from unittest.mock import patch
-
-from api.deps import require_dashboard_session
 
 _TENANT_ID = "11111111-1111-1111-1111-111111111111"
 _USER_ID = "22222222-2222-2222-2222-222222222222"
@@ -197,18 +196,25 @@ class TestCreateAgentMetadataSurrogates:
     def teardown_method(self):
         app.dependency_overrides.pop(require_dashboard_session, None)
 
-    def test_lone_surrogate_in_agent_metadata_value_returns_400(self):
+    @patch("api.agents.get_pool")
+    def test_lone_surrogate_in_agent_metadata_value_returns_400(
+        self, mock_get_pool
+    ):
         resp = _post_agent(
             b'{"agent_id": "agent-a", "metadata": {"note": "\\ud800x"}}'
         )
         assert resp.status_code == 400
-        resp.content.decode("utf-8")
         assert (
             resp.json()["detail"]
             == "metadata.note contains an unpaired UTF-16 surrogate"
         )
+        # Rejected before any DB work: the pool must never be touched.
+        mock_get_pool.assert_not_called()
 
-    def test_lone_surrogate_nested_in_agent_metadata_returns_400(self):
+    @patch("api.agents.get_pool")
+    def test_lone_surrogate_nested_in_agent_metadata_returns_400(
+        self, mock_get_pool
+    ):
         resp = _post_agent(
             b'{"agent_id": "agent-a", "metadata": {"a": {"b": ["\\ud800"]}}}'
         )
@@ -217,8 +223,12 @@ class TestCreateAgentMetadataSurrogates:
             resp.json()["detail"]
             == "metadata.a.b[0] contains an unpaired UTF-16 surrogate"
         )
+        mock_get_pool.assert_not_called()
 
-    def test_lone_surrogate_in_agent_metadata_key_returns_400(self):
+    @patch("api.agents.get_pool")
+    def test_lone_surrogate_in_agent_metadata_key_returns_400(
+        self, mock_get_pool
+    ):
         resp = _post_agent(
             b'{"agent_id": "agent-a", "metadata": {"\\ud800k": "v"}}'
         )
@@ -227,6 +237,7 @@ class TestCreateAgentMetadataSurrogates:
             resp.json()["detail"]
             == "metadata key contains an unpaired UTF-16 surrogate"
         )
+        mock_get_pool.assert_not_called()
 
     @patch("api.agents.get_pool")
     @patch("api.agents.create_api_key_record")
