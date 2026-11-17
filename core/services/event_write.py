@@ -14,6 +14,7 @@ import asyncpg
 
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
+from services.writer import seal_writer
 from services.embeddings import generate_embedding, event_to_text
 from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.agent_limits import assert_agent_slot
@@ -119,12 +120,17 @@ async def write_event(
     occurred_at: datetime | None = None,
     supersedes: str | None = None,
     importance: float | None = None,
+    written_by: dict | None = None,
+    keep_original_writer: bool = False,
 ) -> dict:
     """Write one event. ``occurred_at`` is for imports only: it keeps the
     original timestamp instead of the database clock. ``supersedes`` and
     ``importance`` are stored in metadata (so the checksum covers them) and
-    steer context_for() / search (services/memory_rank.py)."""
+    steer context_for() / search (services/memory_rank.py). ``written_by``
+    (services/writer.py) is the credential behind the request; it replaces any
+    client-supplied value, so the checksum seals who wrote the event."""
     metadata = _memory_metadata(metadata, supersedes, importance)
+    metadata = seal_writer(metadata, written_by, keep_original=keep_original_writer)
     validate_event_payload(
         agent=agent,
         event=event,

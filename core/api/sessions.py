@@ -11,7 +11,7 @@ from api.deps import get_tenant, assert_agent_allowed, is_unbound_api_key
 from api.events import _format_event
 from db.connection import get_pool
 from services.exceptions import bad_request, not_found
-from services.why_analysis import analyze_why_chain
+from services.why_analysis import analyze_why_chain, foreign_continuation
 
 router = APIRouter()
 
@@ -194,6 +194,7 @@ async def session_why(
     ordered = sorted(rows, key=lambda r: r["depth"], reverse=True)
     root = ordered[0]
     chain_agents = {r["agent_id"] for r in rows}
+    continues_in = await foreign_continuation(pool, tenant_id, rows, scoped_agent)
     completeness = analyze_why_chain(
         anchor_event_type=anchor["event_type"],
         anchor_parent_id=str(anchor["parent_event_id"]) if anchor["parent_event_id"] else None,
@@ -203,6 +204,7 @@ async def session_why(
         root_has_parent=root["parent_event_id"] is not None,
         scoped_agent=scoped_agent,
         chain_agents=chain_agents,
+        continues_in=continues_in,
     )
 
     return {

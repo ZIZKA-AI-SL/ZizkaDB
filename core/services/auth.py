@@ -68,7 +68,7 @@ async def verify_api_key(raw_key: str) -> dict | None:
 
     row = await pool.fetchrow(
         """
-        SELECT ak.tenant_id, ak.key_id, ak.agent_id, ak.revoked, ak.scope,
+        SELECT ak.tenant_id, ak.key_id, ak.agent_id, ak.revoked, ak.scope, ak.key_prefix,
                (ak.expires_at IS NOT NULL AND ak.expires_at <= NOW()) AS expired
         FROM api_keys ak
         WHERE ak.key_hash = $1
@@ -90,6 +90,7 @@ async def verify_api_key(raw_key: str) -> dict | None:
         "key_id": str(row["key_id"]),
         "agent_id": row["agent_id"],
         "scope": row["scope"] or "read_write",
+        "key_prefix": row["key_prefix"],
     }
 
 
