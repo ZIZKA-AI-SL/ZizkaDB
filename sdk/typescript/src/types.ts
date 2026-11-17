@@ -2,6 +2,26 @@ export interface ZizkaDBConfig {
   apiKey?: string
   host?: string
   timeout?: number
+  /**
+   * The prompt or config version of the agent, recorded on every event as
+   * `metadata.agent_version` so an audit can tell which version did what.
+   * Defaults to the ZIZKADB_AGENT_VERSION env var.
+   */
+  agentVersion?: string
+}
+
+export interface HandoffOptions {
+  /** The sending agent. */
+  agent: string
+  /** The receiving agent. */
+  to: string
+  message: string
+  sessionId?: string
+  /** What caused the handoff (defaults to the last event in track()). */
+  parentId?: string
+  data?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  correlationId?: string
 }
 
 export interface LogOptions {

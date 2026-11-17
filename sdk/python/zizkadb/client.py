@@ -39,6 +39,7 @@ from .models import Event, LogResult, CausalChain, AgentState, AgentInfo
 from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
 from .telemetry import ping_on_install as _telemetry_ping
 from .context import LineageContext, resolve_log_lineage, record_log_result
+from .handoff import SENT_EVENT, Handoff, HandoffContext, HandoffToken
 
 CLOUD_HOST = "https://db.zizka.ai"
 DEFAULT_DEV_API_KEY = "zizkadb_dev_local"
@@ -137,7 +138,12 @@ class ZizkaDB:
         api_key: str | None = None,
         host: str | None = None,
         timeout: float = 10.0,
+        agent_version: str | None = None,
     ):
+        # Recorded on every event as metadata.agent_version (the prompt or
+        # config version that was running), so an audit can tell which version
+        # of an agent did something. ZIZKADB_AGENT_VERSION when not passed.
+        self._agent_version = (agent_version or os.getenv("ZIZKADB_AGENT_VERSION") or "").strip() or None
         host = (host or "").strip() or None
         if host is None:
             # A self-hosted key with ZIZKADB_HOST set must not go to Cloud.
@@ -177,6 +183,12 @@ class ZizkaDB:
         self._client: httpx.AsyncClient | None = None
         self._telemetry_mode = "self-hosted" if host else "cloud"
         _telemetry_ping(mode=self._telemetry_mode, sdk="python")
+
+    def _stamp(self, metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Add agent_version to event metadata (an explicit value wins)."""
+        if not self._agent_version or (metadata and "agent_version" in metadata):
+            return metadata
+        return {**(metadata or {}), "agent_version": self._agent_version}
 
     # ─────────────────────────────────────────
     # CONTEXT MANAGER
@@ -247,7 +259,7 @@ class ZizkaDB:
             "data": payload_data,
             "parent_id": parent_id,
             "session_id": session_id,
-            "metadata": metadata,
+            "metadata": self._stamp(metadata),
         }
         if idempotency_key is not None:
             body["idempotency_key"] = idempotency_key
@@ -535,7 +547,105 @@ class ZizkaDB:
         Returns {"written", "failed", "results"}; one bad event does not
         reject the others, so check results[i]["ok"].
         """
+        events = [{**e, "metadata": self._stamp(e.get("metadata"))} for e in events]
         return await self._post("/v1/events/batch", {"events": events})
+
+    # ─────────────────────────────────────────
+    # HANDOFF — agent-to-agent, across processes and frameworks
+    # ─────────────────────────────────────────
+
+    async def handoff(
+        self,
+        agent: str,
+        to: str,
+        message: str,
+        *,
+        session_id: str | None = None,
+        parent_id: str | None = None,
+        data: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> Handoff:
+        """
+        Record a message from ``agent`` to another agent and get a token to
+        send with it. The receiver opens ``db.continue_from(token, agent=to)``
+        and its events link back to this message, so why() crosses agents,
+        whatever framework, process or LLM each side runs on.
+
+        On ZizkaDB Cloud the message goes through /v1/a2a/messages, which also
+        records the receipt in the recipient's chain. Elsewhere (self-hosted,
+        or a key not scoped to one agent) it is logged as an ``a2a.message``
+        event of the sender. ``Handoff.recorded_by`` says which.
+
+        Example::
+
+            h = await db.handoff(agent="planner", to="billing", message="Refund order 4411")
+            requests.post(billing_url, json={...}, headers=h.headers)
+            # in the billing service:
+            async with db.continue_from(token, agent="billing"):
+                await db.log(agent="billing", event="tool_call", data={...})
+        """
+        explicit = parent_id is not None
+        parent_id, session_id = resolve_log_lineage(
+            agent=agent, event=SENT_EVENT, parent_id=parent_id,
+            session_id=session_id, explicit_parent=explicit,
+        )
+        body: dict[str, Any] = {
+            "recipient_agent": to,
+            "message": message,
+            "session_id": session_id,
+            "parent_id": parent_id,
+            "metadata": self._stamp(metadata),
+        }
+        if correlation_id is not None:
+            body["correlation_id"] = correlation_id
+        if data:
+            body["data"] = data
+        try:
+            raw = await self._post("/v1/a2a/messages", body)
+            recorded_by = "a2a"
+        except (NotFoundError, AgentScopeError):
+            # No agent-to-agent endpoint here (self-hosted), or it needs an
+            # agent-scoped key: record the message as the sender's event.
+            payload = {"to_agent": to, "message": message, **(data or {})}
+            if correlation_id is not None:
+                payload["correlation_id"] = correlation_id
+            result = await self.log(
+                agent=agent, event=SENT_EVENT, data=payload,
+                parent_id=parent_id, session_id=session_id, metadata=metadata,
+            )
+            raw = {"event_id": result.event_id, "session_id": session_id}
+            recorded_by = "event"
+        else:
+            record_log_result(agent, LogResult.from_dict(raw))
+        token = HandoffToken(
+            event_id=raw["event_id"],
+            session_id=raw.get("session_id", session_id),
+            from_agent=agent,
+            to_agent=to,
+            message_id=raw.get("message_id"),
+            received_event_id=raw.get("received_event_id"),
+        )
+        return Handoff(
+            token=token.encode(),
+            event_id=token.event_id,
+            from_agent=agent,
+            to_agent=to,
+            session_id=token.session_id,
+            message_id=token.message_id,
+            received_event_id=token.received_event_id,
+            recorded_by=recorded_by,
+            raw=raw,
+        )
+
+    def continue_from(self, token: str, agent: str, session_id: str | None = None) -> HandoffContext:
+        """
+        Continue another agent's handoff: ``async with db.continue_from(token, agent="billing"):``.
+        Records ``a2a.received`` (unless the server already did) and links the
+        events logged inside to the sender's message. ``token`` may come from
+        ``zizkadb.token_from_headers(request.headers)``.
+        """
+        return HandoffContext(self, token, agent=agent, session_id=session_id)
 
     # ─────────────────────────────────────────
     # WHY — causal chain for an event
