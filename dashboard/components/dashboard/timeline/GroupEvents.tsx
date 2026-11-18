@@ -32,18 +32,66 @@ function asTimelineEvent(e: AgentEvent): TimelineEvent {
 interface Props {
   agentId: string
   group: TimelineGroup
+  /** For an errors group: the window's errors (already loaded with the timeline). */
+  errors?: TimelineEvent[]
   range: TimeRange
   onSelect: (event: TimelineEvent) => void
   onZoom: (range: TimeRange) => void
 }
 
 /** The events behind a grouped dot; click one to see everything about it. */
-export function GroupEvents({ agentId, group, range, onSelect, onZoom }: Props) {
+export function GroupEvents({ agentId, group, errors, range, onSelect, onZoom }: Props) {
   // A new group remounts this component (keyed by the panel), so the page resets.
   const [limit, setLimit] = useState(PAGE)
-  const { events, loading, error } = useGroupEvents(agentId, group, limit)
-  const color = typeColor(group.type)
+  const { events, loading, error } = useGroupEvents(agentId, group.errors ? null : group, limit)
+  const color = group.errors ? colors.danger : typeColor(group.type)
   const shown = events?.length ?? 0
+  if (group.errors) {
+    const list = (errors ?? []).filter((e) => {
+      const t = new Date(e.timestamp).getTime()
+      return t >= group.from && t < group.to
+    })
+    return (
+      <div className="flex flex-col gap-3 min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="font-mono text-xs px-2 py-0.5"
+            style={{ color, background: `${color}22`, border: `1px solid ${color}66`, borderRadius: radii.sm }}
+          >
+            errors
+          </span>
+          <span className="text-sm font-semibold" style={{ color: colors.textStrong }}>
+            {group.count.toLocaleString()} errors
+          </span>
+        </div>
+        <p className="text-xs" style={{ color: colors.textMuted }}>
+          {formatDateTime(group.from)} → {formatClockSeconds(group.to)}. Click one to see where it happened and why.
+        </p>
+        <ul className="flex flex-col gap-1 overflow-y-auto pr-1" style={{ maxHeight: 520 }} aria-label="errors">
+          {list.map((e) => (
+            <li key={e.event_id}>
+              <button
+                type="button"
+                onClick={() => onSelect(e)}
+                className="w-full text-left px-2 py-1.5 flex flex-col gap-0.5"
+                style={{ background: colors.surface, border: `1px solid ${colors.danger}55`, borderRadius: radii.sm }}
+              >
+                <span className="font-mono text-xs" style={{ color: colors.danger }}>{e.event}</span>
+                <span className="font-mono text-xs" style={{ color: colors.textMuted }}>
+                  {formatClockSeconds(new Date(e.timestamp).getTime())}{e.session_id ? ` · ${e.session_id}` : ''}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {list.length < group.count && (
+          <p className="text-xs" style={{ color: colors.textFaint }}>
+            Showing {list.length.toLocaleString()} of {group.count.toLocaleString()}; zoom in to see the rest.
+          </p>
+        )}
+      </div>
+    )
+  }
   const more = Math.min(group.count, GROUP_LIST_MAX) > shown
 
   return (

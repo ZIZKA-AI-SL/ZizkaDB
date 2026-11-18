@@ -21,6 +21,7 @@ import {
 import { useAgentTimeline } from '@/hooks/useAgentTimeline'
 import { ErrorState, Skeleton } from '@/components/ui'
 import { TimelineChart } from './TimelineChart'
+import { SpikeChart } from './SpikeChart'
 import { OverviewStrip } from './OverviewStrip'
 import { EventInspector } from './EventInspector'
 import { GroupEvents } from './GroupEvents'
@@ -41,6 +42,8 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
   const [selected, setSelected] = useState<TimelineEvent | null>(null)
   // The grouped dot whose events are listed (zoomed-out graph).
   const [group, setGroup] = useState<TimelineGroup | null>(null)
+  // Spikes (events per time slot, stacked by type) or one row per type.
+  const [view, setView] = useState<'spikes' | 'types'>('spikes')
   // Typed but not yet applied dates; cleared whenever the window changes.
   const [draft, setDraft] = useState<{ from?: string; to?: string }>({})
   const fromInput = draft.from ?? toLocalInput(range.from)
@@ -199,7 +202,7 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
                 <b style={{ color: timeline.error_total ? colors.danger : colors.text }}>{timeline.error_total.toLocaleString()}</b> errors
                 {errorChats > 0 && <> in <b style={{ color: colors.text }}>{errorChats}</b> chats</>}
               </span>
-              {timeline.events === null && (
+              {view === 'types' && timeline.events === null && (
                 <span>Zoomed out: events grouped by time. Errors are always shown one by one.</span>
               )}
               {timeline.errors_truncated && (
@@ -207,10 +210,52 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
               )}
             </div>
 
+            {timeline.total > 0 && (
+              <div
+                role="group"
+                aria-label="Graph view"
+                className="inline-flex self-start p-0.5"
+                style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: radii.md }}
+              >
+                {([['spikes', 'Spikes'], ['types', 'By type']] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={view === id}
+                    onClick={() => setView(id)}
+                    className="text-xs font-medium px-2.5 py-1"
+                    style={{
+                      background: view === id ? colors.surfaceHover : 'transparent',
+                      color: view === id ? colors.textStrong : colors.textMuted,
+                      borderRadius: radii.sm,
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {timeline.total === 0 ? (
               <p className="text-sm py-6" style={{ color: colors.textMuted }}>
                 No events in this window. Pick a longer range or move the window below.
               </p>
+            ) : view === 'spikes' ? (
+              <SpikeChart
+                timeline={timeline}
+                range={range}
+                lanes={lanes}
+                selectedGroup={group}
+                onGroup={(g) => {
+                  setSelected(null)
+                  setGroup(g)
+                }}
+                onErrors={(slot) => {
+                  setSelected(null)
+                  setGroup({ type: 'errors', ...slot, errors: true })
+                }}
+                onZoom={(r) => go(r)}
+              />
             ) : (
               <TimelineChart
                 timeline={timeline}
@@ -246,6 +291,7 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
             key={`${group.type}|${group.from}|${group.to}`}
             agentId={agentId}
             group={group}
+            errors={timeline?.errors}
             range={range}
             onSelect={setSelected}
             onZoom={(r) => {
@@ -258,7 +304,7 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
             agentId={agentId}
             selected={selected}
             onZoom={(r) => go(r)}
-            backLabel={selected && group ? `${group.count.toLocaleString()} × ${group.type}` : undefined}
+            backLabel={selected && group ? (group.errors ? `${group.count.toLocaleString()} errors` : `${group.count.toLocaleString()} × ${group.type}`) : undefined}
             onBack={selected && group ? () => setSelected(null) : undefined}
           />
         )}

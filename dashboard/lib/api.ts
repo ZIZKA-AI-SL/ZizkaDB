@@ -301,7 +301,8 @@ export interface AgentTimeline {
   total: number
   error_total: number
   types: { event: string; count: number; errors: number }[]
-  buckets: { start: string; total: number; errors: number; by_type: Record<string, number> }[]
+  /** Per time slot: events per type, and errors in total and per type. */
+  buckets: { start: string; total: number; errors: number; by_type: Record<string, number>; errors_by_type?: Record<string, number> }[]
   /** Every event in the window, or null when there are more than point_limit. */
   events: TimelineEvent[] | null
   /** The window's error events, always individually (newest kept when capped). */

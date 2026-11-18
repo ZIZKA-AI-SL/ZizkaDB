@@ -168,6 +168,8 @@ export interface TimelineGroup {
   from: number
   to: number
   count: number
+  /** The red part of a spike: every error in the slot, whatever its type. */
+  errors?: boolean
 }
 
 /** The most events the group list loads (the events API's page limit). */
@@ -189,4 +191,52 @@ export function groupQuery(group: TimelineGroup, limit: number): Record<string, 
 /** Whether zooming into the group's slot would show a narrower window than now. */
 export function canZoomInto(range: TimeRange): boolean {
   return range.to - range.from > MIN_SPAN + 1000
+}
+
+/** One vertical spike: a time slot's events stacked by type, errors on top. */
+export interface Spike {
+  t: number
+  /** Events that are not errors, per type, biggest type first (drawn bottom up). */
+  segments: { type: string; n: number }[]
+  /** Error events in the slot (drawn red, on top). */
+  errors: number
+  errorTypes: { type: string; n: number }[]
+  total: number
+}
+
+/**
+ * The spike for every time slot, counting only the shown types. Errors are
+ * taken out of their own type's count so nothing is counted twice; servers
+ * without ``errors_by_type`` fall back to treating error-named types as errors.
+ */
+export function spikes(
+  buckets: { start: string; errors: number; by_type: Record<string, number>; errors_by_type?: Record<string, number> }[],
+  shown: Set<string>,
+  order: string[],
+): Spike[] {
+  const rank = new Map(order.map((t, i) => [t, i]))
+  return buckets.map((b) => {
+    const errorsByType: Record<string, number> = b.errors_by_type
+      ?? Object.fromEntries(Object.entries(b.by_type).filter(([t]) => isErrorEvent(t)))
+    const segments: { type: string; n: number }[] = []
+    const errorTypes: { type: string; n: number }[] = []
+    for (const [type, n] of Object.entries(b.by_type)) {
+      if (!shown.has(type)) continue
+      const e = Math.min(n, errorsByType[type] ?? 0)
+      if (n - e > 0) segments.push({ type, n: n - e })
+      if (e > 0) errorTypes.push({ type, n: e })
+    }
+    segments.sort((a, z) => (rank.get(a.type) ?? 999) - (rank.get(z.type) ?? 999))
+    errorTypes.sort((a, z) => z.n - a.n)
+    const errors = errorTypes.reduce((s, x) => s + x.n, 0)
+    return { t: new Date(b.start).getTime(), segments, errors, errorTypes, total: errors + segments.reduce((s, x) => s + x.n, 0) }
+  })
+}
+
+/** A round axis maximum at or above ``n`` (1, 2, 5 × 10^k). */
+export function niceMax(n: number): number {
+  if (n <= 1) return 1
+  const p = 10 ** Math.floor(Math.log10(n))
+  for (const m of [1, 2, 5, 10]) if (m * p >= n) return m * p
+  return 10 * p
 }
