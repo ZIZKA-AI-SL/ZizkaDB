@@ -85,16 +85,16 @@ class TestCreateApiKeyEndpoint:
     @patch.dict("os.environ", {"API_KEY_LIMITS_ENFORCED": "true"})
     @patch("api.auth.get_pool")
     def test_blocked_at_limit(self, mock_get_pool):
-        mock_get_pool.return_value = FakePool(FakeConn(plan="pro", count=2))  # limit 2, full
+        mock_get_pool.return_value = FakePool(FakeConn(plan="pro", count=3))  # limit 3, full
         response = client.post("/v1/auth/api-keys", json={"name": "prod key"})
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "api_key_limit_reached"
-        assert response.json()["detail"]["limit"] == 2
+        assert response.json()["detail"]["limit"] == 3
 
     @patch.dict("os.environ", {"API_KEY_LIMITS_ENFORCED": "true"})
     @patch("api.auth.get_pool")
     def test_allowed_under_limit(self, mock_get_pool):
-        mock_get_pool.return_value = FakePool(FakeConn(plan="pro", count=1))  # limit 2, one free slot
+        mock_get_pool.return_value = FakePool(FakeConn(plan="pro", count=2))  # limit 3, one free slot
         response = client.post("/v1/auth/api-keys", json={"name": "prod key"})
         assert response.status_code == 200
         assert "key" in response.json()
@@ -128,7 +128,7 @@ class TestApiKeyUsageEndpoint:
         response = client.get("/v1/auth/api-keys/usage")
         assert response.status_code == 200
         body = response.json()
-        assert body == {"plan": "team", "limit": 5, "used": 3, "unlimited": False, "at_limit": False}
+        assert body == {"plan": "team", "limit": 10, "used": 3, "unlimited": False, "at_limit": False}
 
     @patch.dict("os.environ", {"API_KEY_LIMITS_ENFORCED": "false"})
     @patch("api.auth.get_pool")

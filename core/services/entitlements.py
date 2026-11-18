@@ -39,8 +39,9 @@ SELF_HOSTED_PLAN = "self_hosted"
 # The only plans with entitlement caps. Extend this dict to add plans.
 PLAN_ENTITLEMENTS: dict[str, PlanEntitlements] = {
     SELF_HOSTED_PLAN: PlanEntitlements(max_api_keys=1, max_agents=1),
-    "pro": PlanEntitlements(max_api_keys=2, max_agents=2),
-    "team": PlanEntitlements(max_api_keys=5, max_agents=5),
+    # ZizkaDB Cloud plans: one API key per agent, so as many agents as keys.
+    "pro": PlanEntitlements(max_api_keys=3, max_agents=3),
+    "team": PlanEntitlements(max_api_keys=10, max_agents=10),
 }
 
 
