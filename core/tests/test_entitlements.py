@@ -128,9 +128,10 @@ class TestLimitsEnforced:
 # ─────────────────────────────────────────
 
 class TestIsSelfHostedDeployment:
-    def test_defaults_to_managed(self, monkeypatch):
+    def test_defaults_to_self_hosted(self, monkeypatch):
+        # Open source is one agent with one API key unless ZizkaDB Cloud says otherwise.
         monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
-        assert is_self_hosted_deployment() is False
+        assert is_self_hosted_deployment() is True
 
     def test_self_hosted_value_enables(self, monkeypatch):
         monkeypatch.setenv("DEPLOYMENT_MODE", "self_hosted")
@@ -207,7 +208,7 @@ class TestFetchEffectivePlan:
         assert conn.executed == []
 
     async def test_managed_defers_to_users_plan(self, monkeypatch):
-        monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
+        monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
         conn = FakeConn(plan="team")
         assert await billing.fetch_effective_plan(conn, "t1") == "team"
 

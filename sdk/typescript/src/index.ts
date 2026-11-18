@@ -42,7 +42,11 @@ import type {
   QueryOptions,
   SearchOptions,
 } from './types'
-import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
+import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError, CloudOnlyError } from './types'
+
+const CLOUD_ONLY_HANDOFF =
+  'Agent-to-agent handoffs are a ZizkaDB Cloud feature (https://db.zizka.ai). ' +
+  'Self-hosted ZizkaDB runs one agent with one API key, so there is no other agent to hand off to.'
 import { LineageContext, resolveLogLineage, recordLogResult, getLineageState } from './context'
 import { readEnv } from './env'
 import {
@@ -362,10 +366,10 @@ export class ZizkaDB {
    * `continueFrom(token, { agent })` and its events link back to this message,
    * so why() crosses agents, whatever framework, process or LLM each runs on.
    *
-   * On ZizkaDB Cloud the message goes through /v1/a2a/messages, which also
-   * records the receipt in the recipient's chain. Elsewhere (self-hosted, or a
-   * key not scoped to one agent) it is logged as an `a2a.message` event of the
-   * sender. `recordedBy` says which.
+   * **ZizkaDB Cloud only.** The message goes through /v1/a2a/messages, which
+   * records it in the sender's chain and the receipt in the recipient's. Use
+   * the sending agent's own (agent-scoped) API key. Self-hosted ZizkaDB runs
+   * one agent with one API key, so this throws `CloudOnlyError` there.
    */
   async handoff(options: HandoffOptions): Promise<Handoff> {
     const explicit = options.parentId != null
@@ -373,7 +377,7 @@ export class ZizkaDB {
       options.agent, HANDOFF_SENT_EVENT, options.parentId ?? null, options.sessionId ?? null, explicit,
     )
     let raw: Record<string, unknown>
-    let recordedBy: Handoff['recordedBy'] = 'a2a'
+    const recordedBy: Handoff['recordedBy'] = 'a2a'
     try {
       raw = await this.post('/v1/a2a/messages', {
         recipient_agent: options.to,
@@ -386,24 +390,11 @@ export class ZizkaDB {
       }) as Record<string, unknown>
       recordLogResult(options.agent, String(raw.event_id))
     } catch (err) {
-      if (!(err instanceof NotFoundError) && !(err instanceof AgentScopeError)) throw err
-      // No agent-to-agent endpoint here (self-hosted), or it needs an
-      // agent-scoped key: record the message as the sender's event.
-      const result = await this.log({
-        agent: options.agent,
-        event: HANDOFF_SENT_EVENT,
-        data: {
-          to_agent: options.to,
-          message: options.message,
-          ...(options.data ?? {}),
-          ...(options.correlationId != null ? { correlation_id: options.correlationId } : {}),
-        },
-        ...(parentId ? { parentId } : {}),
-        ...(sessionId ? { sessionId } : {}),
-        ...(options.metadata ? { metadata: options.metadata } : {}),
-      })
-      raw = { event_id: result.eventId, session_id: sessionId }
-      recordedBy = 'event'
+      if (!(err instanceof NotFoundError)) throw err
+      // The endpoint exists (ZizkaDB Cloud): e.g. no such recipient.
+      if (err.detail && err.detail !== 'Not Found') throw new NotFoundError(err.detail, err.detail)
+      // No agent-to-agent endpoint: a self-hosted server, which runs one agent.
+      throw new CloudOnlyError(CLOUD_ONLY_HANDOFF)
     }
     const tok: HandoffToken = {
       eventId: String(raw.event_id),
@@ -1158,7 +1149,12 @@ export class ZizkaDB {
       throw new AgentScopeError(`Agent mismatch (403): ${detail}`)
     }
     if (res.status === 404) {
-      throw new NotFoundError('Resource not found')
+      let detail: string | undefined
+      try {
+        const json = await res.json() as Record<string, unknown>
+        if (typeof json.detail === 'string') detail = json.detail
+      } catch {}
+      throw new NotFoundError('Resource not found', detail)
     }
     if (res.status === 429) {
       throw new RateLimitError('Rate limit exceeded')

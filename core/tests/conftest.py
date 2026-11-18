@@ -142,3 +142,13 @@ async def pg_db(monkeypatch):
     finally:
         await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
         await admin.close()
+
+
+@pytest.fixture(autouse=True)
+def _managed_mode_unless_a_test_sets_it(monkeypatch):
+    """The code defaults to self-hosted (one agent, one API key). Most unit
+    tests here exercise the managed (ZizkaDB Cloud) plan paths and were written
+    for that mode, so they get it unless the environment or the test (pg_db,
+    monkeypatch, patch.dict) sets DEPLOYMENT_MODE itself."""
+    if "DEPLOYMENT_MODE" not in os.environ:
+        monkeypatch.setenv("DEPLOYMENT_MODE", "managed")

@@ -143,7 +143,7 @@ if [ "$PRODUCTION_MODE" -eq 1 ]; then
       ok "$var set"
     fi
   done
-  if [ "${DEPLOYMENT_MODE:-managed}" != "self_hosted" ]; then
+  if [ "${DEPLOYMENT_MODE:-self_hosted}" != "self_hosted" ]; then
     warn "DEPLOYMENT_MODE is not 'self_hosted' — plan-based entitlement checks (e.g. API key limits) will not apply the Self-Hosted plan"
     # Not self-hosted: the dashboard signs in with email OTP.
     for var in EMAIL_HOST EMAIL_USER EMAIL_PASS; do

@@ -177,9 +177,21 @@ export class AuthError extends ZizkaDBError {
 }
 
 export class NotFoundError extends ZizkaDBError {
-  constructor(message: string) {
+  /** The server's message, if any. */
+  public detail?: string
+
+  constructor(message: string, detail?: string) {
     super(message, 404)
     this.name = 'NotFoundError'
+    this.detail = detail
+  }
+}
+
+/** The feature needs ZizkaDB Cloud (multi-agent); self-hosted runs one agent. */
+export class CloudOnlyError extends ZizkaDBError {
+  constructor(message: string) {
+    super(message, 404)
+    this.name = 'CloudOnlyError'
   }
 }
 

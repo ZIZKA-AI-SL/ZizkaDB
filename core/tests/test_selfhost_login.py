@@ -41,9 +41,9 @@ class TestSelfHostConfig:
         _env(monkeypatch, mode="managed", env="production", token="s3cret")
         assert client.get("/v1/auth/selfhost").json() == {"self_hosted": False, "login": None}
 
-    def test_deployment_mode_unset_in_production_is_managed(self, monkeypatch):
-        _env(monkeypatch, env="production")
-        assert client.get("/v1/auth/selfhost").json()["self_hosted"] is False
+    def test_deployment_mode_unset_in_production_is_self_hosted(self, monkeypatch):
+        _env(monkeypatch, env="production", token="s3cret")
+        assert client.get("/v1/auth/selfhost").json() == {"self_hosted": True, "login": "admin_token"}
 
     def test_dev_without_deployment_mode_is_one_click(self, monkeypatch):
         # Older local .env files predate DEPLOYMENT_MODE — same rule as /dev-token.

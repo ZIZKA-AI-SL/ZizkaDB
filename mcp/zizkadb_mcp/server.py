@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import platform
@@ -236,10 +237,27 @@ async def log_event(
     return result
 
 
+CLOUD_ONLY_HANDOFF = (
+    "Agent-to-agent handoffs are a ZizkaDB Cloud feature (https://db.zizka.ai). "
+    "Self-hosted ZizkaDB runs one agent with one API key, so there is no other agent to hand off to."
+)
+
+
+def _route_missing(result: dict) -> bool:
+    """A 404 from a server without the endpoint (FastAPI's own "Not Found"),
+    not one from ZizkaDB Cloud about the request (e.g. no such recipient)."""
+    try:
+        detail = json.loads(result.get("error") or "{}").get("detail")
+    except (ValueError, AttributeError):
+        return True
+    return detail in (None, "Not Found")
+
+
 @mcp.tool()
 async def send_handoff(agent: str, to_agent: str, message: str) -> dict:
     """
     Record a message from your agent to another agent and get a handoff token.
+    ZizkaDB Cloud only: self-hosted ZizkaDB runs one agent with one API key.
 
     Pass the returned ``handoff_token`` to the other agent along with the
     message (for example in the X-ZizkaDB-Handoff HTTP header or as a tool
@@ -254,7 +272,8 @@ async def send_handoff(agent: str, to_agent: str, message: str) -> dict:
 
     Returns:
         handoff_token, event_id, recorded_by ("a2a": both sides recorded by
-        ZizkaDB Cloud; "event": recorded as your agent's a2a.message event)
+        ZizkaDB Cloud). On a self-hosted server: an error saying handoffs
+        need ZizkaDB Cloud.
     """
     session_id = get_session_id()
     parent = get_last_event_id()
@@ -263,15 +282,9 @@ async def send_handoff(agent: str, to_agent: str, message: str) -> dict:
         body["parent_id"] = parent
     result = await _api("POST", "/a2a/messages", body)
     recorded_by = "a2a"
-    if isinstance(result, dict) and result.get("status") in (403, 404) and "event_id" not in result:
-        # No agent-to-agent endpoint (self-hosted) or a key not scoped to one
-        # agent: record the message as the sender's event.
-        ev: dict = {"agent": agent, "event": "a2a.message", "session_id": session_id,
-                    "data": {"to_agent": to_agent, "message": message}}
-        if parent:
-            ev["parent_id"] = parent
-        result = await _api("POST", "/events", ev)
-        recorded_by = "event"
+    if isinstance(result, dict) and result.get("status") == 404 and _route_missing(result):
+        # No agent-to-agent endpoint: a self-hosted server, which runs one agent.
+        return {"error": CLOUD_ONLY_HANDOFF, "status": 404}
     if not isinstance(result, dict) or not result.get("event_id"):
         return result
     record_event(result["event_id"])

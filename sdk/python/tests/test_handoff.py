@@ -3,11 +3,11 @@
 import pytest
 
 from zizkadb import HANDOFF_HEADER, HandoffToken, ZizkaDB, token_from_headers
-from zizkadb.exceptions import NotFoundError
+from zizkadb.exceptions import CloudOnlyError, NotFoundError
 
 
 class FakeServer:
-    """Records posts; /v1/a2a/messages behaves like Cloud, or 404s like a self-hosted server."""
+    """Records posts; /v1/a2a/messages behaves like Cloud, or 404s like a self-hosted server (no such route)."""
 
     def __init__(self, a2a: bool = True, receipt: bool = True):
         self.a2a = a2a
@@ -72,37 +72,44 @@ async def test_handoff_on_cloud_uses_the_a2a_endpoint(server):
 
 
 @pytest.mark.asyncio
-async def test_handoff_without_a2a_logs_the_senders_event(monkeypatch):
+async def test_handoff_needs_zizkadb_cloud(monkeypatch):
+    # A self-hosted server has no /v1/a2a/messages: it runs one agent.
     s = FakeServer(a2a=False)
     _patch(monkeypatch, s)
     async with ZizkaDB(host="http://localhost:8000") as db:
-        h = await db.handoff(agent="planner", to="billing", message="hi", session_id="case-1")
-
-    path, body = s.posts[-1]
-    assert path == "/v1/events"
-    assert body["event"] == "a2a.message"
-    assert body["data"]["to_agent"] == "billing"
-    assert h.recorded_by == "event"
-    assert h.received_event_id is None
+        with pytest.raises(CloudOnlyError, match="ZizkaDB Cloud"):
+            await db.handoff(agent="planner", to="billing", message="hi", session_id="case-1")
+    # Nothing was written for a second agent.
+    assert all(path != "/v1/events" for path, _ in s.posts)
 
 
 @pytest.mark.asyncio
-async def test_continue_from_links_the_receivers_events_to_the_message(monkeypatch):
-    s = FakeServer(a2a=False)
+async def test_a_cloud_not_found_is_not_reported_as_cloud_only(monkeypatch):
+    async def _post(db, path, body):
+        raise NotFoundError("Resource not found", status_code=404, detail="Recipient agent 'billing' not found")
+
+    monkeypatch.setattr(ZizkaDB, "_post", _post)
+    async with ZizkaDB(host="http://localhost:8000") as db:
+        with pytest.raises(NotFoundError, match="Recipient agent 'billing' not found") as exc:
+            await db.handoff(agent="planner", to="billing", message="hi")
+    assert not isinstance(exc.value, CloudOnlyError)
+
+
+@pytest.mark.asyncio
+async def test_continue_from_records_the_receipt_when_the_server_did_not(monkeypatch):
+    # An older Cloud server answers without received_event_id.
+    s = FakeServer(receipt=False)
     _patch(monkeypatch, s)
     async with ZizkaDB(host="http://localhost:8000") as db:
         h = await db.handoff(agent="planner", to="billing", message="hi", session_id="case-1")
-        # ... the token travels to another process; there:
         async with db.continue_from(h.token, agent="billing") as ctx:
-            step = await db.log(agent="billing", event="tool_call", data={"tool": "refund"})
+            await db.log(agent="billing", event="tool_call", data={"tool": "refund"})
 
     received = s.posts[-2][1]
     assert received["event"] == "a2a.received"
     assert received["agent"] == "billing"
     assert received["parent_id"] == h.event_id
-    assert received["session_id"] == "case-1"
     assert s.posts[-1][1]["parent_id"] == ctx.received_event_id
-    assert step.event_id == f"evt-{len(s.posts)}"
 
 
 @pytest.mark.asyncio

@@ -37,7 +37,7 @@ asyncio.run(main())
 | `db.query(agent, ...)` | Fetch events with filters | No |
 | `db.iter_events(agent, page_size?)` | Every event, newest first, cursor-paged (async iterator) | No |
 | `db.export_events(agent)` / `db.import_events(events, agent?)` | NDJSON export (async iterator) and import with parent remapping | No |
-| `db.handoff(agent, to, message)` / `db.continue_from(token, agent)` | Agent-to-agent handoff token (`zizkadb/handoff.py`); `ZizkaDB(agent_version=...)` stamps `metadata.agent_version` | No |
+| `db.handoff(agent, to, message)` / `db.continue_from(token, agent)` | Agent-to-agent handoff token (`zizkadb/handoff.py`), **ZizkaDB Cloud only** (self-hosted runs one agent: `CloudOnlyError`); `ZizkaDB(agent_version=...)` stamps `metadata.agent_version` | No |
 | `db.log_batch(events)` | Up to 500 events in one request; per-item results, `parent_index` | No |
 | `db.search(query, agent?, mode?)` | Search event history: hybrid with embeddings, keyword (Postgres full-text) without | No |
 | `db.context_for(agent, task)` | Relevant past events as a prompt block (keyword relevance without embeddings) | No |
@@ -55,6 +55,7 @@ asyncio.run(main())
 
 - `AuthError` — invalid or revoked API key
 - `AgentScopeError` — API key is scoped to a different agent (HTTP 403)
+- `CloudOnlyError` — a ZizkaDB Cloud feature (agent-to-agent handoffs) used against a self-hosted server, which runs one agent
 - `NotFoundError` — event or agent does not exist
 
 ---

@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from .session_scope import SessionScope
 
 from .models import Event, LogResult, CausalChain, AgentState, AgentInfo
-from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
+from .exceptions import ZizkaDBError, AuthError, CloudOnlyError, NotFoundError, RateLimitError, AgentScopeError
 from .telemetry import ping_on_install as _telemetry_ping
 from .context import LineageContext, resolve_log_lineage, record_log_result
 from .handoff import SENT_EVENT, Handoff, HandoffContext, HandoffToken
@@ -118,6 +118,12 @@ def _sanitize_url(url: str) -> tuple[str, str]:
     if port:
         host = f"{host}:{port}"
     return urlunsplit((parts.scheme, host, parts.path, "", "")), f"{host}{parts.path}"
+
+
+CLOUD_ONLY_HANDOFF = (
+    "Agent-to-agent handoffs are a ZizkaDB Cloud feature (https://db.zizka.ai). "
+    "Self-hosted ZizkaDB runs one agent with one API key, so there is no other agent to hand off to."
+)
 
 
 class ZizkaDB:
@@ -572,10 +578,11 @@ class ZizkaDB:
         and its events link back to this message, so why() crosses agents,
         whatever framework, process or LLM each side runs on.
 
-        On ZizkaDB Cloud the message goes through /v1/a2a/messages, which also
-        records the receipt in the recipient's chain. Elsewhere (self-hosted,
-        or a key not scoped to one agent) it is logged as an ``a2a.message``
-        event of the sender. ``Handoff.recorded_by`` says which.
+        **ZizkaDB Cloud only.** The message goes through /v1/a2a/messages,
+        which records it in the sender's chain and the receipt in the
+        recipient's. Use the sending agent's own (agent-scoped) API key.
+        Self-hosted ZizkaDB runs one agent with one API key, so this raises
+        :class:`CloudOnlyError` there.
 
         Example::
 
@@ -603,21 +610,13 @@ class ZizkaDB:
             body["data"] = data
         try:
             raw = await self._post("/v1/a2a/messages", body)
-            recorded_by = "a2a"
-        except (NotFoundError, AgentScopeError):
-            # No agent-to-agent endpoint here (self-hosted), or it needs an
-            # agent-scoped key: record the message as the sender's event.
-            payload = {"to_agent": to, "message": message, **(data or {})}
-            if correlation_id is not None:
-                payload["correlation_id"] = correlation_id
-            result = await self.log(
-                agent=agent, event=SENT_EVENT, data=payload,
-                parent_id=parent_id, session_id=session_id, metadata=metadata,
-            )
-            raw = {"event_id": result.event_id, "session_id": session_id}
-            recorded_by = "event"
-        else:
-            record_log_result(agent, LogResult.from_dict(raw))
+        except NotFoundError as exc:
+            if exc.detail not in (None, "Not Found"):
+                # The endpoint exists (ZizkaDB Cloud): e.g. no such recipient.
+                raise NotFoundError(exc.detail, status_code=404, detail=exc.detail) from exc
+            raise CloudOnlyError(CLOUD_ONLY_HANDOFF, status_code=404) from exc
+        record_log_result(agent, LogResult.from_dict(raw))
+        recorded_by = "a2a"
         token = HandoffToken(
             event_id=raw["event_id"],
             session_id=raw.get("session_id", session_id),
@@ -1105,7 +1104,12 @@ class ZizkaDB:
                 status_code=403,
             )
         if resp.status_code == 404:
-            raise NotFoundError("Resource not found", status_code=404)
+            try:
+                detail = resp.json().get("detail")
+            except Exception:
+                detail = None
+            raise NotFoundError("Resource not found", status_code=404,
+                                detail=detail if isinstance(detail, str) else None)
         if resp.status_code == 429:
             raise RateLimitError("Rate limit exceeded", status_code=429)
         if resp.status_code >= 400:

@@ -44,16 +44,27 @@ async def test_send_handoff_on_cloud():
 
 
 @pytest.mark.asyncio
-async def test_send_handoff_falls_back_to_an_event_when_self_hosted():
-    api = AsyncMock(side_effect=[{"error": "Not Found", "status": 404}, {"event_id": "evt-1"}])
+async def test_send_handoff_needs_zizkadb_cloud():
+    # A self-hosted server has no /v1/a2a/messages route: it runs one agent.
+    api = AsyncMock(return_value={"error": '{"detail":"Not Found"}', "status": 404})
     with patch("zizkadb_mcp.server._api", new=api):
         from zizkadb_mcp.server import send_handoff
         out = await send_handoff(agent="planner", to_agent="billing", message="hi")
 
-    _, path, body = api.call_args.args
-    assert path == "/events"
-    assert body["event"] == "a2a.message"
-    assert out["recorded_by"] == "event"
+    assert api.await_count == 1  # nothing written for a second agent
+    assert out["status"] == 404
+    assert "ZizkaDB Cloud" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_send_handoff_passes_through_a_cloud_not_found():
+    cloud = {"error": '{"detail":"Recipient agent \'billing\' not found"}', "status": 404}
+    api = AsyncMock(return_value=cloud)
+    with patch("zizkadb_mcp.server._api", new=api):
+        from zizkadb_mcp.server import send_handoff
+        out = await send_handoff(agent="planner", to_agent="billing", message="hi")
+
+    assert out == cloud
 
 
 @pytest.mark.asyncio

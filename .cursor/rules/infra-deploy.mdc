@@ -36,7 +36,7 @@ Script: `infra/deploy-production.sh`
 
 ## `DEPLOYMENT_MODE` — critical for self-hosters
 
-Defaults to `managed`. Self-hosters **must** set `DEPLOYMENT_MODE=self_hosted` in their `.env`, or plan entitlements resolve to `managed` plan caps instead of the self-hosted plan (1 API key cap).
+Defaults to `self_hosted` (code and `infra/docker-compose.yml`): one agent with one API key, always enforced. Only ZizkaDB Cloud sets `DEPLOYMENT_MODE=managed`.
 
 ## Key environment variables
 

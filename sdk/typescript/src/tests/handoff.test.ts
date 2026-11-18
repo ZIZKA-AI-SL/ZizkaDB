@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   ZizkaDB,
+  CloudOnlyError,
+  NotFoundError,
   HANDOFF_HEADER,
   decodeHandoffToken,
   encodeHandoffToken,
@@ -79,19 +81,28 @@ describe('db.handoff / db.continueFrom', () => {
     expect(decodeHandoffToken(h.token).receivedEventId).toBe(h.receivedEventId)
   })
 
-  it('falls back to the sender’s a2a.message event without the endpoint', async () => {
+  it('needs ZizkaDB Cloud: a self-hosted server runs one agent', async () => {
     const calls = server({ a2a: false })
     const db = new ZizkaDB({ host: 'http://localhost:8000' })
-    const h = await db.handoff({ agent: 'planner', to: 'billing', message: 'hi', sessionId: 'case-1' })
-    const last = calls[calls.length - 1]
-    expect(last.path).toBe('/v1/events')
-    expect(last.body.event).toBe('a2a.message')
-    expect(last.body.data.to_agent).toBe('billing')
-    expect(h.recordedBy).toBe('event')
+    await expect(db.handoff({ agent: 'planner', to: 'billing', message: 'hi', sessionId: 'case-1' }))
+      .rejects.toBeInstanceOf(CloudOnlyError)
+    // Nothing was written for a second agent.
+    expect(calls.filter((c) => c.path === '/v1/events')).toHaveLength(0)
   })
 
-  it('the receiver records a2a.received and links its events to it', async () => {
-    const calls = server({ a2a: false })
+  it('a Cloud "not found" stays a NotFoundError with its message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      status: 404, statusText: '404', json: async () => ({ detail: "Recipient agent 'billing' not found" }),
+    })))
+    const db = new ZizkaDB({ host: 'http://localhost:8000' })
+    const err = await db.handoff({ agent: 'planner', to: 'billing', message: 'hi' }).catch((e) => e)
+    expect(err).toBeInstanceOf(NotFoundError)
+    expect(err).not.toBeInstanceOf(CloudOnlyError)
+    expect(err.message).toBe("Recipient agent 'billing' not found")
+  })
+
+  it('the receiver records a2a.received when an older Cloud server did not', async () => {
+    const calls = server({ receipt: false })
     const db = new ZizkaDB({ host: 'http://localhost:8000' })
     const h = await db.handoff({ agent: 'planner', to: 'billing', message: 'hi', sessionId: 'case-1' })
     const ctx = await db.continueFrom(h.token, { agent: 'billing' })
@@ -100,7 +111,6 @@ describe('db.handoff / db.continueFrom', () => {
     expect(received.event).toBe('a2a.received')
     expect(received.agent).toBe('billing')
     expect(received.parent_id).toBe(h.eventId)
-    expect(received.session_id).toBe('case-1')
     expect(calls[calls.length - 1].body.parent_id).toBe(ctx.receivedEventId)
   })
 

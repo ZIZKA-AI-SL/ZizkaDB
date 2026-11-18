@@ -2,7 +2,7 @@ from .client import ZizkaDB
 from .context import LineageContext
 from .handoff import HANDOFF_HEADER, Handoff, HandoffContext, HandoffToken, token_from_headers
 from .instrumentation import Instrumentation, instrument
-from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
+from .exceptions import ZizkaDBError, AuthError, CloudOnlyError, NotFoundError, RateLimitError, AgentScopeError
 
 try:
     from importlib.metadata import version as _pkg_version
@@ -24,6 +24,7 @@ __all__ = [
     "ZizkaDBError",
     "AuthError",
     "NotFoundError",
+    "CloudOnlyError",
     "RateLimitError",
     "AgentScopeError",
     "__version__",
