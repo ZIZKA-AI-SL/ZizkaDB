@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Event timeline: clicking a grouped dot opens its events.** When the window holds more than 1,500 events, dots stand for groups; a click used to zoom into that time slot, which did nothing once the window was at its 5-minute minimum, so a dense run (thousands of events a minute) could never be opened. A grouped dot now lists its events in the side panel (50 at a time, up to 1,000, with "Zoom in to this time" while the window can still narrow), and each opens its full details with a link back to the list.
 - **why() for a key scoped to one agent no longer reports a cut-off chain as complete.** When the cause was recorded by another agent, the response now says `scoped_agent_limited: true`, `chain_complete: false`, and `continues_in: {agent, event_id}` (no content), for `GET /v1/events/{id}/why` and `GET /v1/sessions/{session}/why/{id}`. Dashboard sessions still see the whole chain.
 
 ### Documentation
