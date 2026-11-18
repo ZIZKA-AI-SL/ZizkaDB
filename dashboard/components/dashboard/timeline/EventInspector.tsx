@@ -59,8 +59,9 @@ export function EventInspector({ agentId, selected, onZoom, onBack, backLabel }:
   if (!selected) {
     return (
       <p className="text-sm" style={{ color: colors.textMuted }}>
-        Click a dot to see where the event happened, why, and everything recorded about it. Red dots are errors.
-        When the graph is zoomed out a dot can stand for many events; clicking it lists them here.
+        Each spike is one time slot: its height is how many events happened, its colours are the event types,
+        and red on top is errors. Hover a spike for its breakdown; click a colour (or the red part) to list those
+        events here, then click one to see where it happened and why.
       </p>
     )
   }

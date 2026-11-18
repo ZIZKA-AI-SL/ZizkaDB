@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Event timeline shows spikes.** The main graph is now vertical spikes: one bar per time slot, as tall as the number of events, coloured by event type, with errors as a red cap and count on top, so you see at a glance what spiked and where errors happened. Hover a spike for its breakdown; click a colour to list those events, or the red part to list the errors, then open any of them. The per-type lane view stays one click away (**By type**). The timeline API adds `errors_by_type` to each bucket.
+
 ### Fixed
 - **Event timeline: clicking a grouped dot opens its events.** When the window holds more than 1,500 events, dots stand for groups; a click used to zoom into that time slot, which did nothing once the window was at its 5-minute minimum, so a dense run (thousands of events a minute) could never be opened. A grouped dot now lists its events in the side panel (50 at a time, up to 1,000, with "Zoom in to this time" while the window can still narrow), and each opens its full details with a link back to the list.
 - **Open source stays one agent with one API key, by default and in every SDK.** `DEPLOYMENT_MODE` now defaults to `self_hosted` in the code and in `infra/docker-compose.yml` (it defaulted to `managed`, where plan caps were off, so a stack started without `infra/.env` allowed any number of agents and keys); only ZizkaDB Cloud sets `managed`. The open-source SDKs (Python, TypeScript) and MCP server have no multi-agent features: the unreleased agent-to-agent handoff helpers are removed. Multiple agents and handoffs between them are ZizkaDB Cloud features, used through the Cloud API and hosted MCP server. **Upgrading a self-hosted install that never set `DEPLOYMENT_MODE`:** it now runs as self-hosted, so set `SELFHOST_ADMIN_TOKEN` in `infra/.env` to sign in to the dashboard (the self-hosted dashboard already expected this).

@@ -5,7 +5,8 @@ timeline graph draws.
 One query pass returns:
 
 - ``buckets``: event counts per time bucket, per event type, with an error
-  count. The bucket size follows the window (1 minute for an hour, 30 minutes
+  count (in total and per type, ``errors_by_type``, so the graph can split
+  each spike into ordinary events and errors). The bucket size follows the window (1 minute for an hour, 30 minutes
   for a day, a few hours for a week), so the graph stays readable at any zoom.
 - ``events``: every event in the window, as light rows (no payload), when there
   are at most ``POINT_LIMIT`` of them; ``None`` otherwise (the graph then
@@ -92,11 +93,17 @@ async def build_timeline(
     types: dict[str, dict] = {}
     total = errors_total = 0
     for r in bucket_rows:
-        b = buckets.setdefault(r["bucket"], {"start": _iso(r["bucket"]), "total": 0, "errors": 0, "by_type": {}})
+        b = buckets.setdefault(
+            r["bucket"],
+            {"start": _iso(r["bucket"]), "total": 0, "errors": 0, "by_type": {}, "errors_by_type": {}},
+        )
         n, e = int(r["n"]), int(r["errors"])
         b["total"] += n
         b["errors"] += e
         b["by_type"][r["event_type"]] = n
+        if e:
+            # Lets the graph split each spike into ordinary events and errors.
+            b["errors_by_type"][r["event_type"]] = e
         t = types.setdefault(r["event_type"], {"event": r["event_type"], "count": 0, "errors": 0})
         t["count"] += n
         t["errors"] += e
