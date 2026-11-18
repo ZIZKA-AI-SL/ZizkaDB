@@ -123,13 +123,10 @@ services:
       # local machine (enables zizkadb_dev_local and login-free dev-token).
       ENV: ${ENV:?Set ENV in infra/.env - production for a server, development for local use only}
       DEV_API_KEY: ${DEV_API_KEY:-}
-      # IMPORTANT FOR SELF-HOSTERS: set DEPLOYMENT_MODE=self_hosted in your
-      # infra/.env (see .env.example). Without it, plan-based API key limits
-      # are evaluated as if you are a managed-cloud tenant (default: "managed").
-      # This file is also used by infra/deploy-production.sh for the managed
-      # cloud, so the in-compose default must stay "managed" — self-hosters
-      # must override via their .env file (see wiki/Self-Hosting.md).
-      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-managed}
+      # Open-source ZizkaDB is self-hosted: one agent with one API key, always
+      # enforced (multiple agents are a ZizkaDB Cloud feature). The default is
+      # self_hosted so the cap holds even without an infra/.env.
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-self_hosted}
       # Self-hosted dashboard sign-in when ENV=production (empty = login disabled).
       SELFHOST_ADMIN_TOKEN: ${SELFHOST_ADMIN_TOKEN:-}
       # Self-hosted semantic search / context_for (needs OPENAI_API_KEY and the
@@ -191,7 +188,7 @@ services:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ENV: ${ENV:?Set ENV in infra/.env - production for a server, development for local use only}
-      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-managed}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-self_hosted}
       EMBEDDINGS_ENABLED: ${EMBEDDINGS_ENABLED:-false}
       # Decrypts per-tenant BYOK embedding keys, which the API encrypts with it.
       JWT_SECRET: ${JWT_SECRET:-}

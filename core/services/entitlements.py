@@ -128,7 +128,9 @@ def is_self_hosted_deployment() -> bool:
     resolve their plan to ``"self_hosted"`` without trusting ``users.plan``
     (which self-host installs never populate).
     """
-    return os.getenv("DEPLOYMENT_MODE", "managed").strip().lower() == SELF_HOSTED_PLAN
+    # Open source defaults to self-hosted (one agent, one API key); only an
+    # explicit DEPLOYMENT_MODE=managed (ZizkaDB Cloud) turns it off.
+    return os.getenv("DEPLOYMENT_MODE", SELF_HOSTED_PLAN).strip().lower() == SELF_HOSTED_PLAN
 
 
 def embeddings_enabled() -> bool:

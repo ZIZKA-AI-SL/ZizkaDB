@@ -45,28 +45,10 @@ import type {
 import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
 import { LineageContext, resolveLogLineage, recordLogResult, getLineageState } from './context'
 import { readEnv } from './env'
-import {
-  HANDOFF_HEADER,
-  HANDOFF_RECEIVED_EVENT,
-  HANDOFF_SENT_EVENT,
-  decodeHandoffToken,
-  encodeHandoffToken,
-  type Handoff,
-  type HandoffToken,
-} from './handoff'
-import type { HandoffOptions } from './types'
 import packageJson from '../package.json'
 
 export * from './types'
 export { LineageContext } from './context'
-export {
-  HANDOFF_HEADER,
-  HANDOFF_TOKEN_PREFIX,
-  decodeHandoffToken,
-  encodeHandoffToken,
-  tokenFromHeaders,
-} from './handoff'
-export type { Handoff, HandoffToken } from './handoff'
 export { instrument, zizkadbMiddleware } from './instrument'
 export type { Instrumentation, InstrumentOptions, InstrumentTarget, MiddlewareOptions } from './instrument'
 export { capture, CapturedRun } from './testing'
@@ -354,99 +336,6 @@ export class ZizkaDB {
   private stamp(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
     if (!this.agentVersion || (metadata && 'agent_version' in metadata)) return metadata ?? null
     return { ...(metadata ?? {}), agent_version: this.agentVersion }
-  }
-
-  /**
-   * Record a message from `agent` to another agent and get a token to send
-   * with it (`headers` carries it as X-ZizkaDB-Handoff). The receiver calls
-   * `continueFrom(token, { agent })` and its events link back to this message,
-   * so why() crosses agents, whatever framework, process or LLM each runs on.
-   *
-   * On ZizkaDB Cloud the message goes through /v1/a2a/messages, which also
-   * records the receipt in the recipient's chain. Elsewhere (self-hosted, or a
-   * key not scoped to one agent) it is logged as an `a2a.message` event of the
-   * sender. `recordedBy` says which.
-   */
-  async handoff(options: HandoffOptions): Promise<Handoff> {
-    const explicit = options.parentId != null
-    const { parentId, sessionId } = resolveLogLineage(
-      options.agent, HANDOFF_SENT_EVENT, options.parentId ?? null, options.sessionId ?? null, explicit,
-    )
-    let raw: Record<string, unknown>
-    let recordedBy: Handoff['recordedBy'] = 'a2a'
-    try {
-      raw = await this.post('/v1/a2a/messages', {
-        recipient_agent: options.to,
-        message: options.message,
-        session_id: sessionId,
-        parent_id: parentId,
-        metadata: this.stamp(options.metadata),
-        ...(options.correlationId != null ? { correlation_id: options.correlationId } : {}),
-        ...(options.data ? { data: options.data } : {}),
-      }) as Record<string, unknown>
-      recordLogResult(options.agent, String(raw.event_id))
-    } catch (err) {
-      if (!(err instanceof NotFoundError) && !(err instanceof AgentScopeError)) throw err
-      // No agent-to-agent endpoint here (self-hosted), or it needs an
-      // agent-scoped key: record the message as the sender's event.
-      const result = await this.log({
-        agent: options.agent,
-        event: HANDOFF_SENT_EVENT,
-        data: {
-          to_agent: options.to,
-          message: options.message,
-          ...(options.data ?? {}),
-          ...(options.correlationId != null ? { correlation_id: options.correlationId } : {}),
-        },
-        ...(parentId ? { parentId } : {}),
-        ...(sessionId ? { sessionId } : {}),
-        ...(options.metadata ? { metadata: options.metadata } : {}),
-      })
-      raw = { event_id: result.eventId, session_id: sessionId }
-      recordedBy = 'event'
-    }
-    const tok: HandoffToken = {
-      eventId: String(raw.event_id),
-      sessionId: (raw.session_id as string | null | undefined) ?? sessionId ?? null,
-      fromAgent: options.agent,
-      toAgent: options.to,
-      messageId: (raw.message_id as string | undefined) ?? null,
-      receivedEventId: (raw.received_event_id as string | undefined) ?? null,
-    }
-    const token = encodeHandoffToken(tok)
-    return { ...tok, token, recordedBy, headers: { [HANDOFF_HEADER]: token } }
-  }
-
-  /**
-   * Continue another agent's handoff. Records `a2a.received` in this agent's
-   * chain (unless the server already did) and returns a context whose
-   * `run(fn)` links the events logged inside to the sender's message.
-   *
-   *   const ctx = await db.continueFrom(tokenFromHeaders(req.headers)!, { agent: 'billing' })
-   *   await ctx.run(async () => { await db.log({ agent: 'billing', event: 'tool_call', data: {} }) })
-   */
-  async continueFrom(
-    token: string,
-    options: { agent: string; sessionId?: string },
-  ): Promise<LineageContext & { receivedEventId: string; handoff: HandoffToken }> {
-    const h = decodeHandoffToken(token)
-    const sessionId = options.sessionId ?? h.sessionId ?? undefined
-    let receivedEventId: string
-    if (h.receivedEventId && h.toAgent === options.agent) {
-      receivedEventId = h.receivedEventId
-    } else {
-      const res = await this.log({
-        agent: options.agent,
-        event: HANDOFF_RECEIVED_EVENT,
-        data: { from_agent: h.fromAgent, message_event_id: h.eventId, message_id: h.messageId ?? null },
-        parentId: h.eventId,
-        ...(sessionId ? { sessionId } : {}),
-      })
-      receivedEventId = res.eventId
-    }
-    const ctx = new LineageContext(this, options.agent, sessionId)
-    ctx.startFrom(receivedEventId)
-    return Object.assign(ctx, { receivedEventId, handoff: h })
   }
 
   async log(options: LogOptions): Promise<LogResult> {
