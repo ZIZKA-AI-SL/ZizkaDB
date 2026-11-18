@@ -19,7 +19,7 @@ export const MANAGED_PLANS: readonly ManagedPlanMeta[] = [
     price: '€29',
     priceSub: '/ month',
     highlight: true,
-    features: ['50k events / month', '2 active API keys', 'Email support'],
+    features: ['500,000 events / month', '3 agents, one API key each', 'Email support'],
   },
   {
     id: 'team',
@@ -27,7 +27,7 @@ export const MANAGED_PLANS: readonly ManagedPlanMeta[] = [
     price: '€69',
     priceSub: '/ month',
     highlight: false,
-    features: ['100k events / month', '5 active API keys', 'Priority support'],
+    features: ['1,500,000 events / month', '10 agents, one API key each', 'Priority support'],
   },
 ] as const
 

@@ -39,8 +39,9 @@ SELF_HOSTED_PLAN = "self_hosted"
 # The only plans with entitlement caps. Extend this dict to add plans.
 PLAN_ENTITLEMENTS: dict[str, PlanEntitlements] = {
     SELF_HOSTED_PLAN: PlanEntitlements(max_api_keys=1, max_agents=1),
-    "pro": PlanEntitlements(max_api_keys=2, max_agents=2),
-    "team": PlanEntitlements(max_api_keys=5, max_agents=5),
+    # ZizkaDB Cloud plans: one API key per agent, so as many agents as keys.
+    "pro": PlanEntitlements(max_api_keys=3, max_agents=3),
+    "team": PlanEntitlements(max_api_keys=10, max_agents=10),
 }
 
 
@@ -127,7 +128,9 @@ def is_self_hosted_deployment() -> bool:
     resolve their plan to ``"self_hosted"`` without trusting ``users.plan``
     (which self-host installs never populate).
     """
-    return os.getenv("DEPLOYMENT_MODE", "managed").strip().lower() == SELF_HOSTED_PLAN
+    # Open source defaults to self-hosted (one agent, one API key); only an
+    # explicit DEPLOYMENT_MODE=managed (ZizkaDB Cloud) turns it off.
+    return os.getenv("DEPLOYMENT_MODE", SELF_HOSTED_PLAN).strip().lower() == SELF_HOSTED_PLAN
 
 
 def embeddings_enabled() -> bool:

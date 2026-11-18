@@ -27,14 +27,6 @@ def record_event(event_id: str) -> None:
         _state["last_event_id"] = event_id
 
 
-def start_from(event_id: str, session_id: str | None) -> None:
-    """Continue a chain that started elsewhere (a handoff from another agent)."""
-    with _lock:
-        _state["last_event_id"] = event_id
-        if session_id:
-            _state["session_id"] = session_id
-
-
 def reset_chain() -> None:
     with _lock:
         _state["last_event_id"] = None
