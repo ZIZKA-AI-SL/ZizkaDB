@@ -5,8 +5,8 @@ describe('MANAGED_PLANS', () => {
   it('defines pro and team with matching API key caps', () => {
     const pro = MANAGED_PLANS.find((p) => p.id === 'pro')
     const team = MANAGED_PLANS.find((p) => p.id === 'team')
-    expect(pro?.features).toContain('2 active API keys')
-    expect(team?.features).toContain('5 active API keys')
+    expect(pro?.features).toContain('3 agents, one API key each')
+    expect(team?.features).toContain('10 agents, one API key each')
   })
 
   it('managedPlanById returns pro for unknown ids', () => {

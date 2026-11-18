@@ -2,7 +2,7 @@
 
 > Single source of truth for the Dashboard module. Reverse-engineered directly from the codebase.
 >
-> **Last verified:** 2026-09-10 · API key limits: Self-Hosted 1 / Pro 2 / Team 5 (enforcement via `API_KEY_LIMITS_ENFORCED`, default OFF; self-hosted resolved via `DEPLOYMENT_MODE`, not `users.plan`). Self-host embeddings off unless `EMBEDDINGS_ENABLED=true`.
+> **Last verified:** 2026-09-10 · API key limits: Self-Hosted 1 / Pro 3 / Team 10, agents capped at the same numbers (enforcement via `API_KEY_LIMITS_ENFORCED`, default OFF; self-hosted resolved via `DEPLOYMENT_MODE`, not `users.plan`). Self-host embeddings off unless `EMBEDDINGS_ENABLED=true`.
 >
 > **OSS scope:** This repo ships the tenant dashboard and public marketing/community surfaces. The managed-cloud **operator admin console** (`/admin`, `/v1/admin/*`, `core/api/admin.py`) is **not in this tree** — there is no `app/admin/` and no admin API routes here. Sections §16 (admin paragraph), §18.6, and §20.5 below are **managed-cloud reference only**; do not implement them in OSS.
 >
@@ -315,7 +315,7 @@ There is a **separate** lead-capture path (`lib/demo.ts` → `submitDemoRequest`
 
 **Feature gating:** Self-host (`NEXT_PUBLIC_DEPLOYMENT_MODE=self_hosted`) serves only `/login` + `/dashboard/*`, with sign-in decided at runtime by `GET /v1/auth/selfhost`: `one_click` (API `ENV=development`), `admin_token` (`ENV=production` + `SELFHOST_ADMIN_TOKEN`), or `unavailable` (production without a token — fails closed). Both sign in as the fixed owner tenant (same IDs as dev-token). Billing/plan UI and "upgrade" copy are hidden for OSS. Billing is not enforced anywhere.
 
-**API key plan limits:** the number of **active** (`revoked = FALSE`) API keys per tenant is capped by plan — Self-Hosted 1, Pro 2, Team 5; every other case (no/unknown plan) is **unlimited** when enforcement is off.
+**API key plan limits:** the number of **active** (`revoked = FALSE`) API keys per tenant is capped by plan — Self-Hosted 1, Pro 3, Team 10 (agents capped at the same numbers: one key per agent); every other case (no/unknown plan) is **unlimited** when enforcement is off.
 
 **One API key = one agent:** `POST /v1/auth/api-keys` creates an **unassigned** key (`agent_id` NULL). The first SDK/API request that includes an agent id atomically binds the key (`claim_unassigned_api_key`). Later requests from a different agent get 403. Per-agent keys (`POST /v1/agents/{id}/api-keys`) are bound at creation. JWT sessions and the local dev key are not bound. Enforcement is `await assert_agent_allowed` in `core/api/deps.py`. **Unbound keys never get tenant-wide access** (`is_unbound_api_key`): `GET /v1/agents` returns `[]`, `GET /v1/sessions` and `GET /v1/sessions/{id}/events` require `?agent=` (400 otherwise), `DELETE /v1/memory/forget` is 400. Reads never bind a key to a row's agent. Dev keys are accepted only when `ENV=development`; an unset `ENV` is production (`core/services/runtime_env.py`).
 - **Single source of truth:** `core/services/entitlements.py` (`PLAN_ENTITLEMENTS`, `entitlements_for_plan(plan)`/`api_key_limit_for_plan(plan)`). Generalized beyond just API keys — adding a new capped resource (e.g. max agents) is a one-field change to `PlanEntitlements` plus a value per plan; adding a plan is a one-line dict entry.
@@ -697,7 +697,7 @@ The logic that drives every dashboard gate and funnel branch. Routers are thin; 
 
 **No payment provider.** Billing endpoints exist for plan persistence and informational status only.
 
-**Plans** (`PLAN_CATALOG`, `billing.py`): `pro` = €29/mo (50k events/mo target†, 2 active API keys), `team` = €69/mo (100k events/mo target†, 5 active API keys). Trial length = `TRIAL_DAYS` env (default **30**). †Event caps are marketing copy — not enforced in API yet.
+**Plans** (`PLAN_CATALOG`, `billing.py`): `pro` = €29/mo (500,000 events/mo, 3 agents with one API key each), `team` = €69/mo (1,500,000 events/mo, 10 agents). Trial length = `TRIAL_DAYS` env (default **30**). Monthly event caps are enforced by ZizkaDB Cloud; this repository has no monthly counter.
 
 **Access:** `billing_status_payload` always returns `has_access: true`, `enforced: false`, `requires_plan_selection: false`, `requires_checkout: false`. Used by `TenantPlanBanner` and verify-otp response for compatibility.
 
@@ -973,7 +973,7 @@ These live in the same Next app but are separate from the tenant `/dashboard/*` 
 - **Client Component**, static marketing. Sections: `SiteNav` → Hero (+ `CalendlyBookModal`, `IntegrationStrip`) → `ThreeWaysConnectSection` → `ConversationCompare` → engineering cards → `TrustBar` → **Pricing grid** (Self-Hosted / Pro / Team via `PricingCard` + `LANDING_PRICING_PLANS`) → `CompetitorCompare` → final CTA → footer.
 - **State:** `copied` (which copy button, 2s reset) and `demoOpen` (Calendly modal). **No `useEffect`, no API calls.**
 - **CTAs / nav:** `/signup` (hero, cards, final, footer), `/signup?plan=pro`, `/signup?plan=team`, `/docs`, `/trust`, `/login`, `#pricing`, GitHub. "Book demo" opens `CalendlyBookModal` (`demoOpen`); "Copy MCP config" copies `MCP_CONFIG` JSON.
-- **Rules:** `plan.highlight` → "POPULAR" badge; `ctaPrimary` → filled orange CTA (Pro). **Pro** €29/mo (50k events†, 2 active API keys); **Team** €69/mo (100k events†, 5 active API keys); both include 30-day free trial. †Event caps not enforced in API. Pricing grid: 3-col desktop (Self-Hosted + managed), 2-col tablet (≤1024px), 1-col mobile (≤768px); cards use flex column so CTAs align at bottom.
+- **Rules:** `plan.highlight` → "POPULAR" badge; `ctaPrimary` → filled orange CTA (Pro). **Pro** €29/mo (500,000 events, 3 agents); **Team** €69/mo (1,500,000 events, 10 agents); both include 30-day free trial. Pricing grid: 3-col desktop (Self-Hosted + managed), 2-col tablet (≤1024px), 1-col mobile (≤768px); cards use flex column so CTAs align at bottom.
 
 ### 20.2 Community — `app/community/page.tsx` + `app/community/[id]/page.tsx`
 
@@ -1074,7 +1074,7 @@ erDiagram
 | **API key** | Credential used by SDKs/MCP to write events (`zizkadb_live_*`, stored hashed). Unassigned until first agent use, then **bound to one agent**. |
 | **JWT (session)** | Dashboard user's access token from OTP login; distinct from API keys. Resolved by `get_tenant`. |
 | **OTP** | One-time 6-digit code for passwordless email login/signup (`auth_otps`, 15-min expiry). |
-| **API key limit** | Self-Hosted = 1, Pro = 2, Team = 5 active keys (unassigned + agent-scoped). Enforced when `API_KEY_LIMITS_ENFORCED=true`. |
+| **API key limit** | Self-Hosted = 1, Pro = 3, Team = 10 active keys (unassigned + agent-scoped); agents capped at the same numbers. Enforced when `API_KEY_LIMITS_ENFORCED=true`. |
 | **Entitlements** | `core/services/entitlements.py` — per-plan capability config (`PlanEntitlements`); currently `max_api_keys`, designed to grow (max agents, storage, etc.) without touching call sites. |
 | **Deployment mode** | `DEPLOYMENT_MODE=self_hosted` env var — marks a backend instance as self-hosted so entitlement checks resolve plan `"self_hosted"` instead of trusting `users.plan`. |
 | **Retention trial** | One-time extra free month offered in the delete-account modal (`retention_trial_used`). |

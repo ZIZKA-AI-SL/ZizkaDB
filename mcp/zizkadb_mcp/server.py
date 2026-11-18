@@ -29,13 +29,11 @@ from urllib.parse import quote, urlencode
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from zizkadb_mcp.handoff import decode_token, encode_token
 from zizkadb_mcp.session_state import (
     get_last_event_id,
     get_session_id,
     record_event,
     reset_chain,
-    start_from,
 )
 
 mcp = FastMCP("ZizkaDB")
@@ -234,82 +232,6 @@ async def log_event(
     if isinstance(result, dict) and result.get("event_id"):
         record_event(result["event_id"])
     return result
-
-
-@mcp.tool()
-async def send_handoff(agent: str, to_agent: str, message: str) -> dict:
-    """
-    Record a message from your agent to another agent and get a handoff token.
-
-    Pass the returned ``handoff_token`` to the other agent along with the
-    message (for example in the X-ZizkaDB-Handoff HTTP header or as a tool
-    argument). When the other agent continues from it, its steps link back to
-    this message, so why() shows the chain across both agents, even if they
-    run on different frameworks or LLMs.
-
-    Args:
-        agent:    Your agent's id (the sender)
-        to_agent: The receiving agent's id
-        message:  What you are asking the other agent to do
-
-    Returns:
-        handoff_token, event_id, recorded_by ("a2a": both sides recorded by
-        ZizkaDB Cloud; "event": recorded as your agent's a2a.message event)
-    """
-    session_id = get_session_id()
-    parent = get_last_event_id()
-    body: dict = {"recipient_agent": to_agent, "message": message, "session_id": session_id}
-    if parent:
-        body["parent_id"] = parent
-    result = await _api("POST", "/a2a/messages", body)
-    recorded_by = "a2a"
-    if isinstance(result, dict) and result.get("status") in (403, 404) and "event_id" not in result:
-        # No agent-to-agent endpoint (self-hosted) or a key not scoped to one
-        # agent: record the message as the sender's event.
-        ev: dict = {"agent": agent, "event": "a2a.message", "session_id": session_id,
-                    "data": {"to_agent": to_agent, "message": message}}
-        if parent:
-            ev["parent_id"] = parent
-        result = await _api("POST", "/events", ev)
-        recorded_by = "event"
-    if not isinstance(result, dict) or not result.get("event_id"):
-        return result
-    record_event(result["event_id"])
-    token = encode_token(
-        result["event_id"], result.get("session_id") or session_id, agent, to_agent,
-        result.get("message_id"), result.get("received_event_id"),
-    )
-    return {"handoff_token": token, "event_id": result["event_id"], "recorded_by": recorded_by,
-            "header": {"X-ZizkaDB-Handoff": token}}
-
-
-@mcp.tool()
-async def continue_handoff(handoff_token: str, agent: str) -> dict:
-    """
-    Continue work another agent handed to you. Records that your agent
-    received the message (unless ZizkaDB already did) and makes your next
-    log_event calls follow from it, so why() walks back into the other agent.
-
-    Args:
-        handoff_token: The token the other agent sent with its message (zdbh1.…)
-        agent:         Your agent's id (the receiver)
-    """
-    try:
-        h = decode_token(handoff_token)
-    except ValueError as exc:
-        return {"error": str(exc), "status": 400}
-    received = h.get("r") if h.get("t") == agent else None
-    if not received:
-        ev: dict = {"agent": agent, "event": "a2a.received", "parent_id": h["e"],
-                    "data": {"from_agent": h["f"], "message_event_id": h["e"], "message_id": h.get("m")}}
-        if h.get("s"):
-            ev["session_id"] = h["s"]
-        result = await _api("POST", "/events", ev)
-        if not isinstance(result, dict) or not result.get("event_id"):
-            return result
-        received = result["event_id"]
-    start_from(received, h.get("s"))
-    return {"ok": True, "received_event_id": received, "from_agent": h["f"], "session_id": get_session_id()}
 
 
 @mcp.tool()
