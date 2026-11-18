@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Dashboard empty states no longer say events come only "with the SDK".** The Events tab of a new agent, the agent keys section, Settings and Agent Fleets now name every way to send events: the REST API, an SDK, MCP or a framework integration.
 - **why() for a key scoped to one agent no longer reports a cut-off chain as complete.** When the cause was recorded by another agent, the response now says `scoped_agent_limited: true`, `chain_complete: false`, and `continues_in: {agent, event_id}` (no content), for `GET /v1/events/{id}/why` and `GET /v1/sessions/{session}/why/{id}`. Dashboard sessions still see the whole chain.
 
 ### Documentation

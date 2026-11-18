@@ -38,8 +38,8 @@ function Inner() {
       ) : (
         <p className="text-xs" style={{ color: colors.textFaint }}>
           {isOss
-            ? 'No agent yet. Start logging events with the SDK to create one.'
-            : 'No agents yet. Create one on Agent Fleets, or start logging events with the SDK.'}
+            ? 'No agent yet. It is created the first time it logs an event (REST API, SDK, MCP or a framework integration).'
+            : 'No agents yet. Create one on Agent Fleets, or just log an event under a new agent name (REST API, SDK, MCP or a framework integration).'}
         </p>
       )}
     </div>

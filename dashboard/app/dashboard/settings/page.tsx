@@ -133,7 +133,8 @@ export default function SettingsPage() {
         {isOss ? (
           <>
             API keys belong to an agent. Your agent is created automatically the
-            first time it logs an event with the SDK; create its key in the
+            first time it logs an event (through the REST API, an SDK, MCP or a
+            framework integration); create its key in the
             section below.
           </>
         ) : (

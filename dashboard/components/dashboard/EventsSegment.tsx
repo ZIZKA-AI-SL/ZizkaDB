@@ -234,7 +234,7 @@ export function EventsSegment({
           ) : (
             <EmptyState
               title="No events yet"
-              description="Once this agent logs its first event with the SDK, it will appear here in real time."
+              description="Once this agent logs its first event, it will appear here in real time. Send events with its API key through the REST API, an SDK, MCP or a framework integration."
             />
           )
         ) : (
