@@ -42,35 +42,13 @@ import type {
   QueryOptions,
   SearchOptions,
 } from './types'
-import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError, CloudOnlyError } from './types'
-
-const CLOUD_ONLY_HANDOFF =
-  'Agent-to-agent handoffs are a ZizkaDB Cloud feature (https://db.zizka.ai). ' +
-  'Self-hosted ZizkaDB runs one agent with one API key, so there is no other agent to hand off to.'
+import { ZizkaDBError, AuthError, NotFoundError, AgentScopeError, RateLimitError } from './types'
 import { LineageContext, resolveLogLineage, recordLogResult, getLineageState } from './context'
 import { readEnv } from './env'
-import {
-  HANDOFF_HEADER,
-  HANDOFF_RECEIVED_EVENT,
-  HANDOFF_SENT_EVENT,
-  decodeHandoffToken,
-  encodeHandoffToken,
-  type Handoff,
-  type HandoffToken,
-} from './handoff'
-import type { HandoffOptions } from './types'
 import packageJson from '../package.json'
 
 export * from './types'
 export { LineageContext } from './context'
-export {
-  HANDOFF_HEADER,
-  HANDOFF_TOKEN_PREFIX,
-  decodeHandoffToken,
-  encodeHandoffToken,
-  tokenFromHeaders,
-} from './handoff'
-export type { Handoff, HandoffToken } from './handoff'
 export { instrument, zizkadbMiddleware } from './instrument'
 export type { Instrumentation, InstrumentOptions, InstrumentTarget, MiddlewareOptions } from './instrument'
 export { capture, CapturedRun } from './testing'
@@ -358,86 +336,6 @@ export class ZizkaDB {
   private stamp(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
     if (!this.agentVersion || (metadata && 'agent_version' in metadata)) return metadata ?? null
     return { ...(metadata ?? {}), agent_version: this.agentVersion }
-  }
-
-  /**
-   * Record a message from `agent` to another agent and get a token to send
-   * with it (`headers` carries it as X-ZizkaDB-Handoff). The receiver calls
-   * `continueFrom(token, { agent })` and its events link back to this message,
-   * so why() crosses agents, whatever framework, process or LLM each runs on.
-   *
-   * **ZizkaDB Cloud only.** The message goes through /v1/a2a/messages, which
-   * records it in the sender's chain and the receipt in the recipient's. Use
-   * the sending agent's own (agent-scoped) API key. Self-hosted ZizkaDB runs
-   * one agent with one API key, so this throws `CloudOnlyError` there.
-   */
-  async handoff(options: HandoffOptions): Promise<Handoff> {
-    const explicit = options.parentId != null
-    const { parentId, sessionId } = resolveLogLineage(
-      options.agent, HANDOFF_SENT_EVENT, options.parentId ?? null, options.sessionId ?? null, explicit,
-    )
-    let raw: Record<string, unknown>
-    const recordedBy: Handoff['recordedBy'] = 'a2a'
-    try {
-      raw = await this.post('/v1/a2a/messages', {
-        recipient_agent: options.to,
-        message: options.message,
-        session_id: sessionId,
-        parent_id: parentId,
-        metadata: this.stamp(options.metadata),
-        ...(options.correlationId != null ? { correlation_id: options.correlationId } : {}),
-        ...(options.data ? { data: options.data } : {}),
-      }) as Record<string, unknown>
-      recordLogResult(options.agent, String(raw.event_id))
-    } catch (err) {
-      if (!(err instanceof NotFoundError)) throw err
-      // The endpoint exists (ZizkaDB Cloud): e.g. no such recipient.
-      if (err.detail && err.detail !== 'Not Found') throw new NotFoundError(err.detail, err.detail)
-      // No agent-to-agent endpoint: a self-hosted server, which runs one agent.
-      throw new CloudOnlyError(CLOUD_ONLY_HANDOFF)
-    }
-    const tok: HandoffToken = {
-      eventId: String(raw.event_id),
-      sessionId: (raw.session_id as string | null | undefined) ?? sessionId ?? null,
-      fromAgent: options.agent,
-      toAgent: options.to,
-      messageId: (raw.message_id as string | undefined) ?? null,
-      receivedEventId: (raw.received_event_id as string | undefined) ?? null,
-    }
-    const token = encodeHandoffToken(tok)
-    return { ...tok, token, recordedBy, headers: { [HANDOFF_HEADER]: token } }
-  }
-
-  /**
-   * Continue another agent's handoff. Records `a2a.received` in this agent's
-   * chain (unless the server already did) and returns a context whose
-   * `run(fn)` links the events logged inside to the sender's message.
-   *
-   *   const ctx = await db.continueFrom(tokenFromHeaders(req.headers)!, { agent: 'billing' })
-   *   await ctx.run(async () => { await db.log({ agent: 'billing', event: 'tool_call', data: {} }) })
-   */
-  async continueFrom(
-    token: string,
-    options: { agent: string; sessionId?: string },
-  ): Promise<LineageContext & { receivedEventId: string; handoff: HandoffToken }> {
-    const h = decodeHandoffToken(token)
-    const sessionId = options.sessionId ?? h.sessionId ?? undefined
-    let receivedEventId: string
-    if (h.receivedEventId && h.toAgent === options.agent) {
-      receivedEventId = h.receivedEventId
-    } else {
-      const res = await this.log({
-        agent: options.agent,
-        event: HANDOFF_RECEIVED_EVENT,
-        data: { from_agent: h.fromAgent, message_event_id: h.eventId, message_id: h.messageId ?? null },
-        parentId: h.eventId,
-        ...(sessionId ? { sessionId } : {}),
-      })
-      receivedEventId = res.eventId
-    }
-    const ctx = new LineageContext(this, options.agent, sessionId)
-    ctx.startFrom(receivedEventId)
-    return Object.assign(ctx, { receivedEventId, handoff: h })
   }
 
   async log(options: LogOptions): Promise<LogResult> {
@@ -1149,12 +1047,7 @@ export class ZizkaDB {
       throw new AgentScopeError(`Agent mismatch (403): ${detail}`)
     }
     if (res.status === 404) {
-      let detail: string | undefined
-      try {
-        const json = await res.json() as Record<string, unknown>
-        if (typeof json.detail === 'string') detail = json.detail
-      } catch {}
-      throw new NotFoundError('Resource not found', detail)
+      throw new NotFoundError('Resource not found')
     }
     if (res.status === 429) {
       throw new RateLimitError('Rate limit exceeded')

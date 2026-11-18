@@ -36,10 +36,9 @@ if TYPE_CHECKING:
     from .session_scope import SessionScope
 
 from .models import Event, LogResult, CausalChain, AgentState, AgentInfo
-from .exceptions import ZizkaDBError, AuthError, CloudOnlyError, NotFoundError, RateLimitError, AgentScopeError
+from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
 from .telemetry import ping_on_install as _telemetry_ping
 from .context import LineageContext, resolve_log_lineage, record_log_result
-from .handoff import SENT_EVENT, Handoff, HandoffContext, HandoffToken
 
 CLOUD_HOST = "https://db.zizka.ai"
 DEFAULT_DEV_API_KEY = "zizkadb_dev_local"
@@ -118,12 +117,6 @@ def _sanitize_url(url: str) -> tuple[str, str]:
     if port:
         host = f"{host}:{port}"
     return urlunsplit((parts.scheme, host, parts.path, "", "")), f"{host}{parts.path}"
-
-
-CLOUD_ONLY_HANDOFF = (
-    "Agent-to-agent handoffs are a ZizkaDB Cloud feature (https://db.zizka.ai). "
-    "Self-hosted ZizkaDB runs one agent with one API key, so there is no other agent to hand off to."
-)
 
 
 class ZizkaDB:
@@ -555,96 +548,6 @@ class ZizkaDB:
         """
         events = [{**e, "metadata": self._stamp(e.get("metadata"))} for e in events]
         return await self._post("/v1/events/batch", {"events": events})
-
-    # ─────────────────────────────────────────
-    # HANDOFF — agent-to-agent, across processes and frameworks
-    # ─────────────────────────────────────────
-
-    async def handoff(
-        self,
-        agent: str,
-        to: str,
-        message: str,
-        *,
-        session_id: str | None = None,
-        parent_id: str | None = None,
-        data: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
-        correlation_id: str | None = None,
-    ) -> Handoff:
-        """
-        Record a message from ``agent`` to another agent and get a token to
-        send with it. The receiver opens ``db.continue_from(token, agent=to)``
-        and its events link back to this message, so why() crosses agents,
-        whatever framework, process or LLM each side runs on.
-
-        **ZizkaDB Cloud only.** The message goes through /v1/a2a/messages,
-        which records it in the sender's chain and the receipt in the
-        recipient's. Use the sending agent's own (agent-scoped) API key.
-        Self-hosted ZizkaDB runs one agent with one API key, so this raises
-        :class:`CloudOnlyError` there.
-
-        Example::
-
-            h = await db.handoff(agent="planner", to="billing", message="Refund order 4411")
-            requests.post(billing_url, json={...}, headers=h.headers)
-            # in the billing service:
-            async with db.continue_from(token, agent="billing"):
-                await db.log(agent="billing", event="tool_call", data={...})
-        """
-        explicit = parent_id is not None
-        parent_id, session_id = resolve_log_lineage(
-            agent=agent, event=SENT_EVENT, parent_id=parent_id,
-            session_id=session_id, explicit_parent=explicit,
-        )
-        body: dict[str, Any] = {
-            "recipient_agent": to,
-            "message": message,
-            "session_id": session_id,
-            "parent_id": parent_id,
-            "metadata": self._stamp(metadata),
-        }
-        if correlation_id is not None:
-            body["correlation_id"] = correlation_id
-        if data:
-            body["data"] = data
-        try:
-            raw = await self._post("/v1/a2a/messages", body)
-        except NotFoundError as exc:
-            if exc.detail not in (None, "Not Found"):
-                # The endpoint exists (ZizkaDB Cloud): e.g. no such recipient.
-                raise NotFoundError(exc.detail, status_code=404, detail=exc.detail) from exc
-            raise CloudOnlyError(CLOUD_ONLY_HANDOFF, status_code=404) from exc
-        record_log_result(agent, LogResult.from_dict(raw))
-        recorded_by = "a2a"
-        token = HandoffToken(
-            event_id=raw["event_id"],
-            session_id=raw.get("session_id", session_id),
-            from_agent=agent,
-            to_agent=to,
-            message_id=raw.get("message_id"),
-            received_event_id=raw.get("received_event_id"),
-        )
-        return Handoff(
-            token=token.encode(),
-            event_id=token.event_id,
-            from_agent=agent,
-            to_agent=to,
-            session_id=token.session_id,
-            message_id=token.message_id,
-            received_event_id=token.received_event_id,
-            recorded_by=recorded_by,
-            raw=raw,
-        )
-
-    def continue_from(self, token: str, agent: str, session_id: str | None = None) -> HandoffContext:
-        """
-        Continue another agent's handoff: ``async with db.continue_from(token, agent="billing"):``.
-        Records ``a2a.received`` (unless the server already did) and links the
-        events logged inside to the sender's message. ``token`` may come from
-        ``zizkadb.token_from_headers(request.headers)``.
-        """
-        return HandoffContext(self, token, agent=agent, session_id=session_id)
 
     # ─────────────────────────────────────────
     # WHY — causal chain for an event
@@ -1104,12 +1007,7 @@ class ZizkaDB:
                 status_code=403,
             )
         if resp.status_code == 404:
-            try:
-                detail = resp.json().get("detail")
-            except Exception:
-                detail = None
-            raise NotFoundError("Resource not found", status_code=404,
-                                detail=detail if isinstance(detail, str) else None)
+            raise NotFoundError("Resource not found", status_code=404)
         if resp.status_code == 429:
             raise RateLimitError("Rate limit exceeded", status_code=429)
         if resp.status_code >= 400:

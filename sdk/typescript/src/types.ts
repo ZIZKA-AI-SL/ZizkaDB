@@ -10,20 +10,6 @@ export interface ZizkaDBConfig {
   agentVersion?: string
 }
 
-export interface HandoffOptions {
-  /** The sending agent. */
-  agent: string
-  /** The receiving agent. */
-  to: string
-  message: string
-  sessionId?: string
-  /** What caused the handoff (defaults to the last event in track()). */
-  parentId?: string
-  data?: Record<string, unknown>
-  metadata?: Record<string, unknown>
-  correlationId?: string
-}
-
 export interface LogOptions {
   agent: string
   event: string
@@ -177,21 +163,9 @@ export class AuthError extends ZizkaDBError {
 }
 
 export class NotFoundError extends ZizkaDBError {
-  /** The server's message, if any. */
-  public detail?: string
-
-  constructor(message: string, detail?: string) {
-    super(message, 404)
-    this.name = 'NotFoundError'
-    this.detail = detail
-  }
-}
-
-/** The feature needs ZizkaDB Cloud (multi-agent); self-hosted runs one agent. */
-export class CloudOnlyError extends ZizkaDBError {
   constructor(message: string) {
     super(message, 404)
-    this.name = 'CloudOnlyError'
+    this.name = 'NotFoundError'
   }
 }
 

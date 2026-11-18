@@ -11,15 +11,7 @@ class AuthError(ZizkaDBError):
 
 
 class NotFoundError(ZizkaDBError):
-    """Event or agent not found. ``detail`` is the server's message, if any."""
-
-    def __init__(self, message: str, status_code: int | None = None, detail: str | None = None):
-        self.detail = detail
-        super().__init__(message, status_code)
-
-
-class CloudOnlyError(ZizkaDBError):
-    """The feature needs ZizkaDB Cloud (multi-agent); self-hosted runs one agent."""
+    """Event or agent not found."""
 
 
 class RateLimitError(ZizkaDBError):
