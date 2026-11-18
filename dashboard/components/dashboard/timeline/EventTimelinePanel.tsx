@@ -16,12 +16,14 @@ import {
   typeColor,
   type PresetId,
   type TimeRange,
+  type TimelineGroup,
 } from '@/lib/timeline'
 import { useAgentTimeline } from '@/hooks/useAgentTimeline'
 import { ErrorState, Skeleton } from '@/components/ui'
 import { TimelineChart } from './TimelineChart'
 import { OverviewStrip } from './OverviewStrip'
 import { EventInspector } from './EventInspector'
+import { GroupEvents } from './GroupEvents'
 
 const OVERVIEW_DAYS = 30
 
@@ -37,6 +39,8 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
   const [history, setHistory] = useState<TimeRange[]>([])
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<TimelineEvent | null>(null)
+  // The grouped dot whose events are listed (zoomed-out graph).
+  const [group, setGroup] = useState<TimelineGroup | null>(null)
   // Typed but not yet applied dates; cleared whenever the window changes.
   const [draft, setDraft] = useState<{ from?: string; to?: string }>({})
   const fromInput = draft.from ?? toLocalInput(range.from)
@@ -213,7 +217,15 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
                 range={range}
                 lanes={lanes}
                 selected={selected}
-                onSelect={setSelected}
+                onSelect={(e) => {
+                  setGroup(null)
+                  setSelected(e)
+                }}
+                selectedGroup={group}
+                onGroup={(g) => {
+                  setSelected(null)
+                  setGroup(g)
+                }}
                 onZoom={(r) => go(r)}
               />
             )}
@@ -229,7 +241,27 @@ export function EventTimelinePanel({ agentId }: { agentId: string }) {
       </div>
 
       <aside className="p-4 min-w-0" style={{ background: colors.surfaceAlt }}>
-        <EventInspector agentId={agentId} selected={selected} onZoom={(r) => go(r)} />
+        {!selected && group ? (
+          <GroupEvents
+            key={`${group.type}|${group.from}|${group.to}`}
+            agentId={agentId}
+            group={group}
+            range={range}
+            onSelect={setSelected}
+            onZoom={(r) => {
+              setGroup(null)
+              go(r)
+            }}
+          />
+        ) : (
+          <EventInspector
+            agentId={agentId}
+            selected={selected}
+            onZoom={(r) => go(r)}
+            backLabel={selected && group ? `${group.count.toLocaleString()} × ${group.type}` : undefined}
+            onBack={selected && group ? () => setSelected(null) : undefined}
+          />
+        )}
       </aside>
     </section>
   )

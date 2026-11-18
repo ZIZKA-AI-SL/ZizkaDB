@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   getAgentTimeline,
+  getEvents,
   getSessionTimeline,
   getWhyChain,
   type AgentEvent,
@@ -10,7 +11,7 @@ import {
   type WhyChain,
 } from '@/lib/api'
 import { getToken } from '@/lib/auth'
-import type { TimeRange } from '@/lib/timeline'
+import { groupQuery, type TimeRange, type TimelineGroup } from '@/lib/timeline'
 
 export interface AgentTimelineState {
   timeline: AgentTimeline | null
@@ -106,5 +107,49 @@ export function useTimelineEventDetail(eventId: string | null, sessionId: string
     chat: current?.chat ?? null,
     loading: !!eventId && !current,
     error: current?.error ?? null,
+  }
+}
+
+export interface GroupEventsState {
+  events: AgentEvent[] | null
+  loading: boolean
+  error: string | null
+}
+
+/**
+ * The events behind a grouped dot (one type, one time slot), up to ``limit``.
+ * A response for an earlier group or limit never overwrites a newer one; the
+ * loaded events stay visible while more load.
+ */
+export function useGroupEvents(agentId: string, group: TimelineGroup | null, limit: number): GroupEventsState {
+  const key = group ? `${agentId}|${group.type}|${group.from}|${group.to}|${limit}` : null
+  const groupKey = group ? `${agentId}|${group.type}|${group.from}|${group.to}` : null
+  const [result, setResult] = useState<{ key: string; groupKey: string; events: AgentEvent[] | null; error: string | null } | null>(null)
+
+  useEffect(() => {
+    if (!key || !groupKey || !group) return
+    const token = getToken()
+    if (!token) return
+    let cancelled = false
+    getEvents(token, agentId, groupQuery(group, limit))
+      .then((events) => {
+        if (!cancelled) setResult({ key, groupKey, events, error: null })
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setResult({ key, groupKey, events: null, error: e instanceof Error ? e.message : 'Failed to load the events' })
+      })
+    return () => {
+      cancelled = true
+    }
+    // group and limit are fully described by key
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  if (!key) return { events: null, loading: false, error: null }
+  const sameGroup = result?.groupKey === groupKey
+  return {
+    events: sameGroup ? result!.events : null,
+    loading: result?.key !== key,
+    error: result?.key === key ? result.error : null,
   }
 }

@@ -8,7 +8,9 @@ import {
   activePreset,
   axisTicks,
   bucketLabel,
+  canZoomInto,
   clampRange,
+  groupQuery,
   laneOrder,
   presetRange,
   typeColor,
@@ -99,3 +101,22 @@ describe('colours and lanes', () => {
   })
 })
 
+
+describe('grouped dots', () => {
+  const group = { type: 'passage_indexed', from: Date.UTC(2026, 10, 18, 15, 53), to: Date.UTC(2026, 10, 18, 15, 54), count: 2747 }
+
+  it('asks for that type in that slot, start included and end excluded', () => {
+    expect(groupQuery(group, 50)).toEqual({
+      event_type: 'passage_indexed',
+      after: '2026-11-18T15:52:59.999Z',
+      before: '2026-11-18T15:54:00.000Z',
+      limit: '50',
+    })
+    expect(groupQuery(group, 5000).limit).toBe('1000')
+  })
+
+  it('offers zooming in only while the window can still get narrower', () => {
+    expect(canZoomInto({ from: 0, to: MIN_SPAN })).toBe(false)
+    expect(canZoomInto({ from: 0, to: HOUR })).toBe(true)
+  })
+})

@@ -161,3 +161,32 @@ export function laneOrder(types: { event: string; count: number }[]): string[] {
     b.count - a.count || a.event.localeCompare(b.event)
   return [...ordinary.sort(byCount), ...errors.sort(byCount)].map((t) => t.event)
 }
+
+/** A grouped dot: every event of one type in one time slot (zoomed-out graph). */
+export interface TimelineGroup {
+  type: string
+  from: number
+  to: number
+  count: number
+}
+
+/** The most events the group list loads (the events API's page limit). */
+export const GROUP_LIST_MAX = 1000
+
+/**
+ * Query for the events behind a grouped dot: that type, start of the slot
+ * included, end excluded (the events API's `after` / `before` are exclusive).
+ */
+export function groupQuery(group: TimelineGroup, limit: number): Record<string, string> {
+  return {
+    event_type: group.type,
+    after: new Date(group.from - 1).toISOString(),
+    before: new Date(group.to).toISOString(),
+    limit: String(Math.min(limit, GROUP_LIST_MAX)),
+  }
+}
+
+/** Whether zooming into the group's slot would show a narrower window than now. */
+export function canZoomInto(range: TimeRange): boolean {
+  return range.to - range.from > MIN_SPAN + 1000
+}

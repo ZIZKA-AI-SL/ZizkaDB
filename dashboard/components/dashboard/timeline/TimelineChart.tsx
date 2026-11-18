@@ -9,6 +9,7 @@ import {
   formatDateTime,
   typeColor,
   type TimeRange,
+  type TimelineGroup,
 } from '@/lib/timeline'
 
 const W = 900
@@ -25,6 +26,9 @@ interface Props {
   lanes: string[]
   selected: TimelineEvent | null
   onSelect: (event: TimelineEvent) => void
+  /** A grouped dot was clicked: show the events it stands for. */
+  onGroup: (group: TimelineGroup) => void
+  selectedGroup: TimelineGroup | null
   onZoom: (range: TimeRange) => void
 }
 
@@ -32,9 +36,10 @@ interface Props {
  * The main graph: an activity strip (events per bucket, red spikes for errors)
  * over one lane per event type. Every event is a dot when the window holds few
  * enough; otherwise ordinary events are grouped per bucket and errors are still
- * drawn one by one. Drag across the graph to zoom in.
+ * drawn one by one; clicking a group lists its events. Drag across the graph to
+ * zoom in.
  */
-export function TimelineChart({ timeline, range, lanes, selected, onSelect, onZoom }: Props) {
+export function TimelineChart({ timeline, range, lanes, selected, onSelect, onGroup, selectedGroup, onZoom }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<{ a: number; b: number } | null>(null)
 
@@ -219,26 +224,39 @@ export function TimelineChart({ timeline, range, lanes, selected, onSelect, onZo
           />
         )}
 
-        {/* grouped: bubbles per bucket and type (click to zoom in) */}
+        {/* grouped: bubbles per bucket and type (click to list their events) */}
         {grouped &&
           timeline.buckets.flatMap((b) =>
             Object.entries(b.by_type)
               .filter(([type]) => shown.has(type) && typeColor(type) !== colors.danger)
               .map(([type, n]) => {
                 const t = new Date(b.start).getTime()
-                const label = `${n} × ${type}, ${formatDateTime(t)}. Zoom in`
+                const label = `${n} × ${type}, ${formatDateTime(t)}. Show these events`
+                const group = { type, from: t, to: t + bucketMs, count: n }
+                const r = Math.min(10, 2 + Math.sqrt(n) * 1.3)
+                const isOpen = selectedGroup?.type === type && selectedGroup.from === t
                 return (
                   <g
                     key={`${b.start}|${type}`}
                     data-mark
                     role="button"
-                    tabIndex={-1}
+                    tabIndex={0}
                     aria-label={label}
-                    style={{ cursor: 'zoom-in' }}
-                    onClick={() => onZoom({ from: t, to: t + bucketMs })}
+                    aria-pressed={isOpen}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => onGroup(group)}
+                    onKeyDown={(k) => {
+                      if (k.key === 'Enter' || k.key === ' ') {
+                        k.preventDefault()
+                        onGroup(group)
+                      }
+                    }}
                   >
                     <title>{label}</title>
-                    <circle cx={mid(t)} cy={laneY(type)} r={Math.min(10, 2 + Math.sqrt(n) * 1.3)} fill={typeColor(type)} opacity={0.75} />
+                    {isOpen && (
+                      <circle cx={mid(t)} cy={laneY(type)} r={r + 4} fill="none" stroke={colors.textStrong} strokeWidth={2} />
+                    )}
+                    <circle cx={mid(t)} cy={laneY(type)} r={r} fill={typeColor(type)} opacity={0.75} />
                   </g>
                 )
               }),

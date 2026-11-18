@@ -43,10 +43,13 @@ interface Props {
   agentId: string
   selected: TimelineEvent | null
   onZoom: (range: TimeRange) => void
+  /** Back to the grouped dot this event was picked from. */
+  onBack?: () => void
+  backLabel?: string
 }
 
 /** Everything recorded about the clicked event: where it happened, why, and its data. */
-export function EventInspector({ agentId, selected, onZoom }: Props) {
+export function EventInspector({ agentId, selected, onZoom, onBack, backLabel }: Props) {
   const { chain, chat, loading, error } = useTimelineEventDetail(
     selected?.event_id ?? null,
     selected?.session_id ?? null,
@@ -57,6 +60,7 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
     return (
       <p className="text-sm" style={{ color: colors.textMuted }}>
         Click a dot to see where the event happened, why, and everything recorded about it. Red dots are errors.
+        When the graph is zoomed out a dot can stand for many events; clicking it lists them here.
       </p>
     )
   }
@@ -73,6 +77,11 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
 
   return (
     <div className="flex flex-col gap-4 min-w-0">
+      {onBack && (
+        <button type="button" onClick={onBack} className="self-start text-xs" style={{ color: colors.info }}>
+          ← Back to {backLabel ?? 'the list'}
+        </button>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <span
           className="font-mono text-xs px-2 py-0.5"
