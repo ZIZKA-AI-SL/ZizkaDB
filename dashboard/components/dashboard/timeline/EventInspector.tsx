@@ -43,10 +43,13 @@ interface Props {
   agentId: string
   selected: TimelineEvent | null
   onZoom: (range: TimeRange) => void
+  /** Back to the grouped dot this event was picked from. */
+  onBack?: () => void
+  backLabel?: string
 }
 
 /** Everything recorded about the clicked event: where it happened, why, and its data. */
-export function EventInspector({ agentId, selected, onZoom }: Props) {
+export function EventInspector({ agentId, selected, onZoom, onBack, backLabel }: Props) {
   const { chain, chat, loading, error } = useTimelineEventDetail(
     selected?.event_id ?? null,
     selected?.session_id ?? null,
@@ -56,7 +59,9 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
   if (!selected) {
     return (
       <p className="text-sm" style={{ color: colors.textMuted }}>
-        Click a dot to see where the event happened, why, and everything recorded about it. Red dots are errors.
+        Each spike is one time slot: its height is how many events happened, its colours are the event types,
+        and red on top is errors. Hover a spike for its breakdown; click a colour (or the red part) to list those
+        events here, then click one to see where it happened and why.
       </p>
     )
   }
@@ -73,6 +78,11 @@ export function EventInspector({ agentId, selected, onZoom }: Props) {
 
   return (
     <div className="flex flex-col gap-4 min-w-0">
+      {onBack && (
+        <button type="button" onClick={onBack} className="self-start text-xs" style={{ color: colors.info }}>
+          ← Back to {backLabel ?? 'the list'}
+        </button>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <span
           className="font-mono text-xs px-2 py-0.5"

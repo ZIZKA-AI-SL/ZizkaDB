@@ -839,6 +839,7 @@ chain = await db.why(tool.event_id)`}</Code>
                 <tr>
                   <th style={th}>Plan</th>
                   <th style={th}>Events / month</th>
+                  <th style={th}>Agents (one API key each)</th>
                   <th style={th}>Retention</th>
                 </tr>
               </thead>
@@ -847,14 +848,16 @@ chain = await db.why(tool.event_id)`}</Code>
                   [
                     "Self-hosted",
                     "Unlimited (your hardware)",
+                    "1",
                     "Operator-defined",
                   ],
-                  ["Pro (€29/mo)", "50k", "90 days"],
-                  ["Team (€69/mo)", "100k", "1 year"],
-                ].map(([plan, ev, ret]) => (
+                  ["Pro (€29/mo)", "500,000", "3", "90 days"],
+                  ["Team (€69/mo)", "1,500,000", "10", "1 year"],
+                ].map(([plan, ev, agents, ret]) => (
                   <tr key={plan}>
                     <td style={td}>{plan}</td>
                     <td style={td}>{ev}</td>
+                    <td style={td}>{agents}</td>
                     <td style={td}>{ret}</td>
                   </tr>
                 ))}

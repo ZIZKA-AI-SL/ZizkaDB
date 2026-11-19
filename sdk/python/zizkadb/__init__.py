@@ -1,6 +1,5 @@
 from .client import ZizkaDB
 from .context import LineageContext
-from .handoff import HANDOFF_HEADER, Handoff, HandoffContext, HandoffToken, token_from_headers
 from .instrumentation import Instrumentation, instrument
 from .exceptions import ZizkaDBError, AuthError, NotFoundError, RateLimitError, AgentScopeError
 
@@ -9,16 +8,11 @@ try:
 
     __version__ = _pkg_version("zizkadb-sdk")
 except Exception:
-    __version__ = "0.7.0"
+    __version__ = "0.8.0"
 
 __all__ = [
     "ZizkaDB",
     "LineageContext",
-    "Handoff",
-    "HandoffContext",
-    "HandoffToken",
-    "HANDOFF_HEADER",
-    "token_from_headers",
     "instrument",
     "Instrumentation",
     "ZizkaDBError",

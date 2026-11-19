@@ -10,20 +10,6 @@ export interface ZizkaDBConfig {
   agentVersion?: string
 }
 
-export interface HandoffOptions {
-  /** The sending agent. */
-  agent: string
-  /** The receiving agent. */
-  to: string
-  message: string
-  sessionId?: string
-  /** What caused the handoff (defaults to the last event in track()). */
-  parentId?: string
-  data?: Record<string, unknown>
-  metadata?: Record<string, unknown>
-  correlationId?: string
-}
-
 export interface LogOptions {
   agent: string
   event: string

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { AgentTimeline } from './api'
 import { colors } from './design-tokens'
 import {
   DAY,
@@ -8,9 +9,13 @@ import {
   activePreset,
   axisTicks,
   bucketLabel,
+  canZoomInto,
   clampRange,
+  groupQuery,
   laneOrder,
+  niceMax,
   presetRange,
+  spikes,
   typeColor,
 } from './timeline'
 
@@ -99,3 +104,53 @@ describe('colours and lanes', () => {
   })
 })
 
+
+describe('grouped dots', () => {
+  const group = { type: 'passage_indexed', from: Date.UTC(2026, 10, 18, 15, 53), to: Date.UTC(2026, 10, 18, 15, 54), count: 2747 }
+
+  it('asks for that type in that slot, start included and end excluded', () => {
+    expect(groupQuery(group, 50)).toEqual({
+      event_type: 'passage_indexed',
+      after: '2026-11-18T15:52:59.999Z',
+      before: '2026-11-18T15:54:00.000Z',
+      limit: '50',
+    })
+    expect(groupQuery(group, 5000).limit).toBe('1000')
+  })
+
+  it('offers zooming in only while the window can still get narrower', () => {
+    expect(canZoomInto({ from: 0, to: MIN_SPAN })).toBe(false)
+    expect(canZoomInto({ from: 0, to: HOUR })).toBe(true)
+  })
+})
+
+describe('spikes', () => {
+  const buckets: AgentTimeline['buckets'] = [
+    { start: '2026-11-18T15:53:00Z', total: 7, errors: 3, by_type: { tool_call: 4, tool_result: 2, tool_error: 1 }, errors_by_type: { tool_result: 2, tool_error: 1 } },
+    { start: '2026-11-18T15:54:00Z', total: 1, errors: 0, by_type: { tool_call: 1 }, errors_by_type: {} },
+  ]
+  const order = ['tool_call', 'tool_result', 'tool_error']
+
+  it('stacks ordinary events by type and puts errors on top, counted once', () => {
+    const [a, b] = spikes(buckets, new Set(order), order)
+    expect(a.segments).toEqual([{ type: 'tool_call', n: 4 }])
+    expect(a.errors).toBe(3)
+    expect(a.errorTypes).toEqual([{ type: 'tool_result', n: 2 }, { type: 'tool_error', n: 1 }])
+    expect(a.total).toBe(7)
+    expect(b).toMatchObject({ errors: 0, total: 1 })
+  })
+
+  it('leaves hidden types out', () => {
+    const [a] = spikes(buckets, new Set(['tool_call']), order)
+    expect(a).toMatchObject({ total: 4, errors: 0 })
+  })
+
+  it('falls back to error-named types without errors_by_type', () => {
+    const [a] = spikes([{ start: buckets[0].start, errors: 1, by_type: { tool_call: 2, tool_error: 1 } }], new Set(order), order)
+    expect(a).toMatchObject({ errors: 1, total: 3 })
+  })
+
+  it('rounds the axis', () => {
+    expect([niceMax(0), niceMax(7), niceMax(966), niceMax(2747), niceMax(10)]).toEqual([1, 10, 1000, 5000, 10])
+  })
+})

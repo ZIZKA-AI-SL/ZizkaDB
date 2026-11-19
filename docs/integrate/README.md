@@ -16,7 +16,6 @@
 | **OpenClaw agents** | [integrations/openclaw](../../integrations/openclaw/) (plugin) |
 | **Copy-paste quickstart** | [CONNECT.md](../../CONNECT.md) |
 | **GitHub Actions (CI)** | [github-actions.md](github-actions.md): ZizkaDB Why and ZizkaDB Audit |
-| **Agent-to-agent handoffs** | [handoffs.md](handoffs.md): keep why() across agents, frameworks and LLMs |
 | **Prove the history to an auditor** | [anchor-chain-head.md](anchor-chain-head.md): timestamp the chain head outside ZizkaDB |
 
 ## Minimal Python (local)

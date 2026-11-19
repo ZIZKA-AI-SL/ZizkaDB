@@ -396,12 +396,12 @@ The same features, hosted at [db.zizka.ai](https://db.zizka.ai). No Docker to ma
 | | **Pro** | **Team** |
 | --- | --- | --- |
 | Price | €29 / mo | €69 / mo |
-| Events / mo† | 50k | 100k |
-| API keys | 2 | 5 |
+| Events / month | 500,000 | 1,500,000 |
+| Agents (one API key each) | 3 | 10 |
 
 [Sign up →](https://db.zizka.ai/signup/plan)
 
-† Plan targets on managed cloud; not enforced in API yet. See [docs/README.md](docs/README.md#plan-limits-honest).
+Limits are enforced by ZizkaDB Cloud. See [docs/README.md](docs/README.md#plan-limits-honest).
 
 </details>
 

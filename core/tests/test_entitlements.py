@@ -26,22 +26,22 @@ class TestApiKeyLimitForPlan:
     def test_self_hosted_plan_capped_at_one(self):
         assert api_key_limit_for_plan("self_hosted") == 1
 
-    def test_pro_plan_capped_at_two(self):
-        assert api_key_limit_for_plan("pro") == 2
+    def test_pro_plan_capped_at_three(self):
+        assert api_key_limit_for_plan("pro") == 3
 
-    def test_team_plan_capped_at_five(self):
-        assert api_key_limit_for_plan("team") == 5
+    def test_team_plan_capped_at_ten(self):
+        assert api_key_limit_for_plan("team") == 10
 
     def test_config_dict_matches_expected(self):
         assert {plan: e.max_api_keys for plan, e in PLAN_ENTITLEMENTS.items()} == {
             "self_hosted": 1,
-            "pro": 2,
-            "team": 5,
+            "pro": 3,
+            "team": 10,
         }
 
     def test_plan_is_case_and_whitespace_insensitive(self):
-        assert api_key_limit_for_plan("  TEAM  ") == 5
-        assert api_key_limit_for_plan("Pro") == 2
+        assert api_key_limit_for_plan("  TEAM  ") == 10
+        assert api_key_limit_for_plan("Pro") == 3
         assert api_key_limit_for_plan("Self_Hosted") == 1
 
     def test_unknown_plan_is_unlimited(self):
@@ -63,7 +63,7 @@ class TestApiKeyLimitForPlan:
 class TestLimitOverride:
     def test_no_override_uses_config_default(self, monkeypatch):
         monkeypatch.delenv("API_KEY_LIMIT_PRO", raising=False)
-        assert api_key_limit_for_plan("pro") == 2
+        assert api_key_limit_for_plan("pro") == 3
 
     def test_override_replaces_config_default(self, monkeypatch):
         monkeypatch.setenv("API_KEY_LIMIT_PRO", "7")
@@ -72,15 +72,15 @@ class TestLimitOverride:
     def test_override_is_per_plan(self, monkeypatch):
         monkeypatch.setenv("API_KEY_LIMIT_TEAM", "20")
         assert api_key_limit_for_plan("team") == 20
-        assert api_key_limit_for_plan("pro") == 2  # unaffected
+        assert api_key_limit_for_plan("pro") == 3  # unaffected
 
     def test_blank_override_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("API_KEY_LIMIT_PRO", "  ")
-        assert api_key_limit_for_plan("pro") == 2
+        assert api_key_limit_for_plan("pro") == 3
 
     def test_invalid_override_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("API_KEY_LIMIT_PRO", "not-a-number")
-        assert api_key_limit_for_plan("pro") == 2
+        assert api_key_limit_for_plan("pro") == 3
 
     def test_override_works_for_unknown_plan_too(self, monkeypatch):
         # An override can grant a cap to a plan with no PLAN_ENTITLEMENTS
@@ -128,9 +128,10 @@ class TestLimitsEnforced:
 # ─────────────────────────────────────────
 
 class TestIsSelfHostedDeployment:
-    def test_defaults_to_managed(self, monkeypatch):
+    def test_defaults_to_self_hosted(self, monkeypatch):
+        # Open source is one agent with one API key unless ZizkaDB Cloud says otherwise.
         monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
-        assert is_self_hosted_deployment() is False
+        assert is_self_hosted_deployment() is True
 
     def test_self_hosted_value_enables(self, monkeypatch):
         monkeypatch.setenv("DEPLOYMENT_MODE", "self_hosted")
@@ -207,7 +208,7 @@ class TestFetchEffectivePlan:
         assert conn.executed == []
 
     async def test_managed_defers_to_users_plan(self, monkeypatch):
-        monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
+        monkeypatch.setenv("DEPLOYMENT_MODE", "managed")
         conn = FakeConn(plan="team")
         assert await billing.fetch_effective_plan(conn, "t1") == "team"
 
@@ -231,30 +232,30 @@ async def test_guard_no_op_when_enforcement_off(monkeypatch):
 
 
 async def test_guard_allows_under_limit(enforce):
-    conn = FakeConn(plan="pro", count=1)  # limit 2
+    conn = FakeConn(plan="pro", count=2)  # limit 3
     await api_keys.assert_and_reserve_api_key_slot(conn, tenant_id="t1")
     # Advisory lock must be taken before the count check.
     assert any("pg_advisory_xact_lock" in q for q, _ in conn.executed)
 
 
 async def test_guard_blocks_at_limit(enforce):
-    conn = FakeConn(plan="pro", count=2)  # limit 2, already full
+    conn = FakeConn(plan="pro", count=3)  # limit 3, already full
     with pytest.raises(HTTPException) as exc:
         await api_keys.assert_and_reserve_api_key_slot(conn, tenant_id="t1")
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "api_key_limit_reached"
-    assert exc.value.detail["limit"] == 2
-    assert exc.value.detail["used"] == 2
+    assert exc.value.detail["limit"] == 3
+    assert exc.value.detail["used"] == 3
 
 
-async def test_guard_team_limit_is_five(enforce):
-    conn_ok = FakeConn(plan="team", count=4)  # under limit of 5
+async def test_guard_team_limit_is_ten(enforce):
+    conn_ok = FakeConn(plan="team", count=9)  # under limit of 10
     await api_keys.assert_and_reserve_api_key_slot(conn_ok, tenant_id="t1")
 
-    conn_full = FakeConn(plan="team", count=5)
+    conn_full = FakeConn(plan="team", count=10)
     with pytest.raises(HTTPException) as exc:
         await api_keys.assert_and_reserve_api_key_slot(conn_full, tenant_id="t1")
-    assert exc.value.detail["limit"] == 5
+    assert exc.value.detail["limit"] == 10
 
 
 async def test_guard_respects_env_override(enforce, monkeypatch):
@@ -318,10 +319,10 @@ class TestAgentLimits:
     def test_managed_plans_can_be_tuned_by_env(self, monkeypatch):
         from services.entitlements import agent_limit_for_plan
 
-        assert agent_limit_for_plan("pro") == 2
+        assert agent_limit_for_plan("pro") == 3
         monkeypatch.setenv("MAX_AGENTS_PRO", "4")
         assert agent_limit_for_plan("pro") == 4
-        assert api_key_limit_for_plan("pro") == 2  # the other cap is untouched
+        assert api_key_limit_for_plan("pro") == 3  # the other cap is untouched
 
     def test_unknown_plan_is_uncapped(self):
         from services.entitlements import agent_limit_for_plan

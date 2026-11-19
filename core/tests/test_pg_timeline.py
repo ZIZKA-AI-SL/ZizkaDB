@@ -81,6 +81,14 @@ async def test_counts_events_per_bucket_and_type(chat, api_as):
     first = body["buckets"][0]
     assert datetime.fromisoformat(first["start"]) == T0 + timedelta(minutes=1)
     assert first["by_type"] == {"user_message": 1}
+    assert first["errors_by_type"] == {}
+    # Errors per type add up to the bucket's errors, so a spike splits cleanly.
+    merged: dict[str, int] = {}
+    for b in body["buckets"]:
+        assert sum(b["errors_by_type"].values()) == b["errors"]
+        for t, n in b["errors_by_type"].items():
+            merged[t] = merged.get(t, 0) + n
+    assert merged == {"tool_error": 1, "tool_result": 1}
 
 
 async def test_small_window_returns_every_event_without_payload(chat, api_as):
