@@ -1,6 +1,6 @@
 # Python SDK
 
-**Package:** `zizkadb-sdk` on PyPI (**0.7.0**)  
+**Package:** `zizkadb-sdk` on PyPI (**0.8.0**)  
 **Import:** `from zizkadb import ZizkaDB`
 
 ```bash
