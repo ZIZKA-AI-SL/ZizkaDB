@@ -186,7 +186,7 @@ function FleetContent() {
       ) : agents.length === 0 ? (
         <EmptyState
           title="No agents yet"
-          description="Create an agent to get an API key, or just start logging events with the SDK — agents are created on first use."
+          description="Create an agent to get an API key, or just start logging events (REST API, SDK, MCP or a framework integration) — agents are created on first use."
         />
       ) : (
         <FleetTable agents={agents} onDelete={handleDelete} deletingAgent={deletingAgent} />
