@@ -56,6 +56,16 @@ POST /v1/search
 GET /v1/events/{event_id}/why?depth=10
 ```
 
+With a key scoped to one agent, a chain whose cause was recorded by another agent ends with `chain_complete: false` and `continues_in: {agent, event_id}`.
+
+## Timeline
+
+```http
+GET /v1/agents/{agent}/timeline?from=<ISO time>&to=<ISO time>
+```
+
+Event counts per time bucket and event type for the agent's event timeline; every event when the window holds at most 1,500, and error events always individually.
+
 ## Agents
 
 | Method | Path | Description |

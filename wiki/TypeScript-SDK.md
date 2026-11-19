@@ -42,6 +42,7 @@ chain.print()
 | `ZIZKADB_API_KEY` | Cloud API key |
 | `AGENTDB_API_KEY` | Legacy alias |
 | `ZIZKADB_HOST` | Self-hosted API URL. Used when the client gets no `host` argument, so with an API key it sends requests here instead of ZizkaDB Cloud (legacy alias `AGENTDB_HOST`) |
+| `ZIZKADB_AGENT_VERSION` | Prompt or config version recorded on every event as `metadata.agent_version` (or pass `agentVersion` to `new ZizkaDB()`) |
 | `ZIZKADB_TELEMETRY` | Set `false` to opt out of the anonymous install ping (see [docs/telemetry.md](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/docs/telemetry.md)) |
 
 Core HTTP client only — LangChain, CrewAI, and LiveKit adapters are Python packages (`zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`). The [OpenClaw plugin](https://github.com/ZIZKA-AI-SL/ZizkaDB/blob/main/integrations/openclaw/README.md) (`zizkadb-openclaw`) is TypeScript and built on this SDK.

@@ -303,10 +303,13 @@ Use ZizkaDB to **audit AI agents** in production, debug them from cause to effec
 | **Debug** | `db.why(event_id)` | The causal chain behind any event |
 | | `db.at(agent, timestamp)` | What the agent knew at a past moment |
 | | `db.baseline(agent)` | Drift detection: alerts when behavior shifts from past sessions |
+| | Event timeline (dashboard) | Each agent's events over time as spikes by event type, errors in red; click any spike to open its events and why chain |
 | **Causal agent memory** | `db.context_for(agent, task)` | Relevant past events as a prompt block (relevance × importance × recency) |
 | | `db.search(query, mode=)` | Keyword search out of the box; hybrid keyword + vector with embeddings |
 | | `db.log(..., supersedes=, importance=)` | Replace an outdated fact; weight what matters |
 | **Audit** | `db.verify_chain(agent)` | Proof that no event was edited, removed or reordered |
+| | `metadata.written_by` | Which credential wrote each event (API key, dashboard user or dev key), set by the server and sealed into the checksum |
+| | `ZizkaDB(agent_version=...)` | The prompt or config version that ran, recorded on every event |
 | | `db.forget(key, value)` | GDPR erasure, including the search index, leaving a tombstone (no content; its chain link and checksum let someone with database access confirm an exact guessed event) |
 | | `db.export_events(agent)` / `db.import_events(...)` | Portable NDJSON copy; move between self-host and Cloud |
 | **Operate** | `db.log(..., idempotency_key=)` / `db.log_batch(events)` | Safe retries; up to 500 events per request |
@@ -319,6 +322,7 @@ Article 12 of the EU AI Act requires high-risk AI systems to automatically keep 
 
 - **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum over its content and audit fields (agent, session, parent, timestamp, sequence), and `GET /v1/events/verify` reports any row whose fields no longer match. Events are also hash-chained per agent, so `GET /v1/events/chain` proves no event was removed, inserted or reordered (GDPR deletions leave a content-free tombstone).
 - **Causally linked history.** Each decision points to the event that caused it, so an auditor can follow the full chain.
+- **Who and which version.** Every event records the credential that wrote it (`metadata.written_by`, set by the server and covered by the checksum and hash chain) and, when set, the agent version that ran (`metadata.agent_version`).
 - **Session replay.** Step through any past session event by event.
 - **Time-travel debugging.** Rebuild exactly what the agent knew at any moment with `db.at()`.
 - **Agent drift measurement.** `db.baseline()` gives a drift score and flags when an agent starts behaving differently from its history.

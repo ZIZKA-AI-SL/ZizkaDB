@@ -58,6 +58,7 @@ zizkadb init my-agent --template mcp-cursor
 | `baseline(agent)` | Behavioral drift signal |
 | `zizkadb.testing.capture()` | Record LLM and tool calls in memory inside a test (`run.tool_calls`, `run.errors`); used by `zizkadb test from-session` |
 | `agents()` | List agents |
+| `ZizkaDB(agent_version="v12")` | Record the prompt or config version on every event as `metadata.agent_version` (or set `ZIZKADB_AGENT_VERSION`); auto-capture included |
 | `zizkadb.instrument(db, agent)` | Record every LLM call, tool call and tool result with causal links and token usage, no `log()` calls needed: OpenAI and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Ollama, vLLM, ...), Anthropic, Gemini, native ollama, Zhipu, Mistral, Cohere, AWS Bedrock, LiteLLM, and in-process llama-cpp-python / transformers |
 
 ## Errors

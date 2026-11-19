@@ -8,7 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.8.0] - 2026-11-19
 
-Released packages: `zizkadb-sdk` 0.8.0 (PyPI and npm), server images `v0.8.0`. `zizkadb-mcp` is unchanged at 0.1.14 (now also the latest version in the MCP Registry). The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.8.0. The OpenClaw plugin entries below were released separately (0.1.0 to 0.1.2).
+Released packages: `zizkadb-sdk` 0.8.0 (PyPI and npm), server images `v0.8.0`, OpenClaw plugin 0.1.2 (ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`). `zizkadb-mcp` is unchanged at 0.1.14 (now also the latest version in the MCP Registry). The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.8.0. OpenClaw plugin 0.1.0 and 0.1.1 were released earlier; 0.1.2 is part of this release.
 
 **Upgrading a self-hosted install that never set `DEPLOYMENT_MODE`:** it now runs as self-hosted (one agent, one API key), so set `SELFHOST_ADMIN_TOKEN` in `infra/.env` to sign in to the dashboard.
 
