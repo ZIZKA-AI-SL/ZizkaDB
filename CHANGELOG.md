@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Event timeline looks like the design again.** The default graph is the events line (a line with a soft fill per time slot, red spikes with counts where errors happened) over one row of dots per event type, sharing one time axis. The stacked spikes are one click away (**Spikes**).
+
 ## [0.8.0] - 2026-11-19
 
 Released packages: `zizkadb-sdk` 0.8.0 (PyPI and npm), server images `v0.8.0`, OpenClaw plugin 0.1.2 (ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`). `zizkadb-mcp` is unchanged at 0.1.14 (now also the latest version in the MCP Registry). The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.8.0. OpenClaw plugin 0.1.0 and 0.1.1 were released earlier; 0.1.2 is part of this release.

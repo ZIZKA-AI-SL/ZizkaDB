@@ -34,7 +34,8 @@ interface Props {
 
 /**
  * The main graph: an activity strip (events per bucket, red spikes for errors)
- * over one lane per event type. Every event is a dot when the window holds few
+ * over one lane per event type. The strip is a line of events per time slot,
+ * with a red spike and count for each slot that has errors. Every event is a dot when the window holds few
  * enough; otherwise ordinary events are grouped per bucket and errors are still
  * drawn one by one; clicking a group lists its events. Drag across the graph to
  * zoom in.
@@ -65,6 +66,12 @@ export function TimelineChart({ timeline, range, lanes, selected, onSelect, onGr
 
   const yStrip = (n: number) => TOP + STRIP - (n / strip.max) * (STRIP - 10)
   const mid = (t: number) => Math.min(W - RIGHT, Math.max(LEFT, x(t + bucketMs / 2)))
+
+  const stripPts = strip.rows.map((r) => `${mid(r.t)},${yStrip(r.total)}`)
+  const stripLine = stripPts.length ? `M${stripPts.join(' L')}` : ''
+  const stripArea = stripPts.length
+    ? `M${mid(strip.rows[0].t)},${TOP + STRIP} L${stripPts.join(' L')} L${mid(strip.rows[strip.rows.length - 1].t)},${TOP + STRIP} Z`
+    : ''
 
   const points = (grouped ? [] : timeline.events!).filter((e) => shown.has(e.event))
   const errors = (grouped ? timeline.errors : points.filter((e) => e.is_error)).filter((e) => shown.has(e.event))
@@ -164,16 +171,13 @@ export function TimelineChart({ timeline, range, lanes, selected, onSelect, onGr
         </text>
         <text x={LEFT - 10} y={TOP + STRIP} textAnchor="end" fontSize={11} fill={colors.textFaint}>0</text>
         <line x1={LEFT} x2={W - RIGHT} y1={TOP + STRIP} y2={TOP + STRIP} stroke={colors.border} />
-        {strip.rows.map((r) => (
-          <rect
-            key={r.t}
-            x={Math.max(LEFT, x(r.t))}
-            y={yStrip(r.total)}
-            width={Math.max(1, Math.min(W - RIGHT, x(r.t + bucketMs)) - Math.max(LEFT, x(r.t)) - 1)}
-            height={TOP + STRIP - yStrip(r.total)}
-            fill="rgba(99,102,241,0.35)"
-          />
-        ))}
+        {/* events per slot as a line with a soft fill, like the overview */}
+        {strip.rows.length > 0 && (
+          <>
+            <path d={stripArea} fill="rgba(99,102,241,0.16)" />
+            <path d={stripLine} fill="none" stroke={colors.info} strokeWidth={1.5} strokeLinejoin="round" />
+          </>
+        )}
         {strip.rows.filter((r) => r.errors > 0).map((r) => {
           const h = 8 + (r.errors / strip.maxErr) * (STRIP - 14)
           return (
