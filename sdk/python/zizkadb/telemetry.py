@@ -6,6 +6,9 @@ install_id is stable per machine (~/.zizkadb/install_id).
 
 Self-hosted (localhost Docker) installs are counted with mode=self-hosted.
 
+Each ping also says where it runs (env: ci, container or machine), so
+CI runs are not counted as installs.
+
 What is NOT sent: API keys, agent names, event data, IP address, hostname.
 
 Opt out: export ZIZKADB_TELEMETRY=false
@@ -51,6 +54,42 @@ def _sdk_version(sdk: str) -> str:
         return "unknown"
 
 
+# Variables set by CI services (GitHub Actions, GitLab, CircleCI, Travis,
+# Buildkite, Jenkins, Azure Pipelines, TeamCity, Bitbucket, AWS CodeBuild...).
+_CI_VARS = (
+    "CI",
+    "CONTINUOUS_INTEGRATION",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "CIRCLECI",
+    "TRAVIS",
+    "BUILDKITE",
+    "JENKINS_URL",
+    "TF_BUILD",
+    "TEAMCITY_VERSION",
+    "BITBUCKET_BUILD_NUMBER",
+    "CODEBUILD_BUILD_ID",
+    "DRONE",
+    "APPVEYOR",
+    "SEMAPHORE",
+)
+
+
+def detect_env() -> str:
+    """Where this process runs: "ci", "container" or "machine"."""
+    for name in _CI_VARS:
+        value = os.getenv(name, "").strip().lower()
+        if value and value not in ("false", "0", "no", "off"):
+            return "ci"
+    if (
+        os.path.exists("/.dockerenv")
+        or os.path.exists("/run/.containerenv")
+        or os.getenv("KUBERNETES_SERVICE_HOST")
+    ):
+        return "container"
+    return "machine"
+
+
 def _default_mode() -> str:
     host = os.getenv("ZIZKADB_HOST", "") or os.getenv("AGENTDB_HOST", "")
     h = host.lower()
@@ -68,6 +107,7 @@ def _send(mode: str, sdk: str, sdk_version: str) -> None:
             "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
             "os": platform.system(),
             "mode": mode,
+            "env": detect_env(),
         }
     ).encode()
 

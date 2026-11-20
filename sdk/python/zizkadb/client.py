@@ -137,7 +137,12 @@ class ZizkaDB:
         api_key: str | None = None,
         host: str | None = None,
         timeout: float = 10.0,
+        agent_version: str | None = None,
     ):
+        # Recorded on every event as metadata.agent_version (the prompt or
+        # config version that was running), so an audit can tell which version
+        # of an agent did something. ZIZKADB_AGENT_VERSION when not passed.
+        self._agent_version = (agent_version or os.getenv("ZIZKADB_AGENT_VERSION") or "").strip() or None
         host = (host or "").strip() or None
         if host is None:
             # A self-hosted key with ZIZKADB_HOST set must not go to Cloud.
@@ -177,6 +182,12 @@ class ZizkaDB:
         self._client: httpx.AsyncClient | None = None
         self._telemetry_mode = "self-hosted" if host else "cloud"
         _telemetry_ping(mode=self._telemetry_mode, sdk="python")
+
+    def _stamp(self, metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Add agent_version to event metadata (an explicit value wins)."""
+        if not self._agent_version or (metadata and "agent_version" in metadata):
+            return metadata
+        return {**(metadata or {}), "agent_version": self._agent_version}
 
     # ─────────────────────────────────────────
     # CONTEXT MANAGER
@@ -247,7 +258,7 @@ class ZizkaDB:
             "data": payload_data,
             "parent_id": parent_id,
             "session_id": session_id,
-            "metadata": metadata,
+            "metadata": self._stamp(metadata),
         }
         if idempotency_key is not None:
             body["idempotency_key"] = idempotency_key
@@ -535,6 +546,7 @@ class ZizkaDB:
         Returns {"written", "failed", "results"}; one bad event does not
         reject the others, so check results[i]["ok"].
         """
+        events = [{**e, "metadata": self._stamp(e.get("metadata"))} for e in events]
         return await self._post("/v1/events/batch", {"events": events})
 
     # ─────────────────────────────────────────

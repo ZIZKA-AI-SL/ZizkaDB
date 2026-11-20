@@ -27,7 +27,7 @@ The fifteen routers mounted in `main.py` (`app.include_router`):
 | `api/metrics.py` | `/metrics` (no `/v1`) | `METRICS_TOKEN` bearer; 404 when unset |
 
 Under `/v1/agents`: per-agent analytics (`/stats`, `/sessions`, `/baseline`, `/behavior-change`,
-`/report`, `/token-usage`, `/token-optimization`, `/suggestions`, `/at`) use `get_tenant` +
+`/report`, `/timeline`, `/token-usage`, `/token-optimization`, `/suggestions`, `/at`) use `get_tenant` +
 `assert_agent_allowed`; agent + API-key management (`create_agent`, `delete_agent`, and **all**
 `/api-keys` list/create/revoke) use `require_dashboard_session`.
 

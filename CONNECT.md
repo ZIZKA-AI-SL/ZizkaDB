@@ -1,6 +1,6 @@
 # Connect your agent (self-host / OSS)
 
-**Current releases:** `zizkadb-sdk` **0.6.0** (PyPI and npm) · `zizkadb-mcp` **0.1.13** · `zizkadb-langchain` **0.1.5** · `zizkadb-crewai` **0.1.5** · `zizkadb-langgraph` **0.1.2** · `zizkadb-livekit` **0.2.3**
+**Current releases:** `zizkadb-sdk` **0.8.0** (PyPI and npm) · `zizkadb-mcp` **0.1.14** · `zizkadb-langchain` **0.1.5** · `zizkadb-crewai` **0.1.5** · `zizkadb-langgraph` **0.1.2** · `zizkadb-livekit` **0.2.3** · OpenClaw plugin `@zizka-ai/zizkadb` (ClawHub) / `zizkadb-openclaw` (npm) **0.1.2**
 
 ## Start the stack (pick one)
 
@@ -220,6 +220,39 @@ Full sample: [examples/livekit-agent/](examples/livekit-agent/) (voice worker + 
 
 ---
 
+## OpenClaw
+
+One plugin records every turn of an [OpenClaw](https://github.com/openclaw/openclaw) agent: the user message, each tool call and result, the model output with token usage and the reply, linked cause to effect. One OpenClaw conversation → one ZizkaDB session. Observe-only: it never blocks or changes a message or tool call.
+
+```bash
+openclaw plugins install clawhub:@zizka-ai/zizkadb
+# or: openclaw plugins install npm:zizkadb-openclaw --force
+```
+
+`~/.openclaw/openclaw.json`, then restart the gateway:
+
+```json5
+{
+  plugins: {
+    allow: ["zizkadb"],
+    entries: {
+      zizkadb: {
+        enabled: true,
+        hooks: { allowConversationAccess: true }, // model outputs and token usage
+        config: {
+          host: "http://localhost:8000",          // self-hosted, or apiKey: "zizkadb_live_..." for Cloud
+          agent: "openclaw",
+        },
+      },
+    },
+  },
+}
+```
+
+Then **Activity → openclaw → Sessions**. `captureContent: false` records tools, models, tokens and errors without prompts or replies. Full guide: [integrations/openclaw/](integrations/openclaw/)
+
+---
+
 ## MCP (Cursor, Claude Desktop, Windsurf)
 
 ```bash
@@ -274,7 +307,7 @@ hits = await db.search("refund order 1234", agent="my-bot")
 
 # Audit: prove nothing was edited, removed or reordered
 check = await db.verify_chain("my-bot")
-print(check["intact"], check["chain_head"])     # store the head elsewhere as an anchor
+print(check["intact"], check["chain_head"])     # store the head elsewhere as an anchor: docs/integrate/anchor-chain-head.md
 
 # Read everything, or move it to another instance
 async for event in db.iter_events("my-bot"):

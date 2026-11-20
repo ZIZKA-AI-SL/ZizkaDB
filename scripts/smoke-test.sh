@@ -19,6 +19,9 @@
 
 set -euo pipefail
 
+# Test runs are not installs: no telemetry ping unless asked for.
+export ZIZKADB_TELEMETRY="${ZIZKADB_TELEMETRY:-false}"
+
 BASE="${1:-http://localhost:8000}"
 BASE="${BASE%/}"
 

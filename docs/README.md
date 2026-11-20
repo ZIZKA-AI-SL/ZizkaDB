@@ -23,11 +23,12 @@ Start here if you are not sure which file to read.
 | Guide | Status |
 |-------|--------|
 | [Any agent (framework-agnostic)](integrate/any-agent.md) | **Start here** for custom stacks |
-| [Supported vs generic frameworks](integrate/frameworks.md) | LangChain, CrewAI, LiveKit, LangGraph, etc. |
+| [Supported vs generic frameworks](integrate/frameworks.md) | LangChain, CrewAI, LiveKit, LangGraph, OpenClaw, etc. |
 | [LiveKit (voice agents)](integrations/livekit.md) | `zizkadb-livekit` — one call → one session |
+| [OpenClaw](../integrations/openclaw/) | Plugin `@zizka-ai/zizkadb` — every turn recorded with its cause |
 | [LangChain](integrations/langchain.md) | Callback handler package |
 | [CrewAI](integrations/crewai.md) | Crew logger package |
-| [CONNECT.md](../CONNECT.md) | Copy-paste: Python, TS, LangChain, CrewAI, LiveKit, MCP, REST |
+| [CONNECT.md](../CONNECT.md) | Copy-paste: Python, TS, LangChain, CrewAI, LiveKit, OpenClaw, MCP, REST |
 
 ## Source of truth
 
@@ -42,5 +43,5 @@ Start here if you are not sure which file to read.
 
 ## Plan limits (honest)
 
-- **Enforced today (when `API_KEY_LIMITS_ENFORCED=true`):** active API keys per plan (Self-Hosted 1, Pro 2, Team 5).
-- **Marketing targets, not enforced in API yet:** monthly event caps (50k / 100k on Pro/Team copy).
+- **Self-hosted (this repository):** one agent with one API key, always enforced; no monthly event cap.
+- **ZizkaDB Cloud:** agents and API keys (Pro 3, Team 10; one key per agent) and events per calendar month (Pro 500,000, Team 1,500,000), enforced by the managed service.

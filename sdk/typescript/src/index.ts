@@ -49,6 +49,10 @@ import packageJson from '../package.json'
 
 export * from './types'
 export { LineageContext } from './context'
+export { instrument, zizkadbMiddleware } from './instrument'
+export type { Instrumentation, InstrumentOptions, InstrumentTarget, MiddlewareOptions } from './instrument'
+export { capture, CapturedRun } from './testing'
+export type { CapturedEvent, CaptureOptions } from './testing'
 
 const CLOUD_HOST = 'https://db.zizka.ai'
 const TELEMETRY_URL = 'https://db.zizka.ai/v1/telemetry'
@@ -115,6 +119,32 @@ function _isLocalSelfHost(): boolean {
   )
 }
 
+// Variables set by CI services; same list as the Python SDK.
+const CI_VARS = [
+  'CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'GITLAB_CI', 'CIRCLECI',
+  'TRAVIS', 'BUILDKITE', 'JENKINS_URL', 'TF_BUILD', 'TEAMCITY_VERSION',
+  'BITBUCKET_BUILD_NUMBER', 'CODEBUILD_BUILD_ID', 'DRONE', 'APPVEYOR', 'SEMAPHORE',
+]
+
+/** Where this process runs: 'ci', 'container' or 'machine'. */
+export function detectEnv(): 'ci' | 'container' | 'machine' {
+  for (const name of CI_VARS) {
+    const value = (readEnv(name) ?? '').trim()
+    if (value && !/^(false|0|no|off)$/i.test(value)) return 'ci'
+  }
+  try {
+    const { existsSync } = require('fs') as typeof import('fs')
+    if (
+      existsSync('/.dockerenv') ||
+      existsSync('/run/.containerenv') ||
+      readEnv('KUBERNETES_SERVICE_HOST')
+    ) return 'container'
+  } catch {
+    // not Node (browser, edge runtime): no filesystem to check
+  }
+  return 'machine'
+}
+
 function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
   if (_telemetrySent) return
   if (
@@ -130,6 +160,7 @@ function _sendTelemetry(mode: 'cloud' | 'self-hosted'): void {
     node:        (typeof process !== 'undefined' && process.version) || 'unknown',
     os:          typeof process !== 'undefined' ? process.platform : 'unknown',
     mode,
+    env:         detectEnv(),
   }
 
   // Fire and forget — never awaited, never throws
@@ -243,8 +274,10 @@ export class ZizkaDB {
   private readonly headers: Record<string, string>
   private readonly timeout: number
   private readonly telemetryMode: 'cloud' | 'self-hosted'
+  private readonly agentVersion: string | null
 
   constructor(config: ZizkaDBConfig) {
+    this.agentVersion = (config.agentVersion ?? readEnv('ZIZKADB_AGENT_VERSION') ?? '').trim() || null
     // When host is omitted, ZIZKADB_HOST (or legacy AGENTDB_HOST) is used if
     // set, so a self-hosted key is never sent to Cloud. An explicit host
     // always wins. Runtimes without `process` (browsers, edge) skip the env.
@@ -299,6 +332,12 @@ export class ZizkaDB {
     return new LineageContext(this, agent, sessionId)
   }
 
+  /** Event metadata with `agent_version` added (an explicit value wins). */
+  private stamp(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+    if (!this.agentVersion || (metadata && 'agent_version' in metadata)) return metadata ?? null
+    return { ...(metadata ?? {}), agent_version: this.agentVersion }
+  }
+
   async log(options: LogOptions): Promise<LogResult> {
     const explicitParent = options.parentId != null
     const { parentId, sessionId } = resolveLogLineage(
@@ -314,7 +353,7 @@ export class ZizkaDB {
       data: options.data,
       parent_id: parentId,
       session_id: sessionId,
-      metadata: options.metadata ?? null,
+      metadata: this.stamp(options.metadata),
       ...(options.idempotencyKey != null ? { idempotency_key: options.idempotencyKey } : {}),
       ...(options.supersedes != null ? { supersedes: options.supersedes } : {}),
       ...(options.importance != null ? { importance: options.importance } : {}),
@@ -478,7 +517,7 @@ export class ZizkaDB {
         data: e.data,
         parent_id: e.parentId ?? null,
         session_id: e.sessionId ?? null,
-        metadata: e.metadata ?? null,
+        metadata: this.stamp(e.metadata),
         ...(e.idempotencyKey != null ? { idempotency_key: e.idempotencyKey } : {}),
         ...(e.supersedes != null ? { supersedes: e.supersedes } : {}),
         ...(e.importance != null ? { importance: e.importance } : {}),
@@ -537,7 +576,7 @@ export class ZizkaDB {
         data,
         parent_id: forkParent,
         session_id: sessionId,
-        ...(metadata ? { metadata } : {}),
+        ...(metadata || this.agentVersion ? { metadata: this.stamp(metadata) } : {}),
         ...(importance !== undefined ? { importance } : {}),
       }) as EventWriteResponse
       const result = parseLogResult(res)

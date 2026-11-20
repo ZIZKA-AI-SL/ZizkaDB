@@ -31,12 +31,13 @@ The API and the single-container image make no outbound calls of their own, **ex
 
 Each package sends one anonymous ping per process, the first time it is used, to count installs. It does not repeat on every call.
 
-- **Packages:** the SDK client (`zizkadb-sdk`, Python and TypeScript) and the MCP server (`zizkadb-mcp`). The integrations use the SDK client, so they are counted through its ping; the bundled LangChain and CrewAI integrations and `zizkadb-livekit` also report their own package name.
+- **Packages:** the SDK client (`zizkadb-sdk`, Python and TypeScript) and the MCP server (`zizkadb-mcp`). The integrations use the SDK client, so they are counted through its ping ; the bundled LangChain and CrewAI integrations, `zizkadb-livekit` and the OpenClaw plugin (`openclaw`, from 0.1.2, once it connects to ZizkaDB) also report their own package name.
 - **Sent:**
   - A random install ID, generated once and stored in `~/.zizkadb/install_id`.
   - The package name and version.
   - The Python or Node version and the operating system.
   - Whether the client points at ZizkaDB Cloud or a self-hosted server.
+  - Where it runs: `ci`, `container` or `machine`. It is `ci` when a CI service variable is set (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL` and similar), and `container` inside Docker or Kubernetes. Only the label is sent, never the variables' values. ZizkaDB Cloud does not count CI runs as installs.
 - **Never sent:** API keys, agent names, event data or the server address.
 - **Stored by the receiving server:** the fields above, a first-seen and last-seen time, a ping count, and a country code. The country code is derived from the request; the IP address itself is not stored.
 - **Turn off:** set `ZIZKADB_TELEMETRY=false` (or `0`, `no`, `off`) in the environment of the process that uses the SDK.
@@ -49,6 +50,7 @@ Each package sends one anonymous ping per process, the first time it is used, to
 - `sdk=docker`
 - the version label
 - the operating system
+- where it runs (`ci`, `container` or `machine`), detected the same way as in the SDKs
 
 To turn it off, run either script with `ZIZKADB_TELEMETRY=false`.
 

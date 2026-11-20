@@ -25,6 +25,7 @@ _DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 _DEV_TENANT = {
     "tenant_id": _DEV_TENANT_ID,
     "user_id": _DEV_USER_ID,
+    "auth": "dev_key",
 }
 
 # Actionable 401 message for a rejected API key. New integrators (especially
@@ -183,6 +184,7 @@ async def get_tenant(
         return {
             "tenant_id": payload["tenant_id"],
             "user_id": payload["sub"],
+            "auth": "dashboard",
         }
     except Exception:
         raise unauthorized(detail="Invalid token")

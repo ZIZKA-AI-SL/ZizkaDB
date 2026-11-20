@@ -21,7 +21,7 @@
 | ZizkaDB **is** | ZizkaDB **is not** |
 |----------------|-------------------|
 | An **event store + memory layer** for agents | A vector DB you query only by embedding similarity |
-| **Framework-agnostic** (Claude, OpenAI, LangChain, LiveKit, custom code) | Locked to one LLM vendor or one orchestration framework |
+| **Framework-agnostic** (Claude, OpenAI, LangChain, LiveKit, OpenClaw, custom code) | Locked to one LLM vendor or one orchestration framework |
 | **Causal** (parent → child event links) | A chat transcript dump |
 | **Self-hostable** (Docker, full features, free) | SaaS-only |
 | **Model-agnostic** for logging; embeddings use OpenAI for semantic search | A replacement for your LLM |
@@ -163,8 +163,9 @@ db = ZizkaDB(host="http://localhost:8000")  # or DEV_API_KEY for local dev
 | `zizkadb-langchain` | `pip install zizkadb-langchain` | LangChain callback handler |
 | `zizkadb-crewai` | `pip install zizkadb-crewai` | CrewAI crew logger |
 | `zizkadb-livekit` | `pip install zizkadb-livekit` | LiveKit voice calls → Sessions + Events (transcript only) |
+| `@zizka-ai/zizkadb` (ClawHub) / `zizkadb-openclaw` (npm) | `openclaw plugins install clawhub:@zizka-ai/zizkadb` | OpenClaw plugin: every turn (messages, tool calls, model outputs, token usage) as a causal chain |
 
-Each depends on `zizkadb-sdk` — users install the framework package only.
+Each depends on `zizkadb-sdk` (the OpenClaw plugin bundles the TypeScript SDK) — users install the framework package only.
 
 ---
 
@@ -299,8 +300,8 @@ Stack: postgres (pgvector), qdrant, redis, api. Dashboard optional (`npm run dev
 | Plan | Price | Highlights |
 |------|-------|------------|
 | **Self-Hosted** | Free forever | Full feature set, your infra, Docker, community support |
-| **Pro** | €29/mo | 50k events/mo, 2 active API keys, 90-day retention, email support, **30-day free trial**, no credit card to start |
-| **Team** | €69/mo | 100k events/mo, 5 active API keys, 1-year retention, priority support, 30-day free trial |
+| **Pro** | €29/mo | 500,000 events/mo, 3 agents (one API key each), 90-day retention, email support, **30-day free trial**, no credit card to start |
+| **Team** | €69/mo | 1,500,000 events/mo, 10 agents (one API key each), 1-year retention, priority support, 30-day free trial |
 
 **Line for developers:** “Free if you self-host; paid if you don’t want to run Postgres/Qdrant yourself.”
 

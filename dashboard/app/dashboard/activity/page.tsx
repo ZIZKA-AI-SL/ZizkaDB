@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
+import { ScatterChart } from 'lucide-react'
 import { GettingStartedChecklist } from '@/components/ConnectionStatus'
 import { CreateApiKeyCard } from '@/components/dashboard/CreateApiKeyCard'
 import { EmptyState, ErrorState, PageHeader, Skeleton } from '@/components/ui'
@@ -9,6 +10,7 @@ import { EventsSegment } from '@/components/dashboard/EventsSegment'
 import { SessionsSegment } from '@/components/dashboard/SessionsSegment'
 import { SessionTimelineSegment } from '@/components/dashboard/SessionTimelineSegment'
 import { TimeTravelSegment } from '@/components/dashboard/TimeTravelSegment'
+import { EventTimelinePanel } from '@/components/dashboard/timeline/EventTimelinePanel'
 import { useAgents } from '@/hooks/useAgents'
 import { useEdition } from '@/hooks/useEdition'
 import { useSelectedAgent } from '@/hooks/useSelectedAgent'
@@ -71,6 +73,7 @@ function ActivityContent() {
   const { agentId, invalidAgent } = useSelectedAgent(agents)
   const isOss = useEdition().edition === 'oss'
   const [segment, setSegment] = useState<Segment>('events')
+  const [showTimeline, setShowTimeline] = useState(false)
 
   // Hooks must run unconditionally; they no-op on a null agent.
   const events = useAgentEvents(agentId)
@@ -145,8 +148,34 @@ function ActivityContent() {
             </p>
           )}
         </div>
-        <SegmentedControl value={segment} onChange={setSegment} />
+        <div className="flex flex-wrap items-center gap-2">
+          {agentId && (
+            <button
+              type="button"
+              aria-expanded={showTimeline}
+              aria-controls="event-timeline"
+              onClick={() => setShowTimeline((v) => !v)}
+              className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-1.5"
+              style={{
+                background: showTimeline ? colors.info : colors.infoBg,
+                color: showTimeline ? '#fff' : colors.text,
+                border: `1px solid ${colors.info}`,
+                borderRadius: radii.md,
+              }}
+            >
+              <ScatterChart size={14} aria-hidden />
+              {showTimeline ? 'Hide event timeline' : 'Event timeline'}
+            </button>
+          )}
+          <SegmentedControl value={segment} onChange={setSegment} />
+        </div>
       </div>
+
+      {showTimeline && agentId && (
+        <div id="event-timeline">
+          <EventTimelinePanel key={agentId} agentId={agentId} />
+        </div>
+      )}
 
       {invalidAgent && (
         <div

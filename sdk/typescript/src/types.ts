@@ -2,6 +2,12 @@ export interface ZizkaDBConfig {
   apiKey?: string
   host?: string
   timeout?: number
+  /**
+   * The prompt or config version of the agent, recorded on every event as
+   * `metadata.agent_version` so an audit can tell which version did what.
+   * Defaults to the ZIZKADB_AGENT_VERSION env var.
+   */
+  agentVersion?: string
 }
 
 export interface LogOptions {

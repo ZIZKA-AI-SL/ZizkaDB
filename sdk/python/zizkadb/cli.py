@@ -88,6 +88,37 @@ def cmd_why(args: argparse.Namespace) -> None:
     asyncio.run(run())
 
 
+def cmd_test_from_session(args: argparse.Namespace) -> None:
+    """Turn a recorded session into a pytest regression test."""
+    from zizkadb.session_tests import build_snapshot, write_files
+
+    async def fetch() -> list:
+        async with _client_from_env() as db:
+            events = [e async for e in db.iter_events(args.agent, session_id=args.session_id)]
+        return list(reversed(events))  # oldest first
+
+    events = asyncio.run(fetch())
+    if not events:
+        raise SystemExit(
+            f"No events for session {args.session_id!r} of agent {args.agent!r}. "
+            "Check both ids (the dashboard's Sessions view shows them)."
+        )
+    snapshot = build_snapshot(args.session_id, args.agent, events)
+    try:
+        snap_path, test_path = write_files(snapshot, Path(args.out), args.entry, force=args.force)
+    except (FileExistsError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Wrote {test_path} and {snap_path}")
+    print(
+        f"  {len(snapshot['user_inputs'])} user input(s), "
+        f"tool path: {' -> '.join(snapshot['expected_tool_calls']) or '(no tools)'}"
+        + (f", recorded errors: {len(snapshot['recorded_errors'])}" if snapshot["recorded_errors"] else "")
+    )
+    if not args.entry:
+        print("  Next: connect run_agent() in the test to your agent (or rerun with --entry module:function).")
+    print(f"  Run it: pytest {test_path}")
+
+
 def cmd_baseline(args: argparse.Namespace) -> None:
     async def run() -> None:
         async with _client_from_env() as db:
@@ -253,6 +284,23 @@ def main(argv: list[str] | None = None) -> None:
     to_p.add_argument("--to", default="")
     to_p.add_argument("--granularity", choices=("day", "week"), default="")
     to_p.set_defaults(func=cmd_token_opt)
+
+    test_p = sub.add_parser("test", help="Generate tests from recorded sessions")
+    test_sub = test_p.add_subparsers(dest="test_command", required=True)
+    tfs_p = test_sub.add_parser(
+        "from-session",
+        help="Turn a recorded session into a pytest regression test",
+    )
+    tfs_p.add_argument("session_id", help="Session id to replay (dashboard Sessions view)")
+    tfs_p.add_argument("--agent", required=True, help="Agent id the session belongs to")
+    tfs_p.add_argument("--out", default="tests", help="Directory for the test (default: tests)")
+    tfs_p.add_argument(
+        "--entry",
+        default=None,
+        help="Your agent function as module:function, called with each user input",
+    )
+    tfs_p.add_argument("--force", action="store_true", help="Overwrite existing files")
+    tfs_p.set_defaults(func=cmd_test_from_session)
 
     doctor_p = sub.add_parser("doctor", help="Verify local stack and SDK connectivity")
     doctor_p.add_argument("--host", default=None, help=f"API URL (default: {DEFAULT_HOST})")

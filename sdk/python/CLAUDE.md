@@ -37,6 +37,7 @@ asyncio.run(main())
 | `db.query(agent, ...)` | Fetch events with filters | No |
 | `db.iter_events(agent, page_size?)` | Every event, newest first, cursor-paged (async iterator) | No |
 | `db.export_events(agent)` / `db.import_events(events, agent?)` | NDJSON export (async iterator) and import with parent remapping | No |
+| `ZizkaDB(agent_version=...)` / `ZIZKADB_AGENT_VERSION` | Stamps `metadata.agent_version` on every write, auto-capture included | No |
 | `db.log_batch(events)` | Up to 500 events in one request; per-item results, `parent_index` | No |
 | `db.search(query, agent?, mode?)` | Search event history: hybrid with embeddings, keyword (Postgres full-text) without | No |
 | `db.context_for(agent, task)` | Relevant past events as a prompt block (keyword relevance without embeddings) | No |
@@ -46,6 +47,7 @@ asyncio.run(main())
 | `db.token_optimization(agent, ...)` | Token optimization recommendations | No |
 | `db.forget(key, value)` | GDPR delete — remove events matching a value | No |
 | `db.agents()` | List all agents in the project | No |
+| `zizkadb.instrument(db, agent, providers?, capture_content?)` | Auto-capture LLM calls as linked events (`zizkadb/instrumentation.py`): providers `openai` (+ every OpenAI-compatible API), `anthropic`, `gemini` (google-genai), `ollama` (native), `zhipu` (zai-sdk / zhipuai), `mistral`, `cohere`, `bedrock` (boto3 Converse via `BaseClient._make_api_call`), `litellm`, and in-process `llama_cpp` / `transformers` (patched only if already imported: never import heavy libraries from `instrument()`); returns a handle with `.uninstrument()` | No |
 
 ---
 
@@ -64,6 +66,7 @@ zizkadb init my-agent --template basic
 # Templates: basic | openai | langchain | crewai | mcp-cursor
 
 zizkadb why <event_id> [--depth N]
+zizkadb test from-session <session_id> --agent <agent> [--entry module:function] [--out tests] [--force]
 zizkadb baseline <agent> [--window 24h|7d|30d]
 zizkadb token-usage <agent> --from YYYY-MM-DD --to YYYY-MM-DD
 zizkadb token-opt <agent> --from YYYY-MM-DD --to YYYY-MM-DD

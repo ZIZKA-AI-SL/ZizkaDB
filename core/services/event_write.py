@@ -15,6 +15,7 @@ import asyncpg
 
 from db.connection import get_pool, get_qdrant
 from qdrant_client.models import PointStruct
+from services.writer import seal_writer
 from services.embeddings import generate_embedding, event_to_text
 from services.agent_ids import AGENT_ID_RULE, is_valid_agent_id
 from services.agent_limits import assert_agent_slot
@@ -44,7 +45,7 @@ def _pgvector_literal(embedding: list[float]) -> str:
     return "[" + ",".join(repr(x) for x in embedding) + "]"
 
 
-def _check_value(value: Any, where: str) -> None:
+def check_storable(value: Any, where: str) -> None:
     """Reject values Postgres cannot store, before any row is touched.
 
     ``json.dumps`` happily emits ``NaN``/``Infinity`` and ``\\u0000``, but
@@ -63,11 +64,15 @@ def _check_value(value: Any, where: str) -> None:
             raise bad_request(f"{where} must not contain NaN or Infinity")
     elif isinstance(value, dict):
         for k, v in value.items():
-            _check_value(k, f"{where} key")
-            _check_value(v, f"{where}.{k}")
+            check_storable(k, f"{where} key")
+            check_storable(v, f"{where}.{k}")
     elif isinstance(value, (list, tuple)):
         for i, v in enumerate(value):
-            _check_value(v, f"{where}[{i}]")
+            check_storable(v, f"{where}[{i}]")
+
+
+# Backwards-compatible alias for the former private name.
+_check_value = check_storable
 
 
 def validate_event_payload(
@@ -81,16 +86,16 @@ def validate_event_payload(
     idempotency_key: str | None = None,
 ) -> None:
     """Raise a 400 for input that would otherwise fail mid-write with a 500."""
-    _check_value(agent, "agent")
-    _check_value(event, "event")
+    check_storable(agent, "agent")
+    check_storable(event, "event")
     if len(event) > EVENT_TYPE_MAX_LENGTH:
         raise bad_request(f"event must be at most {EVENT_TYPE_MAX_LENGTH} characters")
-    _check_value(data, "data")
-    _check_value(session_id, "session_id")
+    check_storable(data, "data")
+    check_storable(session_id, "session_id")
     if session_id is not None and len(session_id) > SESSION_ID_MAX_LENGTH:
         raise bad_request(f"session_id must be at most {SESSION_ID_MAX_LENGTH} characters")
-    _check_value(metadata, "metadata")
-    _check_value(idempotency_key, "idempotency_key")
+    check_storable(metadata, "metadata")
+    check_storable(idempotency_key, "idempotency_key")
     if idempotency_key is not None and not (
         0 < len(idempotency_key) <= IDEMPOTENCY_KEY_MAX_LENGTH
     ):
@@ -117,12 +122,17 @@ async def write_event(
     occurred_at: datetime | None = None,
     supersedes: str | None = None,
     importance: float | None = None,
+    written_by: dict | None = None,
+    keep_original_writer: bool = False,
 ) -> dict:
     """Write one event. ``occurred_at`` is for imports only: it keeps the
     original timestamp instead of the database clock. ``supersedes`` and
     ``importance`` are stored in metadata (so the checksum covers them) and
-    steer context_for() / search (services/memory_rank.py)."""
+    steer context_for() / search (services/memory_rank.py). ``written_by``
+    (services/writer.py) is the credential behind the request; it replaces any
+    client-supplied value, so the checksum seals who wrote the event."""
     metadata = _memory_metadata(metadata, supersedes, importance)
+    metadata = seal_writer(metadata, written_by, keep_original=keep_original_writer)
     validate_event_payload(
         agent=agent,
         event=event,

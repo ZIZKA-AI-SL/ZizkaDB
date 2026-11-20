@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from services.writer import writer_of
 from services.exceptions import not_found, bad_request
 from typing import Any
 from uuid import UUID
@@ -18,7 +19,7 @@ from db.connection import get_pool
 from services.checksum import CHECKSUM_COLUMNS, fetch_legacy_cutoff, verify_stored_checksum
 from services.audit_chain import verify_chain
 from services.event_write import write_event
-from services.why_analysis import analyze_why_chain
+from services.why_analysis import analyze_why_chain, foreign_continuation
 
 router = APIRouter()
 
@@ -64,6 +65,7 @@ async def log_event(
         idempotency_key=body.idempotency_key or idempotency_key,
         supersedes=body.supersedes,
         importance=body.importance,
+        written_by=writer_of(tenant),
     )
 
 
@@ -122,6 +124,7 @@ async def log_events_batch(
                 idempotency_key=item.idempotency_key,
                 supersedes=item.supersedes,
                 importance=item.importance,
+                written_by=writer_of(tenant),
             )
         except HTTPException as exc:
             results.append({"index": index, "ok": False, "status": exc.status_code, "error": exc.detail})
@@ -264,6 +267,8 @@ async def import_events(
                 metadata=item.metadata,
                 idempotency_key=f"import:{item.event_id}",
                 occurred_at=item.timestamp,
+                written_by=writer_of(tenant),
+                keep_original_writer=True,
             )
         except HTTPException as exc:
             summary["failed"] += 1
@@ -438,6 +443,7 @@ async def why(
     root = ordered[0]
     root_parent = root["parent_event_id"]
     chain_agents = {r["agent_id"] for r in rows}
+    continues_in = await foreign_continuation(pool, tenant_id, rows, scoped_agent)
     completeness = analyze_why_chain(
         anchor_event_type=anchor["event_type"],
         anchor_parent_id=str(anchor["parent_event_id"]) if anchor["parent_event_id"] else None,
@@ -447,6 +453,7 @@ async def why(
         root_has_parent=root_parent is not None,
         scoped_agent=scoped_agent,
         chain_agents=chain_agents,
+        continues_in=continues_in,
     )
 
     return {

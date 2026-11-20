@@ -15,7 +15,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 | Dashboard | Next.js 14 App Router | `dashboard/app/` |
 | Python SDK | `zizkadb-sdk` (PyPI) | `sdk/python/zizkadb/client.py` |
 | TypeScript SDK | `zizkadb-sdk` (npm) | `sdk/typescript/src/index.ts` |
-| Integrations | `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit` | `integrations/` (standalone) + LangChain/CrewAI bundled in `sdk/python/zizkadb/integrations/` |
+| Integrations | `zizkadb-langchain`, `zizkadb-crewai`, `zizkadb-livekit`, `zizkadb-langgraph`, OpenClaw plugin (`zizkadb-openclaw` npm / `@zizka-ai/zizkadb` ClawHub) | `integrations/` (standalone) + LangChain/CrewAI bundled in `sdk/python/zizkadb/integrations/` |
 | MCP server | `zizkadb-mcp` (PyPI, **MIT**) | `mcp/zizkadb_mcp/server.py` |
 | Infra | Docker Compose + single image | `infra/docker-compose.yml` (prod) + `infra/docker-compose.dev.yml` (dev overlay) · `infra/allinone/` (one container: Postgres, Redis, API, dashboard; used by the quickstart and Redu Cloud via `redu.md`) |
 | CI | GitHub Actions | `.github/workflows/ci.yml` (lint+tests+vitest) · `integration.yml` (weekly stack) · `publish-images.yml` (GHCR on `v*` tag) |
@@ -30,7 +30,7 @@ ZizkaDB is a causal event database for AI agents. It lets you log every agent ac
 | `dashboard/` | Next.js 14 marketing + authenticated dashboard. Source of truth: `dashboard/DASHBOARD_KNOWLEDGE_BASE.md` |
 | `sdk/python/` | Async Python client + `zizkadb init` CLI |
 | `sdk/typescript/` | TypeScript/JS HTTP client |
-| `integrations/` | Standalone LangChain, CrewAI, and LiveKit adapter packages |
+| `integrations/` | Standalone LangChain, CrewAI, LiveKit and LangGraph adapter packages, plus the OpenClaw plugin (TypeScript) |
 | `mcp/` | MCP server (MIT license — not AGPL) |
 | `infra/` | Docker Compose files, nginx, deploy scripts |
 | `scripts/` | Dev setup, release, smoke test, DB seed scripts |
@@ -113,6 +113,8 @@ cd dashboard && npm run lint && npm test && npm run build
 **SDK host resolution** — explicit `host` → `ZIZKADB_HOST` → legacy `AGENTDB_HOST` → ZizkaDB Cloud when an API key is given (Python `client.py`, TypeScript `index.ts`; blank values count as unset). Templates and examples pass `host = HOST or (None if API_KEY else "http://localhost:8000")` so they also work with the SDK already on PyPI.
 
 **Audit chain** — `services/audit_chain.py`: each event stores `chain_hash = sha256(prev + ":" + checksum)` per agent, written under the `agents` row lock. Any code that deletes events must do it through `delete_and_tombstone()` (one statement: the `DELETE`, its tombstones with the row's checksum, and the real count; then one chained erasure receipt per affected agent, ADR-009 H3), after taking the per-event locks with `lock_events()` (forget and retention do; deleting a whole agent drops its tombstones too), or `GET /v1/events/chain` reports a break (the verifier also checks each receipt's count and digest against the tombstones that name it). Retention (`services/retention.py`, background task under an advisory lock) does the same. The write path also records each agent's newest link (`agents.chain_head_seq` / `chain_head_hash`) for the verifier only, and keeps evidence in `chain_head_breaks` when it finds that link gone; never compute a link from the head. `parent_event_id` is a soft link (no foreign key), so a deleted parent never blocks deletes or changes a child's checksum.
+
+**Who wrote an event** — `services/writer.py`: every API write passes `written_by=writer_of(tenant)` to `write_event()`, which stores it as `metadata.written_by` (`api_key` with `key_id`/`key_prefix`, `dashboard` with `user_id`, or `dev_key`), replacing any client value, so the checksum and hash chain seal it. Imports keep the exporting server's writer as `metadata.written_by_original`. A new route that writes events must pass `written_by` too.
 
 **Redaction** — `services/redaction.py` runs in `write_event()` before the size check and the checksum: secret-named keys are always redacted, patterns only with `REDACT_PATTERNS`. Never store or log the pre-redaction payload.
 

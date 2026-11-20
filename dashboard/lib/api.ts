@@ -194,6 +194,8 @@ export interface AgentEvent {
   session_id: string | null
   sequence_no: number
   index_status?: 'pending' | 'indexed' | 'failed' | 'dead' | 'skipped'
+  /** Includes `written_by`, the credential that wrote the event (sealed by the server). */
+  metadata?: Record<string, unknown> | null
 }
 
 /** One tool or API an agent called, with its call count and error rate. */
@@ -222,6 +224,8 @@ export interface WhyChain {
   orphan?: boolean
   depth_truncated?: boolean
   scoped_agent_limited?: boolean
+  /** For a key scoped to one agent: where the chain continues in another agent (id only). */
+  continues_in?: { agent: string; event_id: string } | null
   event_id: string
   chain_length: number
   chain: AgentEvent[]
@@ -277,6 +281,44 @@ export async function getEvents(
   const data = await apiFetch<AgentEvent[] | { events?: AgentEvent[] }>(`/v1/events?${qs}`, token)
   // API returns either an array directly or { events: [] }
   return Array.isArray(data) ? data : data.events ?? []
+}
+
+/** One event on the timeline graph: no payload, just where and what. */
+export interface TimelineEvent {
+  event_id: string
+  timestamp: string
+  event: string
+  session_id: string | null
+  parent_id: string | null
+  is_error: boolean
+}
+
+export interface AgentTimeline {
+  agent: string
+  from: string
+  to: string
+  bucket_seconds: number
+  total: number
+  error_total: number
+  types: { event: string; count: number; errors: number }[]
+  /** Per time slot: events per type, and errors in total and per type. */
+  buckets: { start: string; total: number; errors: number; by_type: Record<string, number>; errors_by_type?: Record<string, number> }[]
+  /** Every event in the window, or null when there are more than point_limit. */
+  events: TimelineEvent[] | null
+  /** The window's error events, always individually (newest kept when capped). */
+  errors: TimelineEvent[]
+  errors_truncated: boolean
+  point_limit: number
+}
+
+export async function getAgentTimeline(
+  token: string,
+  agentId: string,
+  from: string,
+  to: string,
+): Promise<AgentTimeline> {
+  const qs = new URLSearchParams({ from, to }).toString()
+  return apiFetch(`/v1/agents/${encodeURIComponent(agentId)}/timeline?${qs}`, token)
 }
 
 export async function getWhyChain(token: string, eventId: string): Promise<WhyChain> {

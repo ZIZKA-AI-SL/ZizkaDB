@@ -1,6 +1,6 @@
 # zizkadb-mcp
 
-**PyPI:** [zizkadb-mcp 0.1.13](https://pypi.org/project/zizkadb-mcp/0.1.13/) · listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.ZIZKA-AI-SL/zizkadb-mcp`
+**PyPI:** [zizkadb-mcp 0.1.14](https://pypi.org/project/zizkadb-mcp/0.1.14/) · listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.ZIZKA-AI-SL/zizkadb-mcp`
 
 <!-- mcp-name: io.github.ZIZKA-AI-SL/zizkadb-mcp -->
 

@@ -5,6 +5,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Response, Depends, Request
+from services.writer import writer_of
 from services.exceptions import (
     conflict,
     not_found,
@@ -420,6 +421,7 @@ async def test_event(tenant: dict = Depends(require_dashboard_session)):
         agent="dashboard-connection-test",
         event="connection_test",
         data={"source": "dashboard_settings", "ok": True},
+        written_by=writer_of(tenant),
     )
     return {
         **result,

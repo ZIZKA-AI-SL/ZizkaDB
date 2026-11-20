@@ -14,7 +14,7 @@ How [CODING_STANDARDS.md](CODING_STANDARDS.md) applies to **this** codebase. Rea
 | Vector search | Qdrant | `core/services/event_write.py`, embeddings |
 | Cache | Redis 7 | Embedding cache, optional OTP rate limit |
 | SDKs | Python (async), TypeScript (sync) | `sdk/python/`, `sdk/typescript/` |
-| Integrations | LangChain, CrewAI, LiveKit | `integrations/` |
+| Integrations | LangChain, CrewAI, LiveKit, LangGraph, OpenClaw | `integrations/` |
 | MCP | MIT server | `mcp/` |
 
 ---

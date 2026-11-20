@@ -33,7 +33,7 @@ async with ZizkaDB() as db:  # uses ZIZKADB_HOST and ZIZKADB_API_KEY
     await db.log(agent="my-agent", event="tool_call", data={"tool": "search"}, parent_id=ask.event_id)
 ```
 
-Framework callbacks (LangChain, CrewAI, LangGraph, LiveKit), TypeScript and MCP: [CONNECT.md](../../CONNECT.md).
+Framework callbacks (LangChain, CrewAI, LangGraph, LiveKit, OpenClaw), TypeScript and MCP: [CONNECT.md](../../CONNECT.md).
 
 ## One agent per install
 

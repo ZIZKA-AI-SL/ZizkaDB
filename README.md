@@ -9,33 +9,33 @@
 Every agent decision linked to its cause. **Causal agent memory**, a **tamper-evident audit log** and **time-travel debugging**,<br/>
 in one open-source database on Postgres. Built for **EU AI Act Article 12** record-keeping.
 
-Keyword + vector search · Drift detection · MCP server · Python & TypeScript SDKs · Self-host or cloud
+Keyword + vector search · Agent drift measurement · MCP server · Python & TypeScript SDKs · Self-host or cloud
 
-**[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations-langchain-langgraph-crewai-livekit-mcp)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
+**[Quickstart](#quickstart-60-seconds)** · **[Docs](DEVELOPMENT.md)** · **[Integrations](#integrations-langchain-langgraph-crewai-livekit-openclaw-mcp)** · **[Connect](CONNECT.md)** · **[Cloud](https://db.zizka.ai)** · **[Discussions](https://github.com/ZIZKA-AI-SL/ZizkaDB/discussions)** · **[Contributing](CONTRIBUTING.md)**
 
 [![CI](https://github.com/ZIZKA-AI-SL/ZizkaDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZIZKA-AI-SL/ZizkaDB/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/16048/baseline)](https://www.bestpractices.dev/projects/16048)
 [![Audited by AddonAudit](https://addonaudit.com/badges/audited.svg)](https://addonaudit.com/addon/io-github-zizka-ai-sl-zizkadb-mcp/)
 [![Release](https://img.shields.io/github/v/release/ZIZKA-AI-SL/ZizkaDB?color=f97316&label=release)](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases)
-[![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK&logo=python&logoColor=white)](https://pypi.org/project/zizkadb-sdk/)
+[![Python SDK](https://img.shields.io/pypi/v/zizkadb-sdk?label=Python%20SDK&logo=python&logoColor=white&cacheSeconds=3600)](https://pypi.org/project/zizkadb-sdk/)
 [![TypeScript SDK](https://img.shields.io/npm/v/zizkadb-sdk?label=TypeScript%20SDK)](https://www.npmjs.com/package/zizkadb-sdk)
 [![GitHub stars](https://img.shields.io/github/stars/ZIZKA-AI-SL/ZizkaDB?style=flat)](https://github.com/ZIZKA-AI-SL/ZizkaDB/stargazers)
-[![PyPI downloads](https://img.shields.io/pepy/dt/zizkadb-sdk?label=PyPI%20downloads)](https://pepy.tech/projects/zizkadb-sdk)
-[![npm downloads](https://img.shields.io/npm/d18m/zizkadb-sdk?label=npm%20downloads)](https://www.npmjs.com/package/zizkadb-sdk)
+
+<a href="#downloads"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads.json&style=for-the-badge" height="36" alt="Total downloads, all packages (see the per-package breakdown)" /></a>
 
 <a href="https://postyourstartup.co/startup/zizkadb-1?ref=award" target="_blank"><img src="https://postyourstartup.co/api/badge/zizkadb-1/award?theme=light&week=32" alt="#1 Product of the Week on PostYourStartup" width="212" height="55" /></a>
 
 </div>
 
-Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed. Observability platforms show you what happened; ZizkaDB is an **AI agent auditability platform** that proves why, through **causal lineage**, from **agent debugging** to **AI compliance**.
+Every agent team eventually asks: *Why did it say that? Why did it call that tool?* ZizkaDB links every agent step to the step that caused it, so you get the answer in one call instead of scrolling through traces. That causal record is also the agent's **auditable memory** for its next run, and a **tamper-evident audit log** you can prove was never changed. Observability platforms show you what happened; ZizkaDB is an **AI agent auditability platform** that proves why, through **causal lineage**, from **agent debugging** to **AI compliance**. Under the hood it is an **agentic database**: an operational database for AI agents in which every event is SHA-256 checksummed and hash-chained, so its record works as **cryptographic telemetry for AI agents** that any **agent audit** can verify.
 
 - **Causal lineage, not just traces.** Each event carries a `parent_id`. `db.why(event_id)` walks back to the user message, wrong tool, or bad context that started it.
 - **Time-travel debugging and session replay.** `db.at(agent, timestamp)` rebuilds exactly what the agent knew at any past moment, and you can replay any session step by step.
 - **Provable history.** Every event has a checksum and is hash-chained to the one before it, so `db.verify_chain(agent)` proves nothing was edited, removed or reordered. GDPR deletions leave a content-free tombstone. A verifiable record for EU AI Act Article 12.
 - **Causal agent memory for the next run.** `db.context_for(agent, task)` returns the relevant past as a prompt block, ranked by relevance, importance and recency; a new fact can replace an old one (`supersedes`). Keyword search works with no OpenAI key, hybrid with embeddings, or embed locally.
 - **Built database.** Idempotent and batch writes, retention, export/import, read-only and expiring keys, Prometheus metrics, backup and restore scripts.
-- **Drift detection.** See when an agent's behavior shifts from its baseline.
+- **Agent drift measurement.** `db.baseline(agent)` scores how far an agent's recent sessions have moved from its baseline (0 = stable), so you catch **agent drift** before your users do.
 - **Self-host or cloud.** Run it on your own Postgres with one Docker command, or use [ZizkaDB Cloud](https://db.zizka.ai). AGPL-3.0, no per-trace billing; self-hosted data never leaves your infrastructure. Self-hosted runs **one agent with one API key**; multiple agents, agent fleets and agent-to-agent messaging are on Cloud.
 
 **In plain words:** ZizkaDB is a flight recorder for AI agents. It records every step an agent takes and which step led to it, so when an agent does something unexpected, you can see exactly why.
@@ -57,7 +57,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 
 - [Quickstart (60 seconds)](#quickstart-60-seconds)
   - [Self-host on a server](#self-host-on-a-server) · [Deploy on Redu Cloud](#deploy-on-redu-cloud)
-- [Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP](#integrations-langchain-langgraph-crewai-livekit-mcp)
+- [Integrations: LangChain, LangGraph, CrewAI, LiveKit, OpenClaw, MCP](#integrations-langchain-langgraph-crewai-livekit-openclaw-mcp)
 - [Connect your agent](#connect-your-agent)
 - [What it does](#what-it-does)
 - [Audit trail, agent auditability and EU AI Act Article 12](#audit-trail-agent-auditability-and-eu-ai-act-article-12)
@@ -65,6 +65,7 @@ Every agent team eventually asks: *Why did it say that? Why did it call that too
 - [Use with your AI assistant (MCP)](#use-with-your-ai-assistant-mcp)
 - [ZizkaDB vs Langfuse, LangSmith and Mem0](#zizkadb-vs-langfuse-langsmith-and-mem0-causality-not-just-traces-or-recall)
 - [Cloud, FAQ and docs](#more)
+- [Downloads](#downloads)
 - [Contributors](#contributors)
 
 ---
@@ -183,14 +184,14 @@ Full guide: **[DEVELOPMENT.md](DEVELOPMENT.md)** · Troubleshooting: [wiki/Troub
 
 ---
 
-## Integrations: LangChain, LangGraph, CrewAI, LiveKit, MCP
+## Integrations: LangChain, LangGraph, CrewAI, LiveKit, OpenClaw, MCP
 
 Works with the agent framework you already use — add one package and every step is logged with its cause.
 
 **In CI (GitHub Marketplace):** [ZizkaDB Why](https://github.com/marketplace/actions/zizkadb-why-explain-ai-agent-failures) explains agent test failures in your PR, and [ZizkaDB Audit](https://github.com/marketplace/actions/zizkadb-audit-verify-ai-agent-history) proves the recorded history is intact. One step, no account: `uses: ZIZKA-AI-SL/zizkadb-why-action@v1`. [How it works](docs/integrate/github-actions.md).
 
 <p align="center">
-  <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/python/3776AB" alt="Python" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt="TypeScript" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#langchain"><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="LangChain" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#crewai"><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="CrewAI" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#livekit-agents-voice"><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="LiveKit" height="40"/></a> &nbsp;&nbsp; <a href="mcp/README.md"><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="MCP" height="40"/></a> &nbsp;&nbsp; <a href="https://db.zizka.ai/swagger"><img src="https://cdn.simpleicons.org/swagger/85EA2D" alt="REST API" height="40"/></a>
+  <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/python/3776AB" alt="Python" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt="TypeScript" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#langchain"><img src="https://cdn.simpleicons.org/langchain/1C9C8C" alt="LangChain" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#crewai"><img src="https://cdn.simpleicons.org/crewai/FF5A50" alt="CrewAI" height="40"/></a> &nbsp;&nbsp; <a href="CONNECT.md#livekit-agents-voice"><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="LiveKit" height="40"/></a> &nbsp;&nbsp; <a href="integrations/openclaw/README.md"><img src="https://docs.openclaw.ai/assets/pixel-lobster.svg" alt="OpenClaw" height="40"/></a> &nbsp;&nbsp; <a href="mcp/README.md"><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="MCP" height="40"/></a> &nbsp;&nbsp; <a href="https://db.zizka.ai/swagger"><img src="https://cdn.simpleicons.org/swagger/85EA2D" alt="REST API" height="40"/></a>
 </p>
 
 <table>
@@ -224,6 +225,11 @@ Works with the agent framework you already use — add one package and every ste
     <td nowrap><img src="https://cdn.simpleicons.org/livekit/A970FF" alt="" height="20" align="center"/>&nbsp;<a href="CONNECT.md#livekit-agents-voice"><strong>LiveKit</strong></a></td>
     <td><code>pip install zizkadb-livekit</code></td>
     <td>Voice agents — one call, one session</td>
+  </tr>
+  <tr>
+    <td nowrap><img src="https://docs.openclaw.ai/assets/pixel-lobster.svg" alt="" height="20" align="center"/>&nbsp;<a href="integrations/openclaw/README.md"><strong>OpenClaw</strong></a></td>
+    <td><code>openclaw plugins install clawhub:@zizka-ai/zizkadb</code></td>
+    <td>Plugin: every message, tool call and model output, with its cause</td>
   </tr>
   <tr>
     <td nowrap><img src="https://cdn.simpleicons.org/modelcontextprotocol/8B949E" alt="" height="20" align="center"/>&nbsp;<a href="mcp/README.md"><strong>MCP</strong></a></td>
@@ -269,9 +275,22 @@ const tool = await db.log({ agent: 'my-bot', event: 'tool_call', data: { tool: '
 ;(await db.why(tool.eventId)).print()
 ```
 
+Or record every LLM call: `instrument(db, { agent: 'my-bot', clients: [openai, anthropic] })`, or wrap any Vercel AI SDK model with `zizkadbMiddleware(db, { agent: 'my-bot' })`.
+
 </details>
 
-From the terminal: `zizkadb why <event_id>`. Full guide: **[CONNECT.md](CONNECT.md)**
+**Or record every LLM call with one line** (Python): OpenAI and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, Mistral, Cohere, AWS Bedrock, the native `ollama` package, LiteLLM, and models run in-process with `llama-cpp-python` or Hugging Face `transformers`:
+
+```python
+import zizkadb
+from zizkadb import ZizkaDB
+
+zizkadb.instrument(ZizkaDB(host="http://localhost:8000"), agent="my-bot")
+# Use OpenAI, Anthropic or LiteLLM as usual: every call, tool call and tool
+# result is recorded with its cause, plus token usage. No db.log() needed.
+```
+
+From the terminal: `zizkadb why <event_id>`, or turn a bad session into a pytest regression test with `zizkadb test from-session <session_id> --agent my-bot`. Full guide: **[CONNECT.md](CONNECT.md)**
 
 ---
 
@@ -284,10 +303,13 @@ Use ZizkaDB to **audit AI agents** in production, debug them from cause to effec
 | **Debug** | `db.why(event_id)` | The causal chain behind any event |
 | | `db.at(agent, timestamp)` | What the agent knew at a past moment |
 | | `db.baseline(agent)` | Drift detection: alerts when behavior shifts from past sessions |
+| | Event timeline (dashboard) | Each agent's events over time as spikes by event type, errors in red; click any spike to open its events and why chain |
 | **Causal agent memory** | `db.context_for(agent, task)` | Relevant past events as a prompt block (relevance × importance × recency) |
 | | `db.search(query, mode=)` | Keyword search out of the box; hybrid keyword + vector with embeddings |
 | | `db.log(..., supersedes=, importance=)` | Replace an outdated fact; weight what matters |
 | **Audit** | `db.verify_chain(agent)` | Proof that no event was edited, removed or reordered |
+| | `metadata.written_by` | Which credential wrote each event (API key, dashboard user or dev key), set by the server and sealed into the checksum |
+| | `ZizkaDB(agent_version=...)` | The prompt or config version that ran, recorded on every event |
 | | `db.forget(key, value)` | GDPR erasure, including the search index, leaving a tombstone (no content; its chain link and checksum let someone with database access confirm an exact guessed event) |
 | | `db.export_events(agent)` / `db.import_events(...)` | Portable NDJSON copy; move between self-host and Cloud |
 | **Operate** | `db.log(..., idempotency_key=)` / `db.log_batch(events)` | Safe retries; up to 500 events per request |
@@ -296,15 +318,16 @@ Use ZizkaDB to **audit AI agents** in production, debug them from cause to effec
 
 ### Audit trail, agent auditability and EU AI Act Article 12
 
-Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record:
+Article 12 of the EU AI Act requires high-risk AI systems to automatically keep logs of what they did. ZizkaDB gives you that record, so an agent audit can check exactly what each agent did and why:
 
 - **Checksum-backed decision logs.** Every event is stored with a SHA-256 checksum over its content and audit fields (agent, session, parent, timestamp, sequence), and `GET /v1/events/verify` reports any row whose fields no longer match. Events are also hash-chained per agent, so `GET /v1/events/chain` proves no event was removed, inserted or reordered (GDPR deletions leave a content-free tombstone).
 - **Causally linked history.** Each decision points to the event that caused it, so an auditor can follow the full chain.
+- **Who and which version.** Every event records the credential that wrote it (`metadata.written_by`, set by the server and covered by the checksum and hash chain) and, when set, the agent version that ran (`metadata.agent_version`).
 - **Session replay.** Step through any past session event by event.
 - **Time-travel debugging.** Rebuild exactly what the agent knew at any moment with `db.at()`.
-- **Drift detection.** `db.baseline()` flags when an agent starts behaving differently from its history.
+- **Agent drift measurement.** `db.baseline()` gives a drift score and flags when an agent starts behaving differently from its history.
 
-ZizkaDB supports your record-keeping obligations; it doesn't make a system compliant on its own.
+ZizkaDB supports your record-keeping obligations under EU AI Act Article 12 and is one building block of **EU AI Act compliance**; it doesn't make a system compliant on its own.
 
 <p align="center">
   <a href="https://db.zizka.ai"><img src="docs/assets/readme-hero-dashboard.png" alt="ZizkaDB dashboard: causal chain of an AI agent decision, tamper-evident audit log and agent memory" width="900"/></a>
@@ -316,7 +339,7 @@ ZizkaDB supports your record-keeping obligations; it doesn't make a system compl
 
 ```mermaid
 flowchart LR
-    A[Your agent<br/>SDK · LangChain · CrewAI · LiveKit] -->|events + parent_id| B[ZizkaDB API]
+    A[Your agent<br/>SDK · LangChain · CrewAI · LiveKit · OpenClaw] -->|events + parent_id| B[ZizkaDB API]
     D[Dashboard] --> B
     M[MCP server<br/>Cursor · Claude] --> B
     B --> P[(PostgreSQL<br/>events · hash chain · keyword search)]
@@ -377,12 +400,12 @@ The same features, hosted at [db.zizka.ai](https://db.zizka.ai). No Docker to ma
 | | **Pro** | **Team** |
 | --- | --- | --- |
 | Price | €29 / mo | €69 / mo |
-| Events / mo† | 50k | 100k |
-| API keys | 2 | 5 |
+| Events / month | 500,000 | 1,500,000 |
+| Agents (one API key each) | 3 | 10 |
 
 [Sign up →](https://db.zizka.ai/signup/plan)
 
-† Plan targets on managed cloud; not enforced in API yet. See [docs/README.md](docs/README.md#plan-limits-honest).
+Limits are enforced by ZizkaDB Cloud. See [docs/README.md](docs/README.md#plan-limits-honest).
 
 </details>
 
@@ -410,14 +433,17 @@ No. Logging, `why()`, time travel, keyword search and `context_for()` work witho
 **How is ZizkaDB different from an agent memory layer like Mem0?**  
 A memory layer stores facts to recall. ZizkaDB stores what the agent did and *why*, linked step by step, and serves the relevant part back as memory (`context_for()`). The same record is a tamper-evident audit log, so memory, debugging and compliance come from one source.
 
+**Is ZizkaDB an agentic database?**  
+Yes. ZizkaDB is an agentic database: an operational database for AI agents rather than a general-purpose store. Its records are built for agent auditability: causal links, SHA-256 checksums and a hash chain, which together act as cryptographic telemetry for AI agents.
+
 **Is ZizkaDB an observability tool?**  
 No. Observability and LLMOps tools such as Langfuse or LangSmith show you span trees of what happened. ZizkaDB is an auditability platform: every event points to the event that caused it, `db.why()` returns the chain, and `db.verify_chain()` proves the record was never changed. It works next to an observability tool if you already have one.
 
 **Can I use ZizkaDB as an audit log for the EU AI Act (Article 12)?**  
-Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations; it doesn't make a system compliant on its own.
+Yes, as the record-keeping part: every event is checksummed and hash-chained per agent, `verify_chain()` proves nothing was edited, removed or reordered, and GDPR erasure leaves a tombstone. It supports your obligations and is part of EU AI Act compliance work; it doesn't make a system compliant on its own.
 
 **How do I prove the logs weren't changed?**  
-`db.verify_chain(agent)` (or `GET /v1/events/chain`) rechecks every checksum and link and returns the chain head. Store the head somewhere else; checking again later from that head proves nothing before it was rewritten.
+`db.verify_chain(agent)` (or `GET /v1/events/chain`) rechecks every checksum and link and returns the chain head. Store the head somewhere else; checking again later from that head proves nothing before it was rewritten. To keep that copy out of reach of whoever controls the database, timestamp it and give a copy to someone else: [docs/integrate/anchor-chain-head.md](docs/integrate/anchor-chain-head.md).
 
 **My server's login page asks for an admin token. Where is it?**  
 A server install generates one on first start. Single container: `docker exec zizkadb sed -n 's/^GEN_SELFHOST_ADMIN_TOKEN=//p' /data/secrets.env`. Full stack: the `SELFHOST_ADMIN_TOKEN` you set in `infra/.env`. After signing in, create your API key in **Settings**.
@@ -444,6 +470,20 @@ The stack isn't running. Start it with the curl command above or `bash scripts/s
 | AI-assisted development | [AGENTS.md](AGENTS.md) |
 
 </details>
+
+## Downloads
+
+All-time downloads of every ZizkaDB package, refreshed daily. The total badge at the top is the sum of these.
+
+| Package | Registry | Downloads | Source |
+| --- | --- | --- | --- |
+| `zizkadb-sdk` (Python SDK) | PyPI | [![zizkadb-sdk](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-sdk.json)](https://pepy.tech/projects/zizkadb-sdk) | [pepy.tech](https://pepy.tech/projects/zizkadb-sdk) · [pypi.org](https://pypi.org/project/zizkadb-sdk/) |
+| `zizkadb-mcp` (MCP server) | PyPI | [![zizkadb-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-mcp.json)](https://pepy.tech/projects/zizkadb-mcp) | [pepy.tech](https://pepy.tech/projects/zizkadb-mcp) · [pypi.org](https://pypi.org/project/zizkadb-mcp/) |
+| `zizkadb-langchain` | PyPI | [![zizkadb-langchain](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-langchain.json)](https://pepy.tech/projects/zizkadb-langchain) | [pepy.tech](https://pepy.tech/projects/zizkadb-langchain) · [pypi.org](https://pypi.org/project/zizkadb-langchain/) |
+| `zizkadb-crewai` | PyPI | [![zizkadb-crewai](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-pypi-zizkadb-crewai.json)](https://pepy.tech/projects/zizkadb-crewai) | [pepy.tech](https://pepy.tech/projects/zizkadb-crewai) · [pypi.org](https://pypi.org/project/zizkadb-crewai/) |
+| `zizkadb-sdk` (TypeScript SDK) | npm | [![zizkadb-sdk npm](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-npm-zizkadb-sdk.json)](https://npm-stat.com/charts.html?package=zizkadb-sdk) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-sdk) · [npmjs.com](https://www.npmjs.com/package/zizkadb-sdk) |
+| `@zizka-ai/zizkadb` (OpenClaw plugin) | ClawHub | [![zizkadb ClawHub](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-clawhub-zizka-ai-zizkadb.json)](https://clawhub.ai/plugins/@zizka-ai/zizkadb) | [clawhub.ai](https://clawhub.ai/plugins/@zizka-ai/zizkadb) |
+| `zizkadb-openclaw` (OpenClaw plugin) | npm | [![zizkadb-openclaw npm](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FZIZKA-AI-SL%2FZizkaDB%2Fbadges%2Fdownloads-npm-zizkadb-openclaw.json)](https://npm-stat.com/charts.html?package=zizkadb-openclaw) | [npm-stat.com](https://npm-stat.com/charts.html?package=zizkadb-openclaw) · [npmjs.com](https://www.npmjs.com/package/zizkadb-openclaw) |
 
 ---
 

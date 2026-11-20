@@ -13,8 +13,10 @@
 | **Any framework / custom code** | [any-agent.md](any-agent.md) |
 | **What's officially supported** | [frameworks.md](frameworks.md) |
 | **LiveKit voice agents** | [integrations/livekit.md](../integrations/livekit.md) |
+| **OpenClaw agents** | [integrations/openclaw](../../integrations/openclaw/) (plugin) |
 | **Copy-paste quickstart** | [CONNECT.md](../../CONNECT.md) |
 | **GitHub Actions (CI)** | [github-actions.md](github-actions.md): ZizkaDB Why and ZizkaDB Audit |
+| **Prove the history to an auditor** | [anchor-chain-head.md](anchor-chain-head.md): timestamp the chain head outside ZizkaDB |
 
 ## Minimal Python (local)
 

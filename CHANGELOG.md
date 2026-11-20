@@ -6,20 +6,96 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### API Key Scopes
+## [0.8.0] - 2026-11-19
 
-- New `scope` field on webhook subscriptions (`core/api/webhooks.py`): create a webhook with `scope` to restrict its permissions. Legacy values `read_write` (events:read,events:write), `read_only` (events:read), and `admin` (everything) are accepted alongside new scoped values (`events:read`, `events:write`, `events:delete`, `agents:read`, `agents:write`, `agents:manage`, `webhooks:read`, `webhooks:write`, `webhooks:manage`).
-- New `scope` field on `POST /v1/auth/api-keys` and `POST /v1/agents/{id}/api-keys` to create keys with fine-grained permissions.
-- Write routes (`POST /v1/events`, `/batch`, `/import`, `DELETE /v1/memory/forget`) now require `events:write` or `events:delete` scope; read routes (`GET /v1/events`, `/why`, `/impact`, etc.) require `events:read`.
-- The `scope` column in `api_keys` is now `VARCHAR(255)` to accommodate comma-separated scope lists; existing `read_write`/`read_only` values continue to work.
+Released packages: `zizkadb-sdk` 0.8.0 (PyPI and npm), server images `v0.8.0`, OpenClaw plugin 0.1.2 (ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`). `zizkadb-mcp` is unchanged at 0.1.14 (now also the latest version in the MCP Registry). The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.8.0. OpenClaw plugin 0.1.0 and 0.1.1 were released earlier; 0.1.2 is part of this release.
 
-### Webhooks
+**Upgrading a self-hosted install that never set `DEPLOYMENT_MODE`:** it now runs as self-hosted (one agent, one API key), so set `SELFHOST_ADMIN_TOKEN` in `infra/.env` to sign in to the dashboard.
 
-- New `webhook_subscriptions` table (`core/db/schema.sql`, idempotent DDL in `init_db()`): one row per subscriber, tenant-scoped, with optional agent/event-type filters and HMAC-SHA256 signing.
-- New `/v1/webhooks` routes (`core/api/webhooks.py`): list, create (returns secret once), get, patch, delete, and test. All require a dashboard session.
-- Webhook delivery is fire-and-forget from `write_event()` via `asyncio.create_task()`, with retry and exponential backoff (`WEBHOOK_MAX_RETRIES`, `WEBHOOK_RETRY_BASE_SEC`). Delivery failures never block event writes.
-- SSRF protection: subscriber URLs are validated at create and delivery time — only `https` (unless `ENV=development`), no loopback/private/link-local/multicast hosts, redirects disabled.
-- Dashboard types added to `dashboard/lib/api.ts`; endpoint map and data model documented in `DASHBOARD_KNOWLEDGE_BASE.md` §17.3 and §21; outbound-request behavior noted in `docs/telemetry.md`.
+**Highlights**
+
+- **Event timeline.** A graph of each agent's events over time as vertical spikes, stacked by event type with errors in red; click any spike or dot to open its events, the why chain and the recorded data.
+- **Every event records who wrote it.** `metadata.written_by` (API key, dashboard user or dev key) is set by the server and sealed by the checksum and hash chain.
+- **Agent version.** `agent_version` / `agentVersion` / `ZIZKADB_AGENT_VERSION` stamps `metadata.agent_version` on every event, auto-capture included.
+- **Open source stays one agent with one API key, by default.**
+
+### Added
+- **Agent version:** `agent_version` / `agentVersion` / `ZIZKADB_AGENT_VERSION` records `metadata.agent_version` on every event, including auto-capture.
+- **Every event records who wrote it.** The server stores the credential behind each write as `metadata.written_by` (`api_key` with key id and prefix, `dashboard` with the user id, or `dev_key`). A client cannot set or change it, and the event checksum and the agent's hash chain cover it, so changing it afterwards fails `verify`. Imports keep the original writer as `written_by_original`. Events written before this release have no `written_by`.
+- **Responsibility in the event timeline:** the details panel shows the agent, who wrote the event, the model and the agent version, and marks where the causal chain first went wrong (agent, writer and model of that step). Chains that cross agents name the agent of each step.
+- **Event timeline in the dashboard:** an **Event timeline** button on Activity opens a graph of the agent's events against time, one colour per event type, errors as red dots with red spikes in the activity strip. Choose the window with 1h / 24h / 7 days / 30 days, exact From/To dates, a draggable 30-day overview strip, or by dragging across the graph. Clicking a dot shows its chat and step, the why chain, the chat with the event highlighted, the recorded data and the `zizkadb test from-session` command. Backed by a new endpoint, `GET /v1/agents/{agent}/timeline?from=&to=` (any key or session that can read the agent): counts per time bucket and event type, every event when the window holds at most 1,500, and error events always individually, so grouping never hides a failure.
+- **OpenClaw plugin** 0.1.0 (`integrations/openclaw/`; ClawHub `@zizka-ai/zizkadb`, npm `zizkadb-openclaw`): records each OpenClaw turn as one causal chain (`user_message` → `tool_call` → `tool_result` → `llm_end` → `assistant_response`, plus `tool_error` / `agent_error`) with token usage, per conversation session. Observe-only, `captureContent: false` for metadata only, optional `zizkadb_why` and `zizkadb_search` tools. Tested inside a real OpenClaw 2026.11.3 gateway against a ZizkaDB server (`why()` complete, audit chain intact).
+
+### Changed
+- **Event timeline shows spikes.** The main graph is now vertical spikes: one bar per time slot, as tall as the number of events, coloured by event type, with errors as a red cap and count on top, so you see at a glance what spiked and where errors happened. Hover a spike for its breakdown; click a colour to list those events, or the red part to list the errors, then open any of them. The per-type lane view stays one click away (**By type**). The timeline API adds `errors_by_type` to each bucket.
+- **OpenClaw plugin 0.1.2:** sends the anonymous install ping every ZizkaDB package sends, as its own package (`sdk: "openclaw"`), once per gateway process when it first connects to ZizkaDB. Before, the plugin was only counted through the bundled TypeScript SDK. Same fields as the SDKs, nothing new collected; `ZIZKADB_TELEMETRY=false` turns it off. Documented in the plugin README and `docs/telemetry.md`.
+
+### Fixed
+- **Dashboard empty states no longer say events come only "with the SDK".** The Events tab of a new agent, the agent keys section, Settings and Agent Fleets now name every way to send events: the REST API, an SDK, MCP or a framework integration.
+- **Event timeline: clicking a grouped dot opens its events.** When the window holds more than 1,500 events, dots stand for groups; a click used to zoom into that time slot, which did nothing once the window was at its 5-minute minimum, so a dense run (thousands of events a minute) could never be opened. A grouped dot now lists its events in the side panel (50 at a time, up to 1,000, with "Zoom in to this time" while the window can still narrow), and each opens its full details with a link back to the list.
+- **Open source stays one agent with one API key, by default and in every SDK.** `DEPLOYMENT_MODE` now defaults to `self_hosted` in the code and in `infra/docker-compose.yml` (it defaulted to `managed`, where plan caps were off, so a stack started without `infra/.env` allowed any number of agents and keys); only ZizkaDB Cloud sets `managed`. The open-source SDKs (Python, TypeScript) and MCP server have no multi-agent features: the unreleased agent-to-agent handoff helpers are removed. Multiple agents and handoffs between them are ZizkaDB Cloud features, used through the Cloud API and hosted MCP server. **Upgrading a self-hosted install that never set `DEPLOYMENT_MODE`:** it now runs as self-hosted, so set `SELFHOST_ADMIN_TOKEN` in `infra/.env` to sign in to the dashboard (the self-hosted dashboard already expected this).
+- **ZizkaDB Cloud plan numbers match the service:** Pro 3 agents and 3 API keys and 500,000 events a month, Team 10 agents and 10 API keys and 1,500,000 events a month (one API key per agent), in `PLAN_ENTITLEMENTS`, the pricing cards, the README, the trust page (now with an agents column), the docs and `.env.example`. The notes saying event caps are "not enforced" are gone: ZizkaDB Cloud enforces them. Self-hosted is unchanged: one agent, one API key, no monthly cap.
+- **why() for a key scoped to one agent no longer reports a cut-off chain as complete.** When the cause was recorded by another agent, the response now says `scoped_agent_limited: true`, `chain_complete: false`, and `continues_in: {agent, event_id}` (no content), for `GET /v1/events/{id}/why` and `GET /v1/sessions/{session}/why/{id}`. Dashboard sessions still see the whole chain.
+- **Creating an agent with metadata Postgres cannot store** (a lone UTF-16 surrogate, a NUL character, NaN or Infinity) returns **400** naming the field, instead of a 500, with the same check event writes use (#410 by @xh123637).
+
+### Security
+- **OpenClaw plugin dev dependencies:** `undici` 6.28.0 → 6.29.1 (TLS certificate validation bypass and denial of service; GHSA alerts #105, #108, #109) and `zod` 4.6.5 → 4.6.7 (memory exhaustion, GHSA-mrhx-c7xc-m3w5), through `overrides` in `integrations/openclaw/package.json`. Both came only from the `openclaw` dev dependency (via its bundled `npm`); the published plugin bundles neither, so installed plugins are unaffected and need no update.
+- **OpenClaw plugin 0.1.1:** the optional `zizkadb_why` and `zizkadb_search` tools are limited to the conversation they run in (from OpenClaw's trusted tool context, not model arguments). Search asks the server for that conversation's events only; `why` answers "not found" for another conversation's event and drops foreign ancestors; no tools without a conversation. Results are labelled as untrusted historical data. Fixes the cross-conversation disclosure (MCP01) and stored prompt-injection (MCP06) findings of ClawHub's scan of 0.1.0. The tools were off by default; recording is unchanged.
+
+### Documentation
+- **Anchoring the chain head** (`docs/integrate/anchor-chain-head.md`): how to keep `chain_head` outside the database operator's reach (an RFC 3161 timestamp from a timestamp authority, with copies held by another party) and check later from it with `after_seq` / `anchor`. Tested: deleting the newest events and moving the recorded head back passes a full check but fails the anchored check with `anchor_mismatch`. Linked from the README FAQ, CONNECT.md, ADR-009 and the security assessment.
+
+## [0.7.0] - 2026-11-11
+
+Released packages: `zizkadb-sdk` 0.7.0 (PyPI and npm), `zizkadb-mcp` 0.1.14, server images `v0.7.0`. The LangChain, CrewAI, LangGraph and LiveKit integrations are unchanged and work with SDK 0.7.0. No server upgrade steps.
+
+**Highlights**
+
+- **One-line auto-capture.** `zizkadb.instrument(db, agent=...)` (Python) and `instrument(db, { agent, clients })` (TypeScript) record every LLM call, tool call and tool result as causally linked events with token usage, so `db.why()` works with no `db.log()` calls. Covers OpenAI (chat and Responses API) and every OpenAI-compatible API (DeepSeek, GLM, Kimi, Qwen, Groq, Ollama, vLLM, ...), Anthropic, Google Gemini, Mistral, Cohere, AWS Bedrock, LiteLLM, the native `ollama` package, and in-process `llama-cpp-python` / `transformers`; the Vercel AI SDK through `zizkadbMiddleware`. Streaming included.
+- **Bad runs become regression tests.** `zizkadb test from-session` (pytest) and `npx zizkadb-sdk test from-session` (vitest) turn a recorded session into a test that checks the agent takes the same tool path without errors; `capture()` records agent calls in memory inside any test.
+- **CI runs are not installs.** The install ping says where it runs (`ci`, `container`, `machine`).
+
+### Native SDKs and in-process models
+
+- **Python `instrument()`** now also records **Mistral** (`mistralai` v1 and v2+: `chat.complete`, `chat.stream`, async), **Cohere** (`ClientV2` / `AsyncClientV2` `chat`, `chat_stream`), **AWS Bedrock** through boto3 (`converse`, `converse_stream`; other AWS calls pass through untouched) and models run **in-process**: `llama-cpp-python` (`Llama.create_chat_completion`, streaming) and Hugging Face `transformers` text-generation pipelines. In-process libraries are patched only when the app imported them first, so `instrument()` never loads PyTorch or llama.cpp itself.
+- **TypeScript `instrument()`** now also records **Mistral** (`@mistralai/mistralai`), **Cohere** (`cohere-ai` `CohereClientV2`) and **AWS Bedrock** (`@aws-sdk/client-bedrock-runtime` Converse / ConverseStream commands).
+- Recorded tool results and arguments are converted to plain JSON first, so SDK objects (Cohere documents, pydantic models) never break a write.
+
+### More providers (Python and TypeScript SDKs)
+
+- **Python `instrument()`** now also records **Google Gemini** (`google-genai`: `generate_content`, `generate_content_stream`, chats; sync and async), the **native `ollama` package** (`ollama.chat`, `Client`, `AsyncClient`, streaming) and **Zhipu's SDKs** (`zai-sdk`, `zhipuai`). Tools without call ids (ollama, some Gemini calls) are matched to their call by tool name.
+- **TypeScript `zizkadbMiddleware(db, { agent })`** for the **Vercel AI SDK**: wrap any AI SDK model (Gemini, OpenAI, Anthropic, DeepSeek, Mistral, Groq, Ollama, ...) and `generateText` / `streamText` are recorded, including multi-step tool loops. AI SDK 4, 5 and 6 (model spec v1-v3); inside `capture()` the events go to the test run.
+- **OpenAI-compatible providers (DeepSeek, GLM, Kimi, ...) in both SDKs**: reasoning text (`reasoning_content`) is recorded as `reasoning` on `llm_end` (also Gemini thoughts and ollama `thinking`), and cached tokens are read from each provider's field (`prompt_cache_hit_tokens`, `cached_tokens`, `prompt_tokens_details.cached_tokens`) along with reasoning tokens. `capture_content=False` keeps reasoning out too.
+
+### TypeScript SDK
+
+- **`npx zizkadb-sdk test from-session <session_id> --agent <agent>`**: the TypeScript counterpart of the Python command. Writes a session snapshot and a **vitest** test that replays the inputs through your agent (`--entry src/agent.ts:fn`, `--clients openai,anthropic`) and checks the same tool path without errors.
+- **`capture({ clients }, fn)`**: records an agent's OpenAI / Anthropic calls in memory for tests; any `instrument()` in the app stays quiet meanwhile.
+- **`instrument()` accepts client classes** (`clients: [OpenAI, Anthropic]`), recording every instance, including ones created later.
+
+### Python SDK
+
+- **Anthropic `messages.stream()` is recorded** (sync and async): it posts directly instead of calling `create()`, so it is wrapped and recorded from its message snapshot when the `with` block exits (complete, `truncated`, or `llm_error`). The OpenAI `.stream()` helpers already go through `create()` and are recorded; both are now covered by tests and docs, in both SDKs.
+
+### Python and TypeScript SDKs
+
+- **`instrument()` records streaming calls** (`stream=True` / `stream: true`) for OpenAI chat completions, the OpenAI Responses API, Anthropic messages and LiteLLM. The caller gets the provider's stream unchanged; chunks are read as they pass, and when the stream ends `llm_end` carries the full output and token usage and each streamed tool call becomes a `tool_call` event, linked like non-streaming calls. A stream closed early is recorded with `truncated: true`; one that fails mid-way as `llm_error` with the partial output. Previously streamed calls were recorded without output or tool calls. The `.stream()` helper methods are not covered yet.
+
+### TypeScript SDK
+
+- **`instrument(db, { agent, clients })`: one-line auto-capture**, matching the Python SDK. Records every OpenAI (`chat.completions.create`, `responses.create`) and Anthropic (`messages.create`) call on the given clients as causally linked events: `user_message` → `llm_end` (with `token_usage`) → `tool_call` → `tool_result`. The call returns the client's own promise (`.withResponse()` keeps working); recording runs in the background, never changes the result or error, and `flush()` waits for it. `captureContent: false` keeps text out.
+
+### Python SDK
+
+- **`zizkadb.instrument()` covers the OpenAI Responses API** (`client.responses.create`, sync and async): string or item-list `input`, `function_call` outputs as `tool_call` events, `function_call_output` items as `tool_result` events linked to their call, and `token_usage` including cached and reasoning tokens.
+
+- **`zizkadb.instrument(db, agent=...)`: one-line auto-capture.** Patches the OpenAI (chat completions), Anthropic (messages) and LiteLLM clients, sync and async, so every call is recorded as causally linked events with no `db.log()` calls: `user_message` → `llm_end` (model, output, `token_usage` for the cost dashboard) → `tool_call` → `tool_result` → next `llm_end`. Covers OpenAI-compatible servers (Ollama, vLLM, LM Studio). `capture_content=False` keeps text out; a failed write never breaks the LLM call.
+- **`zizkadb test from-session <session_id> --agent <agent>`: a recorded session becomes a pytest regression test.** It writes a snapshot (user inputs, tool path, final answer, errors) and a test that replays the inputs through your agent (`--entry module:function`) and checks the same tool path without errors. Tests run inside the new `zizkadb.testing.capture()`, which records LLM and tool calls in memory with no server.
+
+### Telemetry
+
+- The install ping from the Python and TypeScript SDKs, the MCP server and `scripts/telemetry-install-ping.sh` now also says where it runs: `ci`, `container` or `machine`. It is `ci` when a CI service variable such as `CI` or `GITHUB_ACTIONS` is set; only the label is sent. ZizkaDB Cloud uses it to leave CI runs out of install counts. Details in [docs/telemetry.md](docs/telemetry.md).
+- The repo's own test runs no longer ping: `integration.yml`, `publish-images.yml`, `smoke-test.sh`, `smoke-example.sh`, `run-golden-path.sh` and `verify-release.sh` set `ZIZKADB_TELEMETRY=false` (an explicit value still wins). `ci.yml` and `golden-path.yml` already did.
 
 ## [0.6.0] - 2026-11-07
 
@@ -511,7 +587,8 @@ Production-hardening sprint merged to `main` (via stacked PRs #125–#139), incl
 
 See [GitHub releases](https://github.com/ZIZKA-AI-SL/ZizkaDB/releases) for tagged artifacts.
 
-[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/V0.5.0...v0.6.0
 [0.2.8]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/ZIZKA-AI-SL/ZizkaDB/compare/v0.2.6...v0.2.7
