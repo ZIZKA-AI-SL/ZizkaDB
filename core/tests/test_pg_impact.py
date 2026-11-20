@@ -54,13 +54,18 @@ async def api_as():
     )
 
     def _as(
-        tenant_id: str, agent_id: str | None = None, key_id: str | None = None
+        tenant_id: str,
+        agent_id: str | None = None,
+        key_id: str | None = None,
+        scope: str | None = None,
     ) -> httpx.AsyncClient:
         tenant = {"tenant_id": tenant_id, "user_id": None}
         if agent_id:
             tenant["agent_id"] = agent_id
         if key_id:
             tenant["key_id"] = key_id
+        if scope:
+            tenant["scope"] = scope
         app.dependency_overrides[get_tenant] = lambda: tenant
         return client
 
@@ -201,7 +206,7 @@ async def test_unbound_key_is_bound_to_the_anchor_agent_and_scoped(tree, api_as,
         """,
         tree["tenant_id"],
     )
-    client = api_as(tree["tenant_id"], key_id=str(key_id))
+    client = api_as(tree["tenant_id"], key_id=str(key_id), scope="events:read")
 
     response = await client.get(f"/v1/events/{tree['tool']}/impact")
 
