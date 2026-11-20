@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import os
 
-from zizkadb import ZizkaDB
+from .client import ZizkaDB, _is_local_host
 
 DEFAULT_HOST = "http://localhost:8000"
 DEMO_AGENT = "support-bot"
-
-
-def _is_local_host(host: str) -> bool:
-    h = host.lower()
-    return "localhost" in h or "127.0.0.1" in h or "0.0.0.0" in h
 
 
 def dashboard_activity_url(host: str, agent: str = DEMO_AGENT) -> str:

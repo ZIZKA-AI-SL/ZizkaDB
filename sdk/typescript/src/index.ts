@@ -60,8 +60,23 @@ export const SDK_VERSION = packageJson.version
 const DEFAULT_DEV_API_KEY = 'zizkadb_dev_local'
 
 function isLocalHost(host: string): boolean {
-  const h = host.toLowerCase()
-  return h.includes('localhost') || h.includes('127.0.0.1') || h.includes('0.0.0.0')
+  let hostname: string
+  try {
+    hostname = new URL(host).hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase()
+  } catch {
+    return false
+  }
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '0.0.0.0' ||
+    hostname === '::1'
+  ) return true
+
+  const octets = hostname.split('.')
+  return octets.length === 4 &&
+    octets.every(octet => /^\d{1,3}$/.test(octet) && Number(octet) <= 255) &&
+    Number(octets[0]) === 127
 }
 
 
@@ -112,11 +127,7 @@ let _telemetrySent = false
 
 function _isLocalSelfHost(): boolean {
   const host = readEnv('ZIZKADB_HOST') ?? ''
-  return (
-    host.startsWith('http://localhost') ||
-    host.startsWith('http://127.0.0.1') ||
-    host.startsWith('http://0.0.0.0')
-  )
+  return isLocalHost(host)
 }
 
 // Variables set by CI services; same list as the Python SDK.
