@@ -195,8 +195,8 @@ async def test_unbound_key_is_bound_to_the_anchor_agent_and_scoped(tree, api_as,
     await _log(tree["tenant_id"], "follow_up", charge)
     key_id = await pg_db.fetchval(
         """
-        INSERT INTO api_keys (tenant_id, key_hash, key_prefix)
-        VALUES ($1, 'impact-test-hash', 'zk_test')
+        INSERT INTO api_keys (tenant_id, key_hash, key_prefix, scope)
+        VALUES ($1, 'impact-test-hash', 'zk_test', 'events:read')
         RETURNING key_id
         """,
         tree["tenant_id"],
