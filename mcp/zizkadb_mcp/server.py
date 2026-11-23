@@ -406,7 +406,30 @@ async def get_baseline(
     recent_window: int = 50,
     window: str = "",
 ) -> dict:
-    """Behavioral baseline and drift score for an agent."""
+    """
+    Measure how much an agent's recent behaviour has drifted from its history.
+
+    Splits the agent's sessions into two groups, "recent" and "baseline"
+    (everything older), and compares them: which event types occur and how
+    often, which event follows which (transitions), average session length
+    and error rate. Use it after a model, prompt or tool change, or when an
+    agent starts acting differently, to see whether and how it changed.
+    Read-only.
+
+    Args:
+        agent:         The agent to analyse (e.g. "support-bot").
+        recent_window: Number of most recent sessions treated as "recent"
+                       (5 to 500, default 50). Used when window is empty.
+        window:        Optional time split instead: "24h", "7d" or "30d".
+                       "recent" is then every session that ended inside that
+                       period, "baseline" everything before it.
+
+    Returns:
+        recent and baseline summaries (event and transition distributions,
+        session length, error rate), a drift score from 0 (identical) to 1
+        (completely different) with a verdict, and the biggest behavioural
+        changes between the two groups.
+    """
     params: dict[str, str | int] = {"recent_window": recent_window}
     if window:
         params["window"] = window
@@ -420,7 +443,28 @@ async def get_token_usage(
     to: str,
     granularity: str = "",
 ) -> dict:
-    """Token usage and cost report for an agent over a date range."""
+    """
+    Report how many LLM tokens an agent used and what they cost over a period.
+
+    Adds up the token_usage recorded on the agent's events (automatically by
+    the SDKs' instrument(), or sent with log_event) and prices it per model.
+    Use it to answer "how much did this agent spend last week, on which
+    models and tools?". Read-only.
+
+    Args:
+        agent:       The agent to report on (e.g. "support-bot").
+        from_:       Start of the period, ISO-8601 (e.g. "2026-11-01" or
+                     "2026-11-01T00:00:00Z"). Required.
+        to:          End of the period, ISO-8601, exclusive. Required. The
+                     period can be at most 366 days.
+        granularity: Optional trend bucket size: "hour", "day" or "week".
+
+    Returns:
+        totals (requests, input, output, cached and reasoning tokens, cost
+        in USD, success rate), a trend per time bucket, the top consumers by
+        model, tool, workflow and user, and unpriced_models (models with no
+        known price, counted at $0 rather than guessed).
+    """
     params: dict[str, str] = {"from": from_, "to": to}
     if granularity:
         params["granularity"] = granularity
@@ -437,7 +481,31 @@ async def get_token_optimization(
     to: str = "",
     granularity: str = "",
 ) -> dict:
-    """Deterministic token optimization suggestions from real usage events."""
+    """
+    Suggest concrete ways to cut an agent's LLM token cost, from its real usage.
+
+    Analyses the token_usage recorded on the agent's events with fixed rules
+    (no AI and no estimates, so every number can be reproduced) and returns
+    suggestions in five categories: a cheaper model for the same work
+    (model_optimization), the biggest consumers (high_consumption), repeated
+    prompts that could be cached (cache_opportunity), tokens wasted on
+    failed or retried calls (retry_analysis) and unusual cost spikes
+    (cost_anomaly). Read-only; nothing is changed.
+
+    Args:
+        agent:       The agent to analyse (e.g. "support-bot").
+        from_:       Optional start of the period, ISO-8601. With to empty
+                     as well, the last 30 days are analysed.
+        to:          Optional end of the period, ISO-8601, exclusive.
+        granularity: Optional bucket size for trends: "day" or "week".
+
+    Returns:
+        A list of suggestions, each with a title, category, severity, the
+        model, tool or workflow it concerns, the estimated monthly saving in
+        USD, the estimated token reduction, a confidence score, why it was
+        suggested and the recommended action; plus the categories skipped
+        for lack of data and the reason.
+    """
     params: dict[str, str] = {}
     if from_:
         params["from"] = from_
