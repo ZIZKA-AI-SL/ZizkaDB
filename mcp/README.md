@@ -4,6 +4,8 @@
 
 <!-- mcp-name: io.github.ZIZKA-AI-SL/zizkadb-mcp -->
 
+[![ZIZKA-AI-SL/ZizkaDB MCP server](https://glama.ai/mcp/servers/ZIZKA-AI-SL/ZizkaDB/badges/score.svg)](https://glama.ai/mcp/servers/ZIZKA-AI-SL/ZizkaDB)
+
 MCP server for [ZizkaDB](https://db.zizka.ai). Gives any MCP-compatible AI agent persistent memory, keyword and semantic search, causal debugging, time travel, and proof that its history is untouched (`verify_chain`).
 
 ## Setup (managed cloud)
